@@ -2,51 +2,36 @@ import { QINGQIU_GRAYBOX, SPECIES, TUNING, type WorldParams } from "@shiling/con
 import { createRng, type Rng } from "./rng.js";
 import { v3, type Vec3 } from "./vec.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
+import { createTerrain, type DigSpot, type Terrain } from "./terrain.js";
 
 export const DT = 1 / TUNING.tickHz;
 
-/**
- * 最小结构化地形接口。Task 5 会在 terrain.ts 中定义真正的 Terrain 并接入
- * createTerrain；这里只声明当前用到的形状，便于 Task 5 无缝替换。
- */
-export interface Terrain {
-  heightAt(x: number, z: number): number;
-  isWater(x: number, z: number): boolean;
-  waterLevel: number;
-  digSpots: Vec3[];
-  size: number;
-}
+export type { DigSpot, Terrain };
 
 export interface Sim {
   state: GameState;
-  terrain: Terrain; // Task 5 前为平地 stub
+  terrain: Terrain;
   step(input: PlayerInput): void;
 }
 
-/** Task 5 前的临时地形：全平地、无水、无挖点。Task 5 接入后删除。 */
-export function flatTerrain(_seed: number, params: WorldParams): Terrain {
-  return {
-    heightAt: () => 0,
-    isWater: () => false,
-    waterLevel: params.waterLevel,
-    digSpots: [],
-    size: params.size,
-  };
-}
+const MAX_REJECTION_ATTEMPTS = 10_000;
 
-/** 在 params.size 范围内 rejection-sample，直到落在非水面位置。 */
+/**
+ * 在 params.size 范围内 rejection-sample，直到落在陆地且离水线有余量的位置
+ * （h > waterLevel + 0.5；该条件已蕴含 !isWater，因为 isWater 等价于 h < waterLevel）。
+ */
 export function randomLandPos(rng: Rng, terrain: Terrain, params: WorldParams): Vec3 {
   const half = params.size / 2;
-  let x: number;
-  let z: number;
-  do {
-    x = rng.range(-half, half);
-    z = rng.range(-half, half);
-  } while (terrain.isWater(x, z));
-  return v3(x, terrain.heightAt(x, z), z);
+  for (let attempt = 0; attempt < MAX_REJECTION_ATTEMPTS; attempt++) {
+    const x = rng.range(-half, half);
+    const z = rng.range(-half, half);
+    const h = terrain.heightAt(x, z);
+    if (h > terrain.waterLevel + 0.5) return v3(x, h, z);
+  }
+  throw new Error("randomLandPos: no land position found after max attempts; check WorldParams");
 }
 
-let terrainFactory = flatTerrain; // Task 5 将替换为 createTerrain
+const terrainFactory = createTerrain;
 
 /** 生成一只生物并加入 state.creatures，供 createSim 内部与测试使用。 */
 export function spawnCreature(
