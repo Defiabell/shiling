@@ -5,6 +5,7 @@ import type { Creature, GameState, PlayerInput } from "./state.js";
 import { createTerrain, type DigSpot, type Terrain } from "./terrain.js";
 import { movePlayer } from "./movement.js";
 import { tickDigging } from "./digging.js";
+import { tickEating } from "./eating.js";
 import { tickAi } from "./ai.js";
 import { tickNeeds } from "./needs.js";
 
@@ -95,8 +96,8 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
       tickDigging(state, terrain, input); // (Task 8)
+      tickEating(state, terrain, input); // (Task 11)
       tickAi(state, terrain, rng); // (Task 9)
-      // tickEating(state, input);           (Task 10)
       tickNeeds(state, terrain, input); // (Task 7)
     },
   };

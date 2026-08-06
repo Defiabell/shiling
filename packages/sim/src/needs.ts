@@ -33,7 +33,14 @@ function nearWater(c: Creature, terrain: Terrain): boolean {
 function tickCreatureNeeds(c: Creature): void {
   if (c.activity === "dead") return;
 
-  c.needs.hunger = clamp01to100(c.needs.hunger - TUNING.hungerDecayPerSec * DT);
+  // 正在进食（玩家吃尸体/潭狩 doFeed/苓鼠 doGraze 三处都会把 activity 设为 "eating"）的
+  // 这一 tick 不再叠加饥饿衰减——本 tick 的进食增量已经代表了净变化，否则每 tick 都会被
+  // hungerDecayPerSec 偷走一部分，导致"边吃边饿"的双重结算，与 eating.ts 里
+  // `hunger += consumed*hungerPerMeat` 的单一净值语义冲突。饮水没有专门的 "drinking 抵消
+  // thirst 衰减" 规则，两者独立结算是既有行为，不在本次 minimal diff 范围内改动。
+  if (c.activity !== "eating") {
+    c.needs.hunger = clamp01to100(c.needs.hunger - TUNING.hungerDecayPerSec * DT);
+  }
   c.needs.thirst = clamp01to100(c.needs.thirst - TUNING.thirstDecayPerSec * DT);
 
   let fatigueRecoverPerSec: number;
@@ -53,7 +60,7 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
 
   for (const c of state.creatures) tickCreatureNeeds(c);
 
-  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && player.burrowId === null && nearWater(player, terrain)) {
+  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
     player.activity = "drinking";
     player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * DT);
   }
