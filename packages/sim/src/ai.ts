@@ -1,6 +1,7 @@
 import { SPECIES, TUNING, type SpeciesDef } from "@shiling/content";
 import { DT } from "./sim.js";
 import { moveCreature } from "./movement.js";
+import { killCreature } from "./needs.js";
 import { dist2d, norm2d } from "./vec.js";
 import type { Rng } from "./rng.js";
 import type { Creature, GameState } from "./state.js";
@@ -24,6 +25,23 @@ function nearestThreat(c: Creature, state: GameState): { threat: Creature; dist:
     if (!isCarnivoreThreat(c, other)) continue;
     const d = dist2d(c.pos, other.pos);
     if (!best || d < best.dist) best = { threat: other, dist: d };
+  }
+  return best;
+}
+
+/**
+ * 场景内最近的"猎物"（非同类、活着、未入洞）及其距离。不限定 diet——
+ * 潭狩既猎苓鼠也猎玩家（幼兽亦为 carnivore，但规则只按物种区分，不按 diet）。
+ */
+function nearestPrey(c: Creature, state: GameState): { prey: Creature; dist: number } | null {
+  let best: { prey: Creature; dist: number } | null = null;
+  for (const other of state.creatures) {
+    if (other.id === c.id) continue;
+    if (other.species === c.species) continue;
+    if (other.activity === "dead") continue;
+    if (other.burrowId !== null) continue;
+    const d = dist2d(c.pos, other.pos);
+    if (!best || d < best.dist) best = { prey: other, dist: d };
   }
   return best;
 }
@@ -86,6 +104,108 @@ function doGraze(c: Creature, terrain: Terrain): void {
   c.needs.hunger = Math.min(100, c.needs.hunger + TUNING.grazeHungerPerSec * DT);
 }
 
+/** 直线追击目标；撞水沿用 ±60° 备选方向（潭狩 canSwim=true，通常不会触发）。 */
+function doChase(c: Creature, terrain: Terrain, target: Creature, def: SpeciesDef): void {
+  let { x: dirX, z: dirZ } = norm2d(target.pos.x - c.pos.x, target.pos.z - c.pos.z);
+  if (dirX === 0 && dirZ === 0) return; // 位置重合：交给下一帧的攻击判定处理
+  if (blockedByWater(c, dirX, dirZ, terrain, def)) {
+    const plus60 = rotate2d(dirX, dirZ, Math.PI / 3);
+    const minus60 = rotate2d(dirX, dirZ, -Math.PI / 3);
+    if (!blockedByWater(c, plus60.x, plus60.z, terrain, def)) {
+      dirX = plus60.x; dirZ = plus60.z;
+    } else if (!blockedByWater(c, minus60.x, minus60.z, terrain, def)) {
+      dirX = minus60.x; dirZ = minus60.z;
+    }
+  }
+  moveCreature(c, dirX, dirZ, false, terrain);
+}
+
+/** 追击/攻击判定：目标丢失或脱离 1.5×感知圈 → 回 patrol；进入攻击距离且冷却好 → 落地伤害，死亡则转 feed。 */
+function resolveHunt(c: Creature, state: GameState, terrain: Terrain, def: SpeciesDef): void {
+  const target = state.creatures.find((x) => x.id === c.targetId);
+  if (!target || target.activity === "dead") {
+    c.targetId = null;
+    c.aiState = "patrol";
+    return;
+  }
+  const d = dist2d(c.pos, target.pos);
+  if (d > def.senseRadius * 1.5) {
+    c.targetId = null;
+    c.aiState = "patrol";
+    return;
+  }
+  if (d <= def.attackRange) {
+    moveCreature(c, 0, 0, false, terrain); // 站桩攻击：同步 locomotion/pos.y，不位移
+    if (c.attackCooldown <= 0) {
+      target.hp -= def.attackDamage;
+      c.attackCooldown = TUNING.attackCooldownSec;
+      c.activity = "attacking"; // 供渲染层识别攻击帧
+      if (target.hp <= 0) {
+        // killCreature 会重建 state.creatures（filter 掉非玩家的 target）；
+        // tickAi 的 for-of 仍在遍历旧数组引用，不受影响（旧数组里 target 对象本身
+        // 已被标记 activity="dead"，后续若被同 tick 的 for-of 扫到，会被顶层
+        // `if (c.activity === "dead") continue;` 挡掉，无需额外处理）。
+        killCreature(state, target);
+        c.feedingCarcassId = target.id;
+        c.targetId = null;
+        c.aiState = "feed";
+        c.aiTimer = TUNING.predatorEatFromCarcassSec;
+      }
+    }
+    return;
+  }
+  doChase(c, terrain, target, def);
+}
+
+/** 钉在尸体旁进食：按 eatMeatPerSec 消耗尸体 meat，同速率折算回复自身 hunger（与玩家进食语义一致，见 Task 11）。 */
+function doFeed(c: Creature, state: GameState, terrain: Terrain): void {
+  moveCreature(c, 0, 0, false, terrain); // 不位移，仅同步 locomotion/pos.y
+  c.activity = "eating";
+  c.aiTimer = Math.max(0, c.aiTimer - DT);
+  const carcass = state.carcasses.find((cc) => cc.id === c.feedingCarcassId);
+  if (carcass) {
+    const eaten = Math.min(carcass.meat, TUNING.eatMeatPerSec * DT);
+    carcass.meat -= eaten;
+    c.needs.hunger = Math.min(100, c.needs.hunger + eaten * TUNING.hungerPerMeat);
+    if (carcass.meat <= 0) {
+      state.carcasses = state.carcasses.filter((x) => x.id !== carcass.id);
+      endFeed(c);
+      return;
+    }
+  }
+  if (!carcass || c.aiTimer <= 0) endFeed(c);
+}
+
+/** 结束进食：满足 satiatedTimer，回 patrol 并立即重新择向（同 tickLingshu 脱险后的处理）。 */
+function endFeed(c: Creature): void {
+  c.feedingCarcassId = null;
+  c.satiatedTimer = TUNING.predatorSatiatedSec;
+  c.aiState = "patrol";
+  c.aiTimer = 0;
+}
+
+function tickTanshou(c: Creature, state: GameState, terrain: Terrain, rng: Rng): void {
+  const def = SPECIES.tanshou!;
+  c.attackCooldown = Math.max(0, c.attackCooldown - DT); // 潭狩自身冷却；玩家的另见 Task 11
+
+  if (c.aiState === "patrol") {
+    if (c.satiatedTimer > 0) {
+      c.satiatedTimer = Math.max(0, c.satiatedTimer - DT);
+    } else {
+      const found = nearestPrey(c, state);
+      if (found && found.dist <= def.senseRadius) {
+        c.targetId = found.prey.id;
+        c.aiState = "hunt";
+      }
+    }
+  }
+
+  if (c.aiState === "hunt") resolveHunt(c, state, terrain, def);
+
+  if (c.aiState === "feed") doFeed(c, state, terrain);
+  else if (c.aiState === "patrol") doWander(c, terrain, rng);
+}
+
 function tickLingshu(c: Creature, state: GameState, terrain: Terrain, rng: Rng): void {
   const def = SPECIES.lingshu!;
   const found = nearestThreat(c, state);
@@ -111,12 +231,13 @@ function tickLingshu(c: Creature, state: GameState, terrain: Terrain, rng: Rng):
 }
 
 /**
- * 顶层 AI 派发。本任务只接线苓鼠（wander/graze/flee）；潭狩与玩家保持 aiState="idle"
- * 不做任何处理，为 Task 10 的掠食者状态机留出干净的分派点。
+ * 顶层 AI 派发：苓鼠（wander/graze/flee）与潭狩（patrol/hunt/feed）。玩家保持
+ * aiState="idle" 不做任何处理，留给 Task 11 的玩家专属逻辑（进食/攻击响应）。
  */
 export function tickAi(state: GameState, terrain: Terrain, rng: Rng): void {
   for (const c of state.creatures) {
     if (c.activity === "dead" || c.burrowId !== null) continue;
     if (c.species === "lingshu") tickLingshu(c, state, terrain, rng);
+    else if (c.species === "tanshou") tickTanshou(c, state, terrain, rng);
   }
 }

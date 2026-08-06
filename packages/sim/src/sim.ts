@@ -59,8 +59,8 @@ export function spawnCreature(
     needs: { hunger: 80, thirst: 80, fatigue: 100 },
     locomotion: "walk",
     activity: "idle",
-    // 苓鼠状态机本任务接线（wander/graze/flee），其余物种（潭狩/玩家）留 "idle" 待 Task 10。
-    aiState: species === "lingshu" ? "wander" : "idle",
+    // 苓鼠 wander/graze/flee、潭狩 patrol/hunt/feed 已接线（Task 9/10）；玩家留 "idle" 待 Task 11。
+    aiState: species === "lingshu" ? "wander" : species === "tanshou" ? "patrol" : "idle",
     targetId: null,
     attackCooldown: 0,
     feedingCarcassId: null,
