@@ -1,8 +1,10 @@
 import * as THREE from "three";
-import { createSim, DT, type PlayerInput } from "@shiling/sim";
+import { createSim, DT } from "@shiling/sim";
 import { QINGQIU_GRAYBOX } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
+import { createInput } from "./input.js";
+import { createFollowCamera } from "./camera.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 const sim = createSim(Date.now() >>> 0);
@@ -26,11 +28,17 @@ addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// Task 14：先接一个 idle 常量输入，让 sim 循环跑起来验证渲染管线；
-// Task 15 会把这里换成真实键鼠输入采集，接口形状（PlayerInput）已固定不变。
-function readInput(): PlayerInput {
-  return { moveX: 0, moveZ: 0, sprint: false, interact: false };
+// Movement is suppressed while the player is burrowed (Task 8 ledger note):
+// otherwise a direction key already held down at the moment of burrow-exit
+// would ride along on the very same read() sim uses to detect the E-press
+// edge, and the client would be feeding a same-tick move+interact into a
+// state transition meant to be interact-only.
+function isPlayerBurrowed(): boolean {
+  const player = sim.state.creatures.find((c) => c.id === sim.state.playerId);
+  return player !== undefined && player.burrowId !== null;
 }
+const input = createInput(renderer.domElement, isPlayerBurrowed);
+const followCam = createFollowCamera(camera);
 
 const views: CreatureViews = new Map();
 let acc = 0;
@@ -42,7 +50,7 @@ renderer.setAnimationLoop(() => {
   last = now;
   while (acc >= DT) {
     snapshotPrev(views);
-    sim.step(readInput());
+    sim.step(input.read(followCam.yaw));
     // 每个定步之后立刻同步一次视图：prevPos/currPos 对应"这一步之前→之后"，
     // 而不是攒够多步才同步一次导致的粗插值；同时完成 view 的增删（生/死/尸体腐烂）。
     syncCreatures(scene, sim.state, views);
@@ -50,5 +58,12 @@ renderer.setAnimationLoop(() => {
   }
   applyInterp(views, acc / DT);
   updateDigSpots(terrainGroup, sim.terrain);
+  // Follow the render-interpolated mesh position (not the raw once-per-step
+  // sim position) so the camera reads smooth even when a slow frame makes
+  // the while-loop above run several fixed steps back-to-back. Keyed by
+  // `creature:${id}` per CreatureViews' convention (see creatureView.ts).
+  const playerView = views.get(`creature:${sim.state.playerId}`);
+  if (playerView) followCam.update(playerView.mesh.position, input.camDelta());
+  input.consume();
   renderer.render(scene, camera);
 });
