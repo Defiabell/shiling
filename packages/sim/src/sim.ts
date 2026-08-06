@@ -60,7 +60,7 @@ export function spawnCreature(
   if (!def) throw new Error(`unknown species: ${species}`);
   const pos = randomLandPos(rng, terrain, params);
   const c: Creature = {
-    id: state.creatures.length + 1,
+    id: state.nextId++,
     species,
     pos,
     yaw: rng.range(0, Math.PI * 2),
@@ -83,7 +83,7 @@ export function spawnCreature(
 export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): Sim {
   const rng = createRng(seed);
   const terrain = terrainFactory(seed, params);
-  const state: GameState = { tick: 0, playerId: 0, creatures: [], carcasses: [], playerDead: false };
+  const state: GameState = { tick: 0, playerId: 0, nextId: 1, creatures: [], carcasses: [], playerDead: false };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
   for (const s of params.spawns) {

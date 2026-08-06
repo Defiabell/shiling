@@ -44,6 +44,7 @@ export interface PlayerInput {
 export interface GameState {
   tick: number;
   playerId: number;
+  nextId: number; // 单调递增的下一个可用 id，不随生物/尸体移除而回收
   creatures: Creature[];
   carcasses: Carcass[];
   playerDead: boolean;
