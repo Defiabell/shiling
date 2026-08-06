@@ -4,6 +4,7 @@ import { v3, type Vec3 } from "./vec.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import { createTerrain, type DigSpot, type Terrain } from "./terrain.js";
 import { movePlayer } from "./movement.js";
+import { tickDigging } from "./digging.js";
 import { tickNeeds } from "./needs.js";
 
 export const DT = 1 / TUNING.tickHz;
@@ -62,6 +63,8 @@ export function spawnCreature(
     burrowId: null,
     satiatedTimer: 0,
     panicTimer: 0,
+    digProgress: 0,
+    interactHeld: false,
   };
   state.creatures.push(c);
   return c;
@@ -84,7 +87,8 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       state.tick++;
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
-      // tickAi(state, terrain, rng);        (Task 8/9)
+      tickDigging(state, terrain, input); // (Task 8)
+      // tickAi(state, terrain, rng);        (Task 9)
       // tickEating(state, input);           (Task 10)
       tickNeeds(state, terrain, input); // (Task 7)
     },

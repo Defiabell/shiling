@@ -84,6 +84,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       locomotion: "walk", activity: "moving", // 故意预设为 moving，验证挡水后会回落 idle
       aiState: "idle", targetId: null, attackCooldown: 0,
       feedingCarcassId: null, burrowId: null, satiatedTimer: 0, panicTimer: 0,
+      digProgress: 0, interactHeld: false,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边

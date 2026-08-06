@@ -25,6 +25,8 @@ export interface Creature {
   burrowId: number | null;
   satiatedTimer: number;
   panicTimer: number;
+  digProgress: number;
+  interactHeld: boolean;
 }
 
 export interface Carcass {
