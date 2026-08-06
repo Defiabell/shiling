@@ -3,6 +3,7 @@ import { createRng, type Rng } from "./rng.js";
 import { v3, type Vec3 } from "./vec.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import { createTerrain, type DigSpot, type Terrain } from "./terrain.js";
+import { movePlayer } from "./movement.js";
 
 export const DT = 1 / TUNING.tickHz;
 
@@ -81,7 +82,7 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
     step(input: PlayerInput) {
       state.tick++;
       // 系统按序执行；后续任务逐个填入：
-      // movePlayer(state, terrain, input);  (Task 6)
+      movePlayer(state, terrain, input); // (Task 6)
       // tickAi(state, terrain, rng);        (Task 8/9)
       // tickEating(state, input);           (Task 10)
       // tickNeeds(state, terrain, input);   (Task 7)
