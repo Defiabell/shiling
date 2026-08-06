@@ -5,6 +5,7 @@ import type { Creature, GameState, PlayerInput } from "./state.js";
 import { createTerrain, type DigSpot, type Terrain } from "./terrain.js";
 import { movePlayer } from "./movement.js";
 import { tickDigging } from "./digging.js";
+import { tickAi } from "./ai.js";
 import { tickNeeds } from "./needs.js";
 
 export const DT = 1 / TUNING.tickHz;
@@ -47,6 +48,8 @@ export function spawnCreature(
   const def = SPECIES[species];
   if (!def) throw new Error(`unknown species: ${species}`);
   const pos = randomLandPos(rng, terrain, params);
+  // 初始朝向复用 yaw 的随机模式，另起一次采样给 aiDir（游走的初始方向）。
+  const initAiAngle = rng.range(0, Math.PI * 2);
   const c: Creature = {
     id: state.nextId++,
     species,
@@ -56,7 +59,8 @@ export function spawnCreature(
     needs: { hunger: 80, thirst: 80, fatigue: 100 },
     locomotion: "walk",
     activity: "idle",
-    aiState: "idle",
+    // 苓鼠状态机本任务接线（wander/graze/flee），其余物种（潭狩/玩家）留 "idle" 待 Task 10。
+    aiState: species === "lingshu" ? "wander" : "idle",
     targetId: null,
     attackCooldown: 0,
     feedingCarcassId: null,
@@ -65,6 +69,9 @@ export function spawnCreature(
     panicTimer: 0,
     digProgress: 0,
     interactHeld: false,
+    aiDirX: Math.sin(initAiAngle),
+    aiDirZ: Math.cos(initAiAngle),
+    aiTimer: TUNING.aiRepathSec,
   };
   state.creatures.push(c);
   return c;
@@ -88,7 +95,7 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
       tickDigging(state, terrain, input); // (Task 8)
-      // tickAi(state, terrain, rng);        (Task 9)
+      tickAi(state, terrain, rng); // (Task 9)
       // tickEating(state, input);           (Task 10)
       tickNeeds(state, terrain, input); // (Task 7)
     },

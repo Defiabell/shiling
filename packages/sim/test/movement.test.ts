@@ -85,6 +85,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       aiState: "idle", targetId: null, attackCooldown: 0,
       feedingCarcassId: null, burrowId: null, satiatedTimer: 0, panicTimer: 0,
       digProgress: 0, interactHeld: false,
+      aiDirX: 0, aiDirZ: 1, aiTimer: 0,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边

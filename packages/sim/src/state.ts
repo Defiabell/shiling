@@ -27,6 +27,9 @@ export interface Creature {
   panicTimer: number;
   digProgress: number;
   interactHeld: boolean;
+  aiDirX: number;
+  aiDirZ: number;
+  aiTimer: number;
 }
 
 export interface Carcass {
