@@ -120,10 +120,17 @@ function doChase(c: Creature, terrain: Terrain, target: Creature, def: SpeciesDe
   moveCreature(c, dirX, dirZ, false, terrain);
 }
 
-/** 追击/攻击判定：目标丢失或脱离 1.5×感知圈 → 回 patrol；进入攻击距离且冷却好 → 落地伤害，死亡则转 feed。 */
+/** 追击/攻击判定：目标丢失、入洞或脱离 1.5×感知圈 → 回 patrol；进入攻击距离且冷却好 → 落地伤害，死亡则转 feed。 */
 function resolveHunt(c: Creature, state: GameState, terrain: Terrain, def: SpeciesDef): void {
   const target = state.creatures.find((x) => x.id === c.targetId);
   if (!target || target.activity === "dead") {
+    c.targetId = null;
+    c.aiState = "patrol";
+    return;
+  }
+  if (target.burrowId !== null) {
+    // 目标入洞：入洞玩家/生物不可见（同 nearestPrey 的获取前置条件），须每 tick 重新校验，
+    // 否则会出现"猎杀开始后目标才入洞"漏判——追击途中入洞也要立刻放弃，回 patrol 重新择目标。
     c.targetId = null;
     c.aiState = "patrol";
     return;
