@@ -72,7 +72,17 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
 
   for (const c of state.creatures) {
     if (c.activity === "dead") continue;
-    if (c.needs.hunger === 0 || c.needs.thirst === 0) {
+    // 饥饿归零对所有活物一视同仁——苓鼠 graze（ai.ts doGraze）、潭狩 feed（ai.ts doFeed）、
+    // 玩家吃尸体（eating.ts）都能回复 hunger，三者都有对应的"反制手段"。但口渴的反制手段
+    // （本函数上面的饮水分支）只接了玩家：M0 的 NPC AI（Task 9/10：苓鼠 wander/graze/flee，
+    // 潭狩 patrol/hunt/feed）从未实现"找水喝"的状态。若 thirst===0 对 NPC 也判死刑，
+    // 就等于给所有非玩家生物钉了一个和捕食/进食完全无关、无法规避的倒计时——灰盒期
+    // thirstDecayPerSec=0.5、苓鼠 maxHp=25，约 180s 后全场苓鼠/潭狩因口渴团灭
+    // （headless ecology 冒烟测试 2026-08 发现，见 ecology.test.ts），这不是生态平衡问题，
+    // 是需求-反制手段的对称性缺口。在 NPC 获得真实的饮水行为之前，口渴归零只对玩家致命；
+    // 饥饿仍对所有生物一视同仁（其反制手段本就齐备）。
+    const canDieOfThirst = c.id === state.playerId;
+    if (c.needs.hunger === 0 || (canDieOfThirst && c.needs.thirst === 0)) {
       c.hp -= TUNING.starveHpPerSec * DT;
       if (c.hp <= 0) killCreature(state, c);
     }

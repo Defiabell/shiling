@@ -8,6 +8,14 @@ import type { Creature, GameState, PlayerInput } from "./state.js";
 export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: boolean, terrain: Terrain): void {
   if (c.burrowId !== null || c.activity === "dead") return;
   const def = SPECIES[c.species]!;
+  const half = terrain.size / 2;
+  // 边界 clamp 对"当前"位置无条件生效（不止对本 tick 的移动目标位置）——否则外部
+  // 把某个生物的 pos 直接改到界外（例如测试把玩家钉在旁观角落）后，只要它本 tick
+  // 恰好是零方向输入（idle），就会一直停在界外，永远等不到下一次"有方向输入"的
+  // clamp 分支来把它拉回来。这里在函数最开头统一收口，保证"位置永远落在世界范围内"
+  // 是 moveCreature 的无条件不变量，和函数注释里写的"边界 clamp"一致。
+  c.pos.x = Math.max(-half, Math.min(half, c.pos.x));
+  c.pos.z = Math.max(-half, Math.min(half, c.pos.z));
   const { x: nx, z: nz } = norm2d(dirX, dirZ);
   if (nx === 0 && nz === 0) {
     if (c.activity === "moving") c.activity = "idle";
@@ -20,7 +28,6 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
   const inWater = terrain.isWater(c.pos.x, c.pos.z);
   let speed = inWater ? def.swimSpeed : def.walkSpeed;
   if (sprint && c.needs.fatigue > TUNING.minSprintFatigue) speed *= TUNING.sprintMultiplier;
-  const half = terrain.size / 2;
   const tx = Math.max(-half, Math.min(half, c.pos.x + nx * speed * DT));
   const tz = Math.max(-half, Math.min(half, c.pos.z + nz * speed * DT));
   if (!def.canSwim && terrain.isWater(tx, tz)) {
