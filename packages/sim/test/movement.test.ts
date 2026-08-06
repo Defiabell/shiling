@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createSim, DT, getPlayer } from "../src/sim.js";
+import { moveCreature } from "../src/movement.js";
 import { SPECIES } from "@shiling/content";
+import type { Creature } from "../src/state.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false };
 
@@ -49,5 +51,47 @@ describe("movePlayer", () => {
     const p = getPlayer(sim.state);
     for (let i = 0; i < 20 * 120; i++) sim.step({ ...idle, moveX: 1, moveZ: 0 });
     expect(Math.abs(p.pos.x)).toBeLessThanOrEqual(sim.terrain.size / 2);
+  });
+});
+
+describe("moveCreature shore block (non-swimmer)", () => {
+  it("blocked at shore falls back to idle instead of staying stuck in moving", () => {
+    const sim = createSim(3);
+    const def = SPECIES.lingshu!;
+    expect(def.canSwim).toBe(false);
+    const step = def.walkSpeed * DT; // 一步的位移量，用作扫描分辨率上限，保证跨过的岸线必然在一步之内
+    const half = sim.terrain.size / 2;
+
+    // 有界扫描：沿若干条 z 线，以 <=一步的分辨率扫 x 轴，找一对相邻采样点从陆地跨到水域，
+    // 不依赖不确定终止条件的循环（避免像早期版本那样在贴地地图边缘无界搜索导致死循环）。
+    let landX = 0, wz = 0, found = false;
+    outer: for (let z = -half; z <= half && !found; z += 10) {
+      let prevWater = sim.terrain.isWater(-half, z);
+      for (let x = -half + step; x <= half && !found; x += step) {
+        const nowWaterHere = sim.terrain.isWater(x, z);
+        if (!prevWater && nowWaterHere) { landX = x - step; wz = z; found = true; break outer; }
+        prevWater = nowWaterHere;
+      }
+    }
+    expect(found).toBe(true);
+
+    const startY = sim.terrain.heightAt(landX, wz);
+    const c: Creature = {
+      id: 999, species: "lingshu",
+      pos: { x: landX, y: startY, z: wz },
+      yaw: 0, hp: def.maxHp,
+      needs: { hunger: 80, thirst: 80, fatigue: 100 },
+      locomotion: "walk", activity: "moving", // 故意预设为 moving，验证挡水后会回落 idle
+      aiState: "idle", targetId: null, attackCooldown: 0,
+      feedingCarcassId: null, burrowId: null, satiatedTimer: 0, panicTimer: 0,
+    };
+
+    moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边
+
+    expect(c.activity).toBe("idle");
+    expect(c.pos.x).toBeCloseTo(landX, 9);
+    expect(c.pos.z).toBeCloseTo(wz, 9);
+    expect(c.locomotion).toBe("walk");
+    expect(c.pos.y).toBeCloseTo(startY, 9);
   });
 });

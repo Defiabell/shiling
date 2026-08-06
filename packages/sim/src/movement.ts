@@ -23,7 +23,14 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
   const half = terrain.size / 2;
   const tx = Math.max(-half, Math.min(half, c.pos.x + nx * speed * DT));
   const tz = Math.max(-half, Math.min(half, c.pos.z + nz * speed * DT));
-  if (!def.canSwim && terrain.isWater(tx, tz)) return; // 旱鸭子挡在水边
+  if (!def.canSwim && terrain.isWater(tx, tz)) {
+    // 旱鸭子挡在水边：位置不变，但仍要按当前（未位移）位置同步 locomotion/pos.y，
+    // 并把 activity 从 "moving" 回落 "idle"（不动就不该停留在 moving 状态）。
+    if (c.activity === "moving") c.activity = "idle";
+    c.locomotion = inWater ? "swim" : "walk";
+    c.pos.y = inWater ? terrain.waterLevel : terrain.heightAt(c.pos.x, c.pos.z);
+    return;
+  }
   c.pos.x = tx; c.pos.z = tz;
   const nowWater = terrain.isWater(tx, tz);
   c.locomotion = nowWater ? "swim" : "walk";
