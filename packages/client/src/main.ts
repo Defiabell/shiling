@@ -1,10 +1,11 @@
 import * as THREE from "three";
-import { createSim, DT } from "@shiling/sim";
-import { QINGQIU_GRAYBOX } from "@shiling/content";
+import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type Terrain } from "@shiling/sim";
+import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
+import { createHud, type HudContext } from "./hud.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 const sim = createSim(Date.now() >>> 0);
@@ -39,6 +40,50 @@ function isPlayerBurrowed(): boolean {
 }
 const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
+const hud = createHud();
+
+/**
+ * Mirrors needs.ts's private drinking check (Task 7): "in water" or an
+ * 8-direction interactRange ring sample. Not exported by @shiling/sim (it's
+ * an eating.ts/needs.ts implementation detail), so the HUD's read-only
+ * proximity probe duplicates the same geometry here rather than reaching
+ * into sim internals.
+ */
+function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
+  if (terrain.isWater(pos.x, pos.z)) return true;
+  const r = TUNING.interactRange;
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const sx = pos.x + Math.sin(angle) * r;
+    const sz = pos.z + Math.cos(angle) * r;
+    if (terrain.isWater(sx, sz)) return true;
+  }
+  return false;
+}
+
+/**
+ * Per-render-frame proximity/target probe for the HUD's context prompt.
+ * Read-only: never mutates sim state, only re-derives the same distance
+ * checks tickDigging/tickEating/tickNeeds use internally so the prompt
+ * tracks what interact would actually do this tick.
+ *
+ * Known graybox simplification (Task 16 brief only specifies these 5 prompt
+ * strings, with no distinct "enter an already-dug burrow" copy): nearDigSpot
+ * is true for *any* spot in range regardless of `spot.dug`, so "E 挖掘"
+ * still shows right after exiting a burrow (exitBurrow leaves the player
+ * standing on the now-dug spot) even though pressing E there re-enters
+ * instantly instead of running a fresh dig-progress accumulation. Flag for
+ * Task 17 playtest if this reads as misleading in practice.
+ */
+function computeHudContext(terrain: Terrain, state: GameState, player: Creature): HudContext {
+  const nearDigSpot = terrain.digSpots.some((spot) => dist2d(player.pos, spot.pos) <= TUNING.interactRange);
+  const nearCarcass = state.carcasses.some((c) => dist2d(player.pos, c.pos) <= TUNING.interactRange);
+  const attackRange = SPECIES.youshou!.attackRange;
+  const nearPrey = state.creatures.some(
+    (c) => c.id !== player.id && c.activity !== "dead" && c.burrowId === null && dist2d(player.pos, c.pos) <= attackRange,
+  );
+  return { nearWater: nearWater(player.pos, terrain), nearCarcass, nearDigSpot, nearPrey };
+}
 
 const views: CreatureViews = new Map();
 let acc = 0;
@@ -65,5 +110,6 @@ renderer.setAnimationLoop(() => {
   const playerView = views.get(`creature:${sim.state.playerId}`);
   if (playerView) followCam.update(playerView.mesh.position, input.camDelta());
   input.consume();
+  hud.update(sim.state, computeHudContext(sim.terrain, sim.state, getPlayer(sim.state)));
   renderer.render(scene, camera);
 });
