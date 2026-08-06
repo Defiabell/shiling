@@ -50,7 +50,10 @@ export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInpu
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
   moveCreature(p, input.moveX, input.moveZ, input.sprint, terrain);
-  if (input.sprint && (input.moveX !== 0 || input.moveZ !== 0) && p.needs.fatigue > TUNING.minSprintFatigue) {
+  // burrowId !== null：moveCreature 对洞中生物直接 no-op（不产生位移），冲刺不该在洞里也扣疲劳
+  // ——client 端会屏蔽洞中的移动/冲刺输入，但 sim 是权威层，这里不加守卫就是一个 sim 级漏洞
+  // （被客户端输入屏蔽掩盖，直接调 sim 或客户端校验被绕过时仍会白扣疲劳）。
+  if (input.sprint && (input.moveX !== 0 || input.moveZ !== 0) && p.needs.fatigue > TUNING.minSprintFatigue && p.burrowId === null) {
     p.needs.fatigue = Math.max(0, p.needs.fatigue - TUNING.fatigueSprintPerSec * DT);
   }
 }

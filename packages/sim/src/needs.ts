@@ -1,5 +1,6 @@
 import { SPECIES, TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
+import { hasAttackTargetInRange } from "./eating.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 
@@ -63,7 +64,12 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
   // 松开 interact），这里要显式降级回 "idle"——不然它会像 Task 11 修复前的 "eating" 一样
   // 变成一个永不清零的僵死 activity（虽然 "drinking" 不参与任何衰减跳过逻辑，暂时无副作用，
   // 但留着就是下一个隐患，一并修掉）。
-  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
+  // Finding 1 修复：!hasAttackTargetInRange(...)（从 eating.ts 导出的单一事实来源）挡在
+  // nearWater 之前——之前这里完全没接"攻击"这个消费者，水边战斗时攻击 tick 的 activity 会被
+  // 这段无条件覆写成 "drinking" 并回复口渴，冷却中的 tick（每秒 20 个里 19 个）同样中招。
+  // 只查"目标是否存在"而不是 "activity !== 'attacking'"，因为冷却中攻击分支会把 activity
+  // 降级成 "idle"，跟"没有攻击目标"是同一个信号，用 activity 判会漏掉冷却 tick。
+  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && !hasAttackTargetInRange(state, player) && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
     player.activity = "drinking";
     player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * DT);
   } else if (player && player.activity === "drinking") {

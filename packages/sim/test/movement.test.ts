@@ -83,7 +83,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       needs: { hunger: 80, thirst: 80, fatigue: 100 },
       locomotion: "walk", activity: "moving", // 故意预设为 moving，验证挡水后会回落 idle
       aiState: "idle", targetId: null, attackCooldown: 0,
-      feedingCarcassId: null, burrowId: null, satiatedTimer: 0, panicTimer: 0,
+      feedingCarcassId: null, burrowId: null, satiatedTimer: 0,
       digProgress: 0, interactHeld: false,
       aiDirX: 0, aiDirZ: 1, aiTimer: 0,
     };

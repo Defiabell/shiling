@@ -67,7 +67,6 @@ export function spawnCreature(
     feedingCarcassId: null,
     burrowId: null,
     satiatedTimer: 0,
-    panicTimer: 0,
     digProgress: 0,
     interactHeld: false,
     aiDirX: Math.sin(initAiAngle),
