@@ -33,14 +33,12 @@ function nearWater(c: Creature, terrain: Terrain): boolean {
 function tickCreatureNeeds(c: Creature): void {
   if (c.activity === "dead") return;
 
-  // 正在进食（玩家吃尸体/潭狩 doFeed/苓鼠 doGraze 三处都会把 activity 设为 "eating"）的
-  // 这一 tick 不再叠加饥饿衰减——本 tick 的进食增量已经代表了净变化，否则每 tick 都会被
-  // hungerDecayPerSec 偷走一部分，导致"边吃边饿"的双重结算，与 eating.ts 里
-  // `hunger += consumed*hungerPerMeat` 的单一净值语义冲突。饮水没有专门的 "drinking 抵消
-  // thirst 衰减" 规则，两者独立结算是既有行为，不在本次 minimal diff 范围内改动。
-  if (c.activity !== "eating") {
-    c.needs.hunger = clamp01to100(c.needs.hunger - TUNING.hungerDecayPerSec * DT);
-  }
+  // 饥渴衰减对所有活物、所有 activity 一视同仁——不按 activity 特判（不然会把"吃东西时
+  // 饥饿衰减该不该继续算"这种平衡性决策，从具体的进食系统悄悄挪到这个公共函数里，隐性影响
+  // 苓鼠 graze/潭狩 feed 的净回复速率）。玩家吃尸体这一 tick 同时叠加衰减与回复导致的
+  // "双重结算"问题，改在 eating.ts 的进食公式里就地补偿（只影响进食者本身，不影响其它
+  // activity==="eating" 的生物），见 eating.ts 顶部注释。
+  c.needs.hunger = clamp01to100(c.needs.hunger - TUNING.hungerDecayPerSec * DT);
   c.needs.thirst = clamp01to100(c.needs.thirst - TUNING.thirstDecayPerSec * DT);
 
   let fatigueRecoverPerSec: number;
@@ -60,9 +58,16 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
 
   for (const c of state.creatures) tickCreatureNeeds(c);
 
+  // dig spot/攻击/进食（前三个消费者，见 eating.ts 顶部注释）都不满足才轮到饮水；
+  // 满足时才把 activity 置 "drinking"，否则若上一 tick 还残留 "drinking"（比如离开水边、
+  // 松开 interact），这里要显式降级回 "idle"——不然它会像 Task 11 修复前的 "eating" 一样
+  // 变成一个永不清零的僵死 activity（虽然 "drinking" 不参与任何衰减跳过逻辑，暂时无副作用，
+  // 但留着就是下一个隐患，一并修掉）。
   if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
     player.activity = "drinking";
     player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * DT);
+  } else if (player && player.activity === "drinking") {
+    player.activity = "idle";
   }
 
   for (const c of state.creatures) {
