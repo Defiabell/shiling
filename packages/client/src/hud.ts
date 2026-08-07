@@ -304,8 +304,9 @@ interface LampHandle {
 }
 
 /**
- * Builds one "灯盏" row: 汉字标 + 笔触条. The 墨点 dot is a child of `fill`
- * positioned at its own right edge (`right:-3px`), so it rides along with
+ * Builds one "灯盏" row: 汉字标 + 笔触条. The 墨点 dot is a child of `fill`,
+ * inset 3px from its right edge (`right:3px` — see the detailed clipping
+ * rationale on `.hud-lamp-dot` in HUD_CSS above), so it rides along with
  * the fill's width purely through CSS layout — no extra per-frame JS beyond
  * the existing width write below.
  */
