@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
-import { buildTerrainMesh, updateDigSpots } from "./render/terrainMesh.js";
+import { buildTerrainMesh, updateDigSpots, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createInput } from "./input.js";
@@ -103,12 +103,13 @@ renderer.setAnimationLoop(() => {
     acc -= DT;
   }
   // Wall-clock seconds — the sole phase source model.animate's sin/spring
-  // formulas key off of (Task 4). A future water-surface animation (Task 5)
-  // is expected to reuse this same tSec, hence hoisting it out here instead
-  // of computing it inline in the call below.
+  // formulas key off of (Task 4). The water-surface animation below (Task 5)
+  // reuses this same tSec, hence hoisting it out here instead of computing
+  // it inline in either call.
   const tSec = now / 1000;
   applyInterp(views, acc / DT, tSec);
   updateDigSpots(terrainGroup, sim.terrain);
+  updateWater(tSec);
   // Follow the render-interpolated mesh position (not the raw once-per-step
   // sim position) so the camera reads smooth even when a slow frame makes
   // the while-loop above run several fixed steps back-to-back. Keyed by
