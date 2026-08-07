@@ -10,6 +10,7 @@ import { createScreenFx } from "./render/screenFx.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
+import { showTitle } from "./title.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 const sim = createSim(Date.now() >>> 0);
@@ -108,13 +109,38 @@ let last = performance.now();
 // while 循环一次都没跑时，沿用上一帧的值（冲刺/移动状态没有理由在没有新 sim
 // 步进的情况下突变）。
 let lastInput: PlayerInput | null = null;
+
+// Task 9：世界在 createSim() 里已经把所有生物 spawn 好了（见 sim.ts 的
+// spawnCreature），这里先同步一次视图，让标题画面背后的"活的青丘"在用户点击
+// 「入山」之前就已经能看到生物模型——它们的 idle 呼吸/摆尾动画只吃下面
+// applyInterp 传的 tSec（wall-clock），不依赖 sim 是否已经 step 过，所以不必
+// 等第一次 sim.step() 才出现在场景里。
+syncCreatures(scene, sim.state, views);
+
+// Task 9 gate：`started` 锁在 false 时，渲染循环照常跑（地形/生物/粒子/水面
+// 全部继续用 tSec 播视觉动画，backdrop 是"活的"），但下面的 `if (started)`
+// 块不会喂 sim.step、也不会更新 HUD——世界的模拟状态冻结在 tick 0。
+// showTitle() 的 onEnter 回调把 started 置真，从那一帧起 sim 正常步进；
+// acc（fixed-step 累加器）也刻意留在 if 内部才开始累加，避免标题画面挂着的
+// 这段时间被计入 frameDt 后，点击瞬间攒出一大坨 acc 触发追赶式连续 step。
+let started = false;
+showTitle(() => {
+  started = true;
+});
+
 renderer.setAnimationLoop(() => {
   const now = performance.now();
-  // 单帧最多补 0.25s 模拟时间：切后台/掉帧恢复时不会因为一次性追赶太多步而卡死。
   const frameDt = Math.min(0.25, (now - last) / 1000);
-  acc += frameDt;
   last = now;
-  while (acc >= DT) {
+  // 单帧最多补 0.25s 模拟时间：切后台/掉帧恢复时不会因为一次性追赶太多步而卡死。
+  // Task 9 gate：`started` 为 false 时完全跳过这个 if 块（不喂 sim.step，acc
+  // 也不累加）——世界冻结在 tick 0；下面 applyInterp 等视觉更新仍无条件执行，
+  // 让 backdrop 继续"活"（生物 idle 动画、水面、粒子都只吃 tSec/frameDt，
+  // 不依赖这里是否 step 过）。
+  if (started) {
+    acc += frameDt;
+  }
+  while (started && acc >= DT) {
     snapshotPrev(views);
     lastInput = input.read(followCam.yaw);
     sim.step(lastInput);
@@ -169,7 +195,19 @@ renderer.setAnimationLoop(() => {
   const shake = screenFx.getShakeOffset();
   camera.position.x += shake.x;
   camera.position.y += shake.y;
+  // input.consume() 必须无条件每帧调用，不能塞进下面的 `if (started)`——
+  // followCam.update() 在它上面已经无条件读过 input.camDelta() 一次（Task 9
+  // 之前就是这个顺序，未改动），如果只在 started 时才 consume，标题画面淡出
+  // 期间（title.ts 的 `.title-fade-out` 会把 pointer-events 提前设成
+  // none——即 600ms 淡出动画播放中、onEnter/started 还没真正置真的这段窗口，
+  // canvas 已经能重新接收拖拽）攒下的 dx/dy 永远清不掉，会被 followCam
+  // 每一帧重复叠加成越转越远的镜头（code review 抓到的真实 bug）。
+  // Task 9 gate：只有 HUD 更新需要按 started 冻结——标题画面还在时 HUD 应
+  // 保持 createHud() 刚建好时的初始空状态，藏在标题遮罩底下，直到玩家点
+  // 「入山」。
   input.consume();
-  hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
+  if (started) {
+    hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
+  }
   renderer.render(scene, camera);
 });

@@ -91,8 +91,12 @@ const NOISE_TILE_SIZE = 256;
 const NOISE_BASE = 220;
 const NOISE_SPREAD = 18;
 
-/** 生成 256×256 灰度噪声（每像素 220±18），返回可直接用作 CSS background-image 的 data URL。 */
-function generatePaperNoiseDataUrl(): string {
+/**
+ * 生成 256×256 灰度噪声（每像素 220±18），返回可直接用作 CSS background-image 的 data URL。
+ * 导出供 title.ts（Task 9）复用同一份纹理生成逻辑——两处都是"纸色噪底"，
+ * 不重复实现一遍 canvas 噪声算法。
+ */
+export function generatePaperNoiseDataUrl(): string {
   const canvas = document.createElement("canvas");
   canvas.width = NOISE_TILE_SIZE;
   canvas.height = NOISE_TILE_SIZE;
