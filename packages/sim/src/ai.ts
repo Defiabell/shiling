@@ -55,34 +55,44 @@ function rotate2d(x: number, z: number, radians: number): { x: number; z: number
 /**
  * 与 moveCreature 内部同款"目标点是否落水"探测，供 flee 挑选 ±60° 备选方向使用。
  * 旱鸭子（canSwim=false）在陆地上时用 walkSpeed 探测，与 moveCreature 的挡水判定保持一致。
+ * speedScale（默认 1）：doFlee 在疲态减速时要传同一个 speedScale，否则这里探测的落点比
+ * moveCreature 实际会走到的更远，可能在岸边多绕一次不必要的 ±60°（moveCreature 自己会
+ * 用真实目标点重新校验，不会因此卡死或走错，纯属保守，但探测口径不一致终归是隐患）。
  */
-function blockedByWater(c: Creature, dirX: number, dirZ: number, terrain: Terrain, def: SpeciesDef): boolean {
+function blockedByWater(c: Creature, dirX: number, dirZ: number, terrain: Terrain, def: SpeciesDef, speedScale = 1): boolean {
   const { x: nx, z: nz } = norm2d(dirX, dirZ);
   if (nx === 0 && nz === 0) return false;
-  const tx = c.pos.x + nx * def.walkSpeed * DT;
-  const tz = c.pos.z + nz * def.walkSpeed * DT;
+  const tx = c.pos.x + nx * def.walkSpeed * speedScale * DT;
+  const tz = c.pos.z + nz * def.walkSpeed * speedScale * DT;
   return !def.canSwim && terrain.isWater(tx, tz);
 }
 
-/** 反向全速逃离威胁；撞水则尝试 ±60° 旋转后的备选方向。 */
+/**
+ * 反向全速逃离威胁；撞水则尝试 ±60° 旋转后的备选方向。
+ * 逃跑耐力（M0.5 postfix-3）：c.fleeTime 记录本轮连续 flee 已持续的秒数（由
+ * tickLingshu 逐 tick 累加/清零，见该函数注释），超过 fleeFatigueThresholdSec
+ * 后按 fleeFatigueSpeedMult 减速——"追一段就能追上"的正反馈，避免无限风筝。
+ */
 function doFlee(c: Creature, terrain: Terrain, threat: Creature, def: SpeciesDef): void {
+  const fatigued = c.fleeTime > TUNING.fleeFatigueThresholdSec;
+  const speedScale = fatigued ? TUNING.fleeFatigueSpeedMult : 1;
   let { x: dirX, z: dirZ } = norm2d(c.pos.x - threat.pos.x, c.pos.z - threat.pos.z);
   if (dirX === 0 && dirZ === 0) {
     // 极端退化：位置重合，借当前朝向随便选一个逃跑方向。
     dirX = Math.sin(c.yaw);
     dirZ = Math.cos(c.yaw);
   }
-  if (blockedByWater(c, dirX, dirZ, terrain, def)) {
+  if (blockedByWater(c, dirX, dirZ, terrain, def, speedScale)) {
     const plus60 = rotate2d(dirX, dirZ, Math.PI / 3);
     const minus60 = rotate2d(dirX, dirZ, -Math.PI / 3);
-    if (!blockedByWater(c, plus60.x, plus60.z, terrain, def)) {
+    if (!blockedByWater(c, plus60.x, plus60.z, terrain, def, speedScale)) {
       dirX = plus60.x; dirZ = plus60.z;
-    } else if (!blockedByWater(c, minus60.x, minus60.z, terrain, def)) {
+    } else if (!blockedByWater(c, minus60.x, minus60.z, terrain, def, speedScale)) {
       dirX = minus60.x; dirZ = minus60.z;
     }
     // 三个方向都挡水：仍用原方向调用，moveCreature 会在岸边贴住并把 activity 回落 idle。
   }
-  moveCreature(c, dirX, dirZ, false, terrain); // 不冲刺：NPC 无疲劳消耗简化
+  moveCreature(c, dirX, dirZ, false, terrain, speedScale); // 不冲刺：NPC 无疲劳消耗简化
 }
 
 /** 每 aiRepathSec 用 rng 重新选一个随机方向游走。 */
@@ -215,12 +225,18 @@ function tickTanshou(c: Creature, state: GameState, terrain: Terrain, rng: Rng):
 
 function tickLingshu(c: Creature, state: GameState, terrain: Terrain, rng: Rng): void {
   const def = SPECIES.lingshu!;
+  // 觅食分心（M0.5 postfix-3）：吃草时（aiState==="graze"，等价于本 tick 开始时
+  // 上一帧已经把 activity 落成 "eating"）警觉性降低，威胁检测半径按
+  // grazeDistractionFactor 收缩——奖励玩家绕到侧后方潜近，而不是从任意方向
+  // 一走近就被 10m 的满感知半径惊动。只影响"是否触发 flee"这一判定，不改
+  // fleeDistance/脱险阈值。
+  const senseRadius = c.aiState === "graze" ? def.senseRadius * TUNING.grazeDistractionFactor : def.senseRadius;
   const found = nearestThreat(c, state);
   const threatDist = found?.dist ?? Infinity;
 
   // 威胁判定优先于饥饿状态机：任一状态下进入 senseRadius 都立即转 flee；
   // 已在 flee 中的则要等威胁拉开到 fleeDistance 之外才解除。
-  if (threatDist <= def.senseRadius) {
+  if (threatDist <= senseRadius) {
     c.aiState = "flee";
   } else if (c.aiState === "flee" && threatDist > def.fleeDistance) {
     c.aiState = "wander";
@@ -230,6 +246,17 @@ function tickLingshu(c: Creature, state: GameState, terrain: Terrain, rng: Rng):
   if (c.aiState !== "flee") {
     if (c.aiState === "graze" && c.needs.hunger >= 90) c.aiState = "wander";
     else if (c.aiState !== "graze" && c.needs.hunger < 50) c.aiState = "graze";
+  }
+
+  // 逃跑耐力计时（M0.5 postfix-3）：flee 中累加 fleeTime、清零 fleeRecoverTime；
+  // 非 flee 时反过来累加 fleeRecoverTime，攒够 fleeRecoverSec 才把 fleeTime
+  // 清零——中途再次受惊会打断恢复计时，但不会把已经攒下的疲态提前抹掉。
+  if (c.aiState === "flee") {
+    c.fleeTime += DT;
+    c.fleeRecoverTime = 0;
+  } else {
+    c.fleeRecoverTime += DT;
+    if (c.fleeRecoverTime >= TUNING.fleeRecoverSec) c.fleeTime = 0;
   }
 
   if (c.aiState === "flee") doFlee(c, terrain, found!.threat, def);

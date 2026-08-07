@@ -162,6 +162,22 @@ if (import.meta.env.DEV) {
       p.z = z;
       p.y = sim.terrain.heightAt(x, z);
     },
+    // M0.5 postfix-3 verification hooks: getPlayerYaw feeds the camera
+    // auto-recenter check (compare followCam.yaw against the player's actual
+    // facing); getCreatures gives an external Playwright script enough to
+    // find a grazing vs. wandering lingshu and drive the hunting loop
+    // end-to-end without reaching into sim internals from outside.
+    getPlayerYaw: () => getPlayer(sim.state).yaw,
+    getCreatures: () =>
+      sim.state.creatures.map((c) => ({
+        id: c.id,
+        species: c.species,
+        x: c.pos.x,
+        z: c.pos.z,
+        hp: c.hp,
+        aiState: c.aiState,
+        activity: c.activity,
+      })),
   };
 }
 
@@ -225,7 +241,13 @@ renderer.setAnimationLoop(() => {
   // the while-loop above run several fixed steps back-to-back. Keyed by
   // `creature:${id}` per CreatureViews' convention (see creatureView.ts).
   const playerView = views.get(`creature:${sim.state.playerId}`);
-  if (playerView) followCam.update(playerView.mesh.position, input.camDelta());
+  if (playerView) {
+    // isMoving mirrors the sprint-FOV gate just above (activity==="moving" is
+    // movement.ts's authoritative signal); auto-recenter (M0.5 postfix-3)
+    // only engages while the player is actually walking/running somewhere,
+    // never while standing still deciding where to look.
+    followCam.update(playerView.mesh.position, input.camDelta(), frameDt, player.yaw, player.activity === "moving", input.isDragging());
+  }
   // 震屏偏移必须在 followCam.update() 之后叠加——followCam 每帧都会把
   // camera.position 摆回"目标 + 轨道半径"算出的位置，若震屏偏移加在它之前会被
   // 直接覆盖掉（见 camera.ts update() 里的注释）。

@@ -54,6 +54,14 @@ export interface Input {
   camDelta(): { dx: number; dy: number };
   /** Clears the accumulated drag delta; call once per render frame after the camera has consumed it. */
   consume(): void;
+  /**
+   * Whether the pointer is currently held down (mid-drag), independent of
+   * camDelta() — a drag paused mid-gesture (pointer still down, mouse not
+   * moving this frame) still counts as manual input for camera.ts's
+   * auto-recenter gate (M0.5 postfix-3): it must not sneak in just because
+   * one frame's delta happened to be zero.
+   */
+  isDragging(): boolean;
 }
 
 /**
@@ -162,6 +170,9 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
     consume() {
       accumDx = 0;
       accumDy = 0;
+    },
+    isDragging() {
+      return dragging;
     },
   };
 }

@@ -7,7 +7,7 @@ function mkCreature(over: Partial<Creature>): Creature {
     needs: { hunger: 80, thirst: 80, fatigue: 100 }, locomotion: "walk", activity: "idle",
     aiState: "wander", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
-    aiDirX: 0, aiDirZ: 1, aiTimer: 0, ...over };
+    aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0, ...over };
 }
 function mkState(over: Partial<GameState>): GameState {
   return { tick: 0, playerId: 99, creatures: [], carcasses: [], playerDead: false, nextId: 100, ...over };

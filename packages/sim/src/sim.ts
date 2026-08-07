@@ -72,6 +72,8 @@ export function spawnCreature(
     aiDirX: Math.sin(initAiAngle),
     aiDirZ: Math.cos(initAiAngle),
     aiTimer: TUNING.aiRepathSec,
+    fleeTime: 0,
+    fleeRecoverTime: 0,
   };
   state.creatures.push(c);
   return c;

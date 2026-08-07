@@ -4,8 +4,13 @@ import { DT } from "./sim.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 
-/** 通用运动学移动：走/游自动切换、贴地、边界 clamp。也供 AI 使用。 */
-export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: boolean, terrain: Terrain): void {
+/**
+ * 通用运动学移动：走/游自动切换、贴地、边界 clamp。也供 AI 使用。
+ * speedScale（默认 1）：M0.5 postfix-3 为 lingshu 逃跑疲态新增的乘数出口——
+ * norm2d 会把 dirX/dirZ 归一化，直接缩放方向向量的模长不起作用，所以疲态减速
+ * 必须走这个显式参数，而不是塞进 dirX/dirZ 里。
+ */
+export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: boolean, terrain: Terrain, speedScale = 1): void {
   if (c.burrowId !== null || c.activity === "dead") return;
   const def = SPECIES[c.species]!;
   const half = terrain.size / 2;
@@ -28,6 +33,7 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
   const inWater = terrain.isWater(c.pos.x, c.pos.z);
   let speed = inWater ? def.swimSpeed : def.walkSpeed;
   if (sprint && c.needs.fatigue > TUNING.minSprintFatigue) speed *= TUNING.sprintMultiplier;
+  speed *= speedScale;
   const tx = Math.max(-half, Math.min(half, c.pos.x + nx * speed * DT));
   const tz = Math.max(-half, Math.min(half, c.pos.z + nz * speed * DT));
   if (!def.canSwim && terrain.isWater(tx, tz)) {
