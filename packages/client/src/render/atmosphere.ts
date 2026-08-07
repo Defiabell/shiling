@@ -81,7 +81,10 @@ export function setupAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRendere
   scene.add(sun);
 
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // Patch 3a (playtest feedback: 画面太暗太糊): 1.05 → 1.18, paired with
+  // PALETTE.hemiIntensity/sunIntensity's own bump — keeps the dusk mood but
+  // lifts shadows/mids off near-black.
+  renderer.toneMappingExposure = 1.18;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 }
 

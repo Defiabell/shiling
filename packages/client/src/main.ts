@@ -7,13 +7,18 @@ import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
 import { createParticles } from "./render/particles.js";
 import { createScreenFx } from "./render/screenFx.js";
+import { buildScatter } from "./render/scatter.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
 import { showTitle } from "./title.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
-const sim = createSim(Date.now() >>> 0);
+// 捕获成变量（而不是像原先那样直接内联进 createSim(...)）：Patch 3c 的地表
+// 点缀（scatter.ts）要用同一个种子做 rejection-sample，"reuse the sim seed
+// so scatter is deterministic per world" ——如果不捕获就没有第二次读取的机会。
+const seed = Date.now() >>> 0;
+const sim = createSim(seed);
 const scene = new THREE.Scene();
 // 背景交给天空穹顶接管（setupAtmosphere 里的 SphereGeometry + ShaderMaterial），
 // 不再用 renderer 清屏色 / 单一 scene.background 顶替。
@@ -28,6 +33,8 @@ setupAtmosphere(scene, renderer);
 mountPaperOverlay();
 const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX);
 scene.add(terrainGroup);
+// Patch 3c：地表点缀，地形建好之后一次性构建（静态 InstancedMesh，不逐帧更新）。
+buildScatter(scene, sim.terrain, seed);
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -46,7 +53,7 @@ function isPlayerBurrowed(): boolean {
 const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
 const hud = createHud();
-const particles = createParticles(scene);
+const particles = createParticles(scene, sim.terrain);
 const screenFx = createScreenFx(camera);
 const eventDiffer = createSimEventDiffer();
 // **CRITICAL（见 simEvents.ts 头部 JSDoc 的快照契约）**：sim.state 是同一个对象、
@@ -127,6 +134,36 @@ let started = false;
 showTitle(() => {
   started = true;
 });
+
+// Post-fix-1 verification hook (Bug 1, A/D 左右相反): dev-only, tree-shaken
+// out of production builds (`import.meta.env.DEV` is a Vite compile-time
+// constant, so `pnpm build` drops this whole block — see vite build output).
+// Exposes just enough read-only state for an external Playwright script to
+// assert the real running app's player-position delta matches the fixed
+// camera-relative strafe basis, without permanently wiring any test-only
+// globals into the production bundle.
+if (import.meta.env.DEV) {
+  (window as unknown as { __shiling: unknown }).__shiling = {
+    getPlayerPos: () => {
+      const p = getPlayer(sim.state).pos;
+      return { x: p.x, y: p.y, z: p.z };
+    },
+    getCamYaw: () => followCam.yaw,
+    enter: () => {
+      started = true;
+    },
+    // Verification-only teleport (never used by gameplay code): warps the
+    // player to a given XZ so a Playwright script can reliably frame close-up
+    // screenshots (e.g. near world origin, where particles.ts's firefly
+    // spread is centered) instead of waiting on a random spawn/walk.
+    warpTo: (x: number, z: number) => {
+      const p = getPlayer(sim.state).pos;
+      p.x = x;
+      p.z = z;
+      p.y = sim.terrain.heightAt(x, z);
+    },
+  };
+}
 
 renderer.setAnimationLoop(() => {
   const now = performance.now();

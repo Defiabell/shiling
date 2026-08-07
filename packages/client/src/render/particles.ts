@@ -1,43 +1,56 @@
 import * as THREE from "three";
+import type { Terrain } from "@shiling/sim";
 import { PALETTE } from "./palette.js";
 import type { SimEvent } from "./simEvents.js";
 
 /**
- * 粒子系统（Task 6）：单个 THREE.Points，容量 512，一次性分配、永不重建几何体。
- * 512 个槽位切成两段，各自的生命周期管理完全独立：
+ * 粒子系统（Task 6，Post-fix-1 拆成两个 THREE.Points）：
  *
- * - `[0, FIREFLY_COUNT)`（40 个）：萤火氛围槽位，创建时初始化一次，此后永久存活，
- *   由 `update()` 里单独的一段循环按正弦漂移驱动——effect 池的 spawn/kill 逻辑
- *   完全不触碰这段索引。
- * - `[FIREFLY_COUNT, POOL_CAPACITY)`（472 个）：事件粒子池（墨溅/水花/尘土/……），
- *   环形游标分配（round-robin over-write，不维护 free-list）：472 远大于任何单次
- *   事件的粒子数（最大的一次性 burst 是 lethal hit 的 38），正常游玩节奏下前一批
- *   粒子早就过完生命周期（life<=0）才会被游标绕回来复用，只有极端连续暴击/连续
- *   挖洞才会出现"新粒子提前顶掉一个还没死透的旧粒子"，视觉上不可感知，用这个
- *   简单方案换掉 free-list 的复杂度是有意为之的取舍。
+ * - 萤火氛围（`FIREFLY_COUNT`=40）：独立一个 THREE.Points/geometry/material，
+ *   创建时初始化一次，此后永久存活，由 `update()` 里单独的一段循环按正弦漂移
+ *   驱动。
+ * - 事件粒子池（`EFFECT_CAPACITY`=472）：另一个独立的 THREE.Points/geometry/
+ *   material，环形游标分配（round-robin over-write，不维护 free-list）：472
+ *   远大于任何单次事件的粒子数（最大的一次性 burst 是 lethal hit 的 38），正常
+ *   游玩节奏下前一批粒子早就过完生命周期（life<=0）才会被游标绕回来复用，只有
+ *   极端连续暴击/连续挖洞才会出现"新粒子提前顶掉一个还没死透的旧粒子"，视觉上
+ *   不可感知，用这个简单方案换掉 free-list 的复杂度是有意为之的取舍。
  *
- * 只用一个 THREE.Points（而不是萤火单独一套）：两段槽位共享同一份
- * position/color BufferAttribute、同一个 PointsMaterial、同一次 draw call；
- * 萤火和事件粒子在视觉上都是"暗夜里的墨点/光点"，没有必要为了逻辑上的独立性
- * 拆成两个 scene 节点、两次 GPU 提交——这正是 brief 里"单个 THREE.Points"的字面
- * 要求，也更省心（不用另外管理第二个 geometry 的创建/清理时机）。
+ * **两个 Points 而不是一个（Post-fix-1 变更，原先是单个 THREE.Points 共享
+ * 一份 position/color 属性）**：用户反馈"小黄点"——40 个萤火用无 `map` 的
+ * PointsMaterial 渲成硬边方块，被误读成一个可互动的拾取物。修复思路是给点
+ * 材质挂一张 canvas 生成的径向渐变光斑贴图（`createGlowSprite`），让点渲成
+ * 柔和圆形光晕而不是硬方块。但萤火本身需要*加色（additive）*混合才有"发光"
+ * 的读法，而事件粒子（墨溅/水花/尘土……）的生命周期效果是靠 RGB 整体线性衰减
+ * 到近黑来表达"融入纸面"——同一份颜色数据如果被迫套加色混合，衰减到暗色时会
+ * 在深色背景上叠加得比正常混合更亮，读出来的效果是"墨点发光"而不是"墨点变淡
+ * 消失"，与预期的水墨氛围直接冲突。二者对混合模式的要求互斥，没有一种共享
+ * 材质能同时满足，所以拆成两个独立 Points/material 才是对的：萤火用
+ * `AdditiveBlending` + 逐顶点 alpha twinkle（4 分量 vertexColors，
+ * three.js 在 color attribute itemSize===4 时会启用 USE_COLOR_ALPHA，直接把
+ * 第 4 分量当透明度乘进最终颜色），事件粒子保留原先的 `NormalBlending` +
+ * RGB 衰减、只是额外接上同一张贴图换掉硬方块。两个 Points 各自的 draw call
+ * 数量都很小（40 / 472 个点），比起单 draw call 的性能收益，正确的混合语义
+ * 更重要——这是一次有意识的取舍，不是遗漏。
  *
- * 死粒子按 brief 要求整体挪到 y=-999（而不是切 visible，Points 也没有逐点
- * visible 这回事）；x/z 不需要一起清空，反正 y=-999 已经在任何摄像机可见范围之外。
+ * 死粒子仍按 brief 要求整体挪到 y=-999（而不是切 visible，Points 也没有逐点
+ * visible 这回事）；x/z 不需要一起清空，反正 y=-999 已经在任何摄像机可见范围
+ * 之外。
  *
- * `size` 字段（Float32Array，逐粒子记录 spawn 时的"名义大小"）按 brief 的池
- * 结构要求保留，但**目前不会真的改变渲染出的点的大小**：THREE.PointsMaterial
+ * `size` 字段（Float32Array，逐粒子记录 spawn 时的"名义大小"）按原结构保留在
+ * 事件粒子池上，但**目前不会真的改变渲染出的点的大小**：THREE.PointsMaterial
  * 的 `size` 是材质级 uniform（所有点公用同一个值），stock 材质不支持逐顶点
- * size attribute（那需要手写 ShaderMaterial，brief 明确点名的是 PointsMaterial
- * 本身）。这是一个记录在案的已知简化，而不是遗漏——各效果之间的视觉分量差异
- * 现在完全靠"粒子数量"（12/36/18/8/6/10/14）和颜色来表达，这也是 stock
- * PointsMaterial + vertexColors 组合实际能表达的两个维度。
+ * size attribute（那需要手写 ShaderMaterial）。这是一个记录在案的已知简化，
+ * 而不是遗漏——各效果之间的视觉分量差异现在完全靠"粒子数量"（12/36/18/8/6/14）
+ * 和颜色来表达。拆分成独立 Points 之后，萤火终于可以用一个明显更小的
+ * `FIREFLY_POINT_SIZE`（约事件粒子的一半），不再受制于事件池那档更大的尺寸——
+ * 这正是拆分带来的第二个好处（不只是混合模式）。
  */
-const POOL_CAPACITY = 512;
 const FIREFLY_COUNT = 40;
-const EFFECT_START = FIREFLY_COUNT;
+const EFFECT_CAPACITY = 472;
 const DEAD_Y = -999;
 const POINT_SIZE = 0.45;
+const FIREFLY_POINT_SIZE = POINT_SIZE * 0.5; // 用户反馈"小黄点"太显眼像拾取物——减半
 
 // ---- hit（墨溅）----
 const HIT_COUNT = 12;
@@ -101,27 +114,55 @@ const BURROW_RING_UP_MAX = 1.2;
 const BURROW_RING_SIZE = 0.25;
 
 // ---- 萤火（常驻氛围）----
-// createParticles 的签名只有 scene，handle() 才拿得到 terrain（且只给 waterLevel），
-// 萤火的游荡范围因此不是采样 terrain.heightAt 算出来的，而是按已知的世界尺度
-// （QINGQIU_GRAYBOX.size=240，半宽 120）留出安全边距后写死的一个近似值——
-// 与 main.ts 里 nearWater() 复刻 needs.ts 判定逻辑是同一种"渲染层没有权威数据源
-// 就退而求其次自己估一个"的处理方式，不是疏漏。
+// Post-fix-1：createParticles 现在多接一个 terrain 参数（原先只有 scene，
+// handle() 才拿得到 terrain，但也只给 waterLevel），萤火的游荡高度因此改成
+// 采样 terrain.heightAt 算出的"地表 + 固定悬浮带"，不再是写死的世界绝对 Y——
+// 之前 FIREFLY_MIN_Y..MAX_Y=[1,4] 是绝对世界坐标，在 hillAmp=9 的丘陵地形上
+// 完全可能钻进地里或飘到令人困惑的高度，是用户反馈"读作地面物品"的部分成因。
 const FIREFLY_SPREAD = 90;
-const FIREFLY_MIN_Y = 1;
-const FIREFLY_MAX_Y = 4;
+const FIREFLY_MIN_Y = 0.8; // 地表以上（Patch: 相对 terrain.heightAt，不再是绝对世界 Y）
+const FIREFLY_MAX_Y = 2.5;
 const FIREFLY_DRIFT_RADIUS = 3;
 const FIREFLY_DRIFT_FREQ_X = 0.25;
 const FIREFLY_DRIFT_FREQ_Z = 0.18;
 const FIREFLY_BOB_AMP = 0.6;
 const FIREFLY_BOB_FREQ = 0.35;
-const FIREFLY_TWINKLE_BASE = 0.75;
+const FIREFLY_TWINKLE_BASE = 0.75; // 现在驱动的是逐顶点 alpha（见下），不再是 RGB 亮度倍数
 const FIREFLY_TWINKLE_AMP = 0.25;
 const FIREFLY_TWINKLE_FREQ = 1.8;
+
+// ---- 柔光贴图（Post-fix-1）----
+const SPRITE_TEXTURE_SIZE = 64;
 
 /** hex → [r,g,b]，只在 createParticles 里对每个用到的 PALETTE 色调用一次（非逐帧/逐粒子）。 */
 function toRgb01(hex: number): readonly [number, number, number] {
   const c = new THREE.Color(hex);
   return [c.r, c.g, c.b] as const;
+}
+
+/**
+ * 生成一张径向渐变的柔光贴图（中心白、边缘透明），供两个 Points 材质的
+ * `map` 共用——用户反馈"小黄点"读作方块拾取物，根因是 PointsMaterial 没设
+ * `map` 时 GPU 直接把每个点画成硬边正方形。贴图本身不含颜色信息（纯白+alpha
+ * 渐变），最终可见色仍完全由 vertexColors 决定，贴图只负责"形状"（圆形+边缘
+ * 柔化），职责单一，两种混合模式（加色/普通）都能正确叠加它。
+ */
+function createGlowSprite(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = SPRITE_TEXTURE_SIZE;
+  canvas.height = SPRITE_TEXTURE_SIZE;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("createGlowSprite: 2D context unavailable");
+  const r = SPRITE_TEXTURE_SIZE / 2;
+  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.4, "rgba(255,255,255,0.85)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, SPRITE_TEXTURE_SIZE, SPRITE_TEXTURE_SIZE);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
 }
 
 /**
@@ -142,43 +183,14 @@ function coneVelocity(
   return { vx: Math.cos(phi) * horiz, vy, vz: Math.sin(phi) * horiz };
 }
 
-export function createParticles(scene: THREE.Scene): {
+export function createParticles(
+  scene: THREE.Scene,
+  terrain: Terrain,
+): {
   handle(events: SimEvent[], terrain: { waterLevel: number }): void;
   update(frameDt: number, tSec: number): void;
 } {
-  // ---- 池的底层存储：position/color 是真正喂给 GPU 的 BufferAttribute；
-  // velocity/life/maxLife/gravity/size/baseColor 是纯 CPU 侧模拟状态，
-  // 从头到尾只分配这一份，update()/handle() 里只做原地读写。 ----
-  const positions = new Float32Array(POOL_CAPACITY * 3);
-  const colors = new Float32Array(POOL_CAPACITY * 3);
-  const baseColor = new Float32Array(POOL_CAPACITY * 3); // spawn 时的本色；colors[] 是每帧按 life 衰减派生出的显示色
-  const velocities = new Float32Array(POOL_CAPACITY * 3);
-  const life = new Float32Array(POOL_CAPACITY);
-  const maxLife = new Float32Array(POOL_CAPACITY);
-  const gravity = new Float32Array(POOL_CAPACITY);
-  const size = new Float32Array(POOL_CAPACITY); // 见文件头注释：目前不驱动渲染，仅按 brief 结构保留
-
-  const geometry = new THREE.BufferGeometry();
-  const positionAttr = new THREE.BufferAttribute(positions, 3);
-  const colorAttr = new THREE.BufferAttribute(colors, 3);
-  geometry.setAttribute("position", positionAttr);
-  geometry.setAttribute("color", colorAttr);
-
-  const material = new THREE.PointsMaterial({
-    size: POINT_SIZE,
-    vertexColors: true,
-    transparent: true,
-    sizeAttenuation: true,
-    depthWrite: false,
-  });
-
-  const points = new THREE.Points(geometry, material);
-  // 事件粒子会出现在 240x240 世界的任意位置，且每帧原地重写 position 而不重建
-  // 几何体；three.js 的视锥裁剪只在懒计算时对 geometry.boundingSphere 求值一次
-  // （不会随 needsUpdate 自动重新计算），按初始状态（萤火簇 + 一堆停在 y=-999
-   // 的死粒子）算出的包围球会错误裁掉后续在别处出现的真实 burst，因此关掉裁剪。
-  points.frustumCulled = false;
-  scene.add(points);
+  const sprite = createGlowSprite();
 
   const INK = toRgb01(PALETTE.outlineInk);
   const CINNABAR = toRgb01(PALETTE.cinnabar);
@@ -187,38 +199,93 @@ export function createParticles(scene: THREE.Scene): {
   const CARCASS = toRgb01(PALETTE.carcass);
   const FIREFLY = toRgb01(PALETTE.lampWarm);
 
-  // ---- 萤火槽位：一次性初始化，永久存活，effect 池的 spawn/kill 逻辑不会碰这段索引 ----
+  // ---- 萤火 Points：一次性初始化，永久存活，独立 geometry/material ----
+  const fireflyPositions = new Float32Array(FIREFLY_COUNT * 3);
+  const fireflyColors = new Float32Array(FIREFLY_COUNT * 4); // RGBA：itemSize=4 触发 three.js 的 USE_COLOR_ALPHA
   const fireflyAnchorX = new Float32Array(FIREFLY_COUNT);
-  const fireflyAnchorY = new Float32Array(FIREFLY_COUNT);
+  const fireflyAnchorY = new Float32Array(FIREFLY_COUNT); // 已含地表高度（heightAt 采样结果），非相对值
   const fireflyAnchorZ = new Float32Array(FIREFLY_COUNT);
   const fireflyPhase = new Float32Array(FIREFLY_COUNT);
   for (let i = 0; i < FIREFLY_COUNT; i++) {
-    fireflyAnchorX[i] = (Math.random() * 2 - 1) * FIREFLY_SPREAD;
-    fireflyAnchorZ[i] = (Math.random() * 2 - 1) * FIREFLY_SPREAD;
-    fireflyAnchorY[i] = FIREFLY_MIN_Y + Math.random() * (FIREFLY_MAX_Y - FIREFLY_MIN_Y);
+    const x = (Math.random() * 2 - 1) * FIREFLY_SPREAD;
+    const z = (Math.random() * 2 - 1) * FIREFLY_SPREAD;
+    fireflyAnchorX[i] = x;
+    fireflyAnchorZ[i] = z;
+    // 地表 + 固定悬浮带，而不是绝对世界 Y——见上方 FIREFLY_MIN_Y 注释。漂移
+    // （见 update() 的 FIREFLY_DRIFT_RADIUS）会把萤火移到 anchor 之外的
+    // (x,z)，那里的实际地表高度可能与这里采样的 anchor 高度略有出入；同一种
+    // "渲染层没有权威数据源就退而求其次自己估一个"的处理方式，量级足够小
+    // （漂移半径 3m vs 地形起伏尺度），不做逐帧重新采样。
+    fireflyAnchorY[i] = terrain.heightAt(x, z) + FIREFLY_MIN_Y + Math.random() * (FIREFLY_MAX_Y - FIREFLY_MIN_Y);
     fireflyPhase[i] = Math.random() * Math.PI * 2;
-    positions[i * 3] = fireflyAnchorX[i]!;
-    positions[i * 3 + 1] = fireflyAnchorY[i]!;
-    positions[i * 3 + 2] = fireflyAnchorZ[i]!;
-    colors[i * 3] = FIREFLY[0];
-    colors[i * 3 + 1] = FIREFLY[1];
-    colors[i * 3 + 2] = FIREFLY[2];
+    fireflyPositions[i * 3] = fireflyAnchorX[i]!;
+    fireflyPositions[i * 3 + 1] = fireflyAnchorY[i]!;
+    fireflyPositions[i * 3 + 2] = fireflyAnchorZ[i]!;
+    fireflyColors[i * 4] = FIREFLY[0];
+    fireflyColors[i * 4 + 1] = FIREFLY[1];
+    fireflyColors[i * 4 + 2] = FIREFLY[2];
+    fireflyColors[i * 4 + 3] = FIREFLY_TWINKLE_BASE;
   }
+  const fireflyGeometry = new THREE.BufferGeometry();
+  const fireflyPositionAttr = new THREE.BufferAttribute(fireflyPositions, 3);
+  const fireflyColorAttr = new THREE.BufferAttribute(fireflyColors, 4);
+  fireflyGeometry.setAttribute("position", fireflyPositionAttr);
+  fireflyGeometry.setAttribute("color", fireflyColorAttr);
+  const fireflyMaterial = new THREE.PointsMaterial({
+    size: FIREFLY_POINT_SIZE,
+    map: sprite,
+    vertexColors: true,
+    transparent: true,
+    sizeAttenuation: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending, // "发光"读法——见文件头注释为何不能跟事件粒子共用一个材质
+  });
+  const fireflyPoints = new THREE.Points(fireflyGeometry, fireflyMaterial);
+  // 萤火漂移范围有限（anchor ± drift/bob），但每帧原地重写 position 不重建
+  // 几何体，懒计算的 boundingSphere 不会跟着更新——沿用事件池同样的理由关闭裁剪。
+  fireflyPoints.frustumCulled = false;
+  scene.add(fireflyPoints);
 
-  // ---- 事件粒子池：初始全部"死"，停在 y=-999 ----
-  for (let i = EFFECT_START; i < POOL_CAPACITY; i++) {
+  // ---- 事件粒子池 Points：初始全部"死"，停在 y=-999 ----
+  const positions = new Float32Array(EFFECT_CAPACITY * 3);
+  const colors = new Float32Array(EFFECT_CAPACITY * 3);
+  const baseColor = new Float32Array(EFFECT_CAPACITY * 3); // spawn 时的本色；colors[] 是每帧按 life 衰减派生出的显示色
+  const velocities = new Float32Array(EFFECT_CAPACITY * 3);
+  const life = new Float32Array(EFFECT_CAPACITY);
+  const maxLife = new Float32Array(EFFECT_CAPACITY);
+  const gravity = new Float32Array(EFFECT_CAPACITY);
+  const size = new Float32Array(EFFECT_CAPACITY); // 见文件头注释：目前不驱动渲染，仅按原结构保留
+  for (let i = 0; i < EFFECT_CAPACITY; i++) {
     positions[i * 3 + 1] = DEAD_Y;
     life[i] = 0;
   }
-  positionAttr.needsUpdate = true;
-  colorAttr.needsUpdate = true;
 
-  let nextEffectSlot = EFFECT_START; // 环形分配游标，范围 [EFFECT_START, POOL_CAPACITY)
+  const effectGeometry = new THREE.BufferGeometry();
+  const effectPositionAttr = new THREE.BufferAttribute(positions, 3);
+  const effectColorAttr = new THREE.BufferAttribute(colors, 3);
+  effectGeometry.setAttribute("position", effectPositionAttr);
+  effectGeometry.setAttribute("color", effectColorAttr);
+  const effectMaterial = new THREE.PointsMaterial({
+    size: POINT_SIZE,
+    map: sprite, // 同一张贴图，普通混合——柔光形状但不加色发光，衰减到近黑仍读作"墨渐渐融入纸面"
+    vertexColors: true,
+    transparent: true,
+    sizeAttenuation: true,
+    depthWrite: false,
+  });
+  const effectPoints = new THREE.Points(effectGeometry, effectMaterial);
+  // 事件粒子会出现在 240x240 世界的任意位置，且每帧原地重写 position 而不重建
+  // 几何体；按初始状态（一堆停在 y=-999 的死粒子）算出的包围球会错误裁掉后续
+  // 在别处出现的真实 burst，因此关掉裁剪。
+  effectPoints.frustumCulled = false;
+  scene.add(effectPoints);
+
+  let nextEffectSlot = 0; // 环形分配游标，范围 [0, EFFECT_CAPACITY)
 
   function allocSlot(): number {
     const idx = nextEffectSlot;
     nextEffectSlot++;
-    if (nextEffectSlot >= POOL_CAPACITY) nextEffectSlot = EFFECT_START;
+    if (nextEffectSlot >= EFFECT_CAPACITY) nextEffectSlot = 0;
     return idx;
   }
 
@@ -319,14 +386,14 @@ export function createParticles(scene: THREE.Scene): {
     }
   }
 
-  function handle(events: SimEvent[], terrain: { waterLevel: number }): void {
+  function handle(events: SimEvent[], eventTerrain: { waterLevel: number }): void {
     for (const e of events) {
       switch (e.kind) {
         case "hit":
           spawnHit(e.pos, e.lethal);
           break;
         case "splash":
-          spawnSplash(e.pos, terrain.waterLevel);
+          spawnSplash(e.pos, eventTerrain.waterLevel);
           break;
         case "digTick":
           spawnDust(e.pos);
@@ -355,21 +422,22 @@ export function createParticles(scene: THREE.Scene): {
   }
 
   function update(frameDt: number, tSec: number): void {
-    // 萤火：围绕各自 anchor 正弦漂移 + 轻微亮度明灭（twinkle），永远存活。
+    // 萤火：围绕各自 anchor 正弦漂移 + 逐顶点 alpha twinkle（永远存活，颜色
+    // RGB 恒定为 PALETTE.lampWarm，只有第 4 分量——透明度——按 sin 明灭）。
     for (let i = 0; i < FIREFLY_COUNT; i++) {
       const phase = fireflyPhase[i]!;
-      positions[i * 3] = fireflyAnchorX[i]! + Math.sin(tSec * FIREFLY_DRIFT_FREQ_X + phase) * FIREFLY_DRIFT_RADIUS;
-      positions[i * 3 + 1] = fireflyAnchorY[i]! + Math.sin(tSec * FIREFLY_BOB_FREQ + phase * 1.3) * FIREFLY_BOB_AMP;
-      positions[i * 3 + 2] = fireflyAnchorZ[i]! + Math.cos(tSec * FIREFLY_DRIFT_FREQ_Z + phase) * FIREFLY_DRIFT_RADIUS;
+      fireflyPositions[i * 3] = fireflyAnchorX[i]! + Math.sin(tSec * FIREFLY_DRIFT_FREQ_X + phase) * FIREFLY_DRIFT_RADIUS;
+      fireflyPositions[i * 3 + 1] = fireflyAnchorY[i]! + Math.sin(tSec * FIREFLY_BOB_FREQ + phase * 1.3) * FIREFLY_BOB_AMP;
+      fireflyPositions[i * 3 + 2] = fireflyAnchorZ[i]! + Math.cos(tSec * FIREFLY_DRIFT_FREQ_Z + phase) * FIREFLY_DRIFT_RADIUS;
       const twinkle = FIREFLY_TWINKLE_BASE + FIREFLY_TWINKLE_AMP * Math.sin(tSec * FIREFLY_TWINKLE_FREQ + phase * 2.1);
-      colors[i * 3] = FIREFLY[0] * twinkle;
-      colors[i * 3 + 1] = FIREFLY[1] * twinkle;
-      colors[i * 3 + 2] = FIREFLY[2] * twinkle;
+      fireflyColors[i * 4 + 3] = twinkle;
     }
+    fireflyPositionAttr.needsUpdate = true;
+    fireflyColorAttr.needsUpdate = true;
 
     // 事件粒子池：受重力积分位置、按剩余寿命比例把颜色向黑衰减（墨渐渐融入纸面），
     // 寿命耗尽即刻停到 y=-999 并整帧跳过（不再重复搬运/改色）。
-    for (let i = EFFECT_START; i < POOL_CAPACITY; i++) {
+    for (let i = 0; i < EFFECT_CAPACITY; i++) {
       if (life[i]! <= 0) continue;
       life[i]! -= frameDt;
       if (life[i]! <= 0) {
@@ -386,9 +454,8 @@ export function createParticles(scene: THREE.Scene): {
       colors[i * 3 + 1] = baseColor[i * 3 + 1]! * fade;
       colors[i * 3 + 2] = baseColor[i * 3 + 2]! * fade;
     }
-
-    positionAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    effectPositionAttr.needsUpdate = true;
+    effectColorAttr.needsUpdate = true;
   }
 
   return { handle, update };

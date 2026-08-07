@@ -138,6 +138,66 @@ function createLivingAnimate(
 
 const OUTLINE_SCALE = 1.06;
 
+// ---------------------------------------------------------------------------
+// Ground-contact blob shadow (Patch 3b, playtest feedback: 生物悬浮感)
+// ---------------------------------------------------------------------------
+
+const SHADOW_COLOR = 0x000000;
+const SHADOW_OPACITY = 0.28;
+const SHADOW_Y = 0.02;
+const SHADOW_RADIUS_FACTOR = 0.55; // ≈0.55× body length, per spec
+const SHADOW_SEGMENTS = 20;
+
+/**
+ * A flat CircleGeometry disc laid at `group`'s local y=0.02, added *directly*
+ * to `group` (never through `attach()`) so it (a) moves with the creature
+ * for free via the scene graph, (b) is excluded from ink-outline generation
+ * (only `attach()` calls `addOutline`), and (c) — for carcasses — stays flat
+ * on the ground undisturbed by the `tilt` child wrapper's rotation (see
+ * buildCarcassModel: the shadow is added to `group`, not `tilt`).
+ * `polygonOffset` guards against z-fighting with the terrain mesh directly
+ * underneath (the disc sits only 0.02 above whatever height sim placed the
+ * creature at, which is itself sampled from the same terrain).
+ */
+function buildGroundShadow(radius: number): THREE.Mesh {
+  const geometry = new THREE.CircleGeometry(radius, SHADOW_SEGMENTS);
+  geometry.rotateX(-Math.PI / 2); // native normal +Z → +Y, lies flat
+  const material = new THREE.MeshBasicMaterial({
+    color: SHADOW_COLOR,
+    transparent: true,
+    opacity: SHADOW_OPACITY,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.y = SHADOW_Y;
+  return mesh;
+}
+
+/**
+ * Per-species shadow radius, derived from the same body-shape constants the
+ * living models below build their capsule/sphere geometry from (never a
+ * hardcoded duplicate) — so a future tweak to CAPSULE_BODY/LINGSHU_BODY can't
+ * silently desync the shadow's size from the silhouette it's meant to ground.
+ * "Body length" = full extent along the model's forward axis: capsule length
+ * + both end-cap radii for youshou/tanshou, sphere diameter (scaled) for
+ * lingshu. Shared by both the living builders and buildCarcassModel (a
+ * carcass reuses the same underlying body shape — see carcassShape above).
+ */
+function shadowRadiusFor(species: string): number {
+  switch (species) {
+    case "youshou":
+      return SHADOW_RADIUS_FACTOR * (CAPSULE_BODY.youshou.length + 2 * CAPSULE_BODY.youshou.radius);
+    case "tanshou":
+      return SHADOW_RADIUS_FACTOR * (CAPSULE_BODY.tanshou.length + 2 * CAPSULE_BODY.tanshou.radius);
+    default:
+      // lingshu + defensive fallback, mirrors carcassShape's own default branch.
+      return SHADOW_RADIUS_FACTOR * (2 * LINGSHU_BODY.radius * LINGSHU_BODY.scale[2]);
+  }
+}
+
 interface MeshOpts {
   /** MeshBasicMaterial instead of MeshLambertMaterial — unlit, self-illuminated look (tanshou's eyes). */
   basic?: boolean;
@@ -259,6 +319,8 @@ function buildYoushouModel(): CreatureModel {
   tail.position.set(0, 0.1, -0.14);
   attach(tailMount, tail);
 
+  group.add(buildGroundShadow(shadowRadiusFor("youshou")));
+
   const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
@@ -326,6 +388,8 @@ function buildLingshuModel(): CreatureModel {
   tail.position.set(0, 0, -0.08);
   attach(tailMount, tail);
 
+  group.add(buildGroundShadow(shadowRadiusFor("lingshu")));
+
   const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
@@ -375,6 +439,8 @@ function buildTanshouModel(): CreatureModel {
   tail.rotation.x = -Math.PI / 2 + 0.1; // trails low and mostly straight back
   tail.position.set(0, 0, -0.4);
   attach(tailMount, tail);
+
+  group.add(buildGroundShadow(shadowRadiusFor("tanshou")));
 
   const parts = { head: headMount, tail: tailMount, body };
   return {
@@ -478,6 +544,11 @@ export function buildCarcassModel(species: string): CreatureModel {
   tilt.position.y = carcassGroundLift(geometry);
   tilt.add(body);
   group.add(tilt); // no outline() call: carcass models are unlined per spec
+
+  // Added to `group`, not `tilt`: the shadow must stay flat on the ground
+  // regardless of the carcass's sideways tip-over (see buildGroundShadow's
+  // doc comment).
+  group.add(buildGroundShadow(shadowRadiusFor(species)));
 
   return {
     group,

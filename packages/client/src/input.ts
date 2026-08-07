@@ -12,6 +12,36 @@ interface KeyState {
   e: boolean;
 }
 
+/**
+ * Rotates a (fwd, strafe) input pair into world-space XZ using the camera's
+ * current yaw. Pure and side-effect-free on purpose — extracted out of
+ * read() so test/composeMove.test.ts can pin it down against three.js's own
+ * camera.lookAt basis independently of the rest of this module's DOM wiring.
+ *
+ * Forward-vector convention matches sim's `c.yaw = atan2(nx, nz)` (see
+ * movement.ts): forward at yaw=0 is (0, +1). moveCreature normalizes the
+ * resulting vector itself (norm2d), so a diagonal press producing a
+ * non-unit magnitude here is fine.
+ *
+ * Sign fix (user-reported "A/D 左右相反", M0.5 first playtest): camera.ts
+ * places the camera at `target − r·forward(camYaw)` and calls
+ * `camera.lookAt(target)`. three.js's lookAt basis (Matrix4.lookAt) computes
+ * `zAxis = normalize(eye − target)` and `xAxis = normalize(up × zAxis)` —
+ * for this placement that resolves to `xAxis = forward(camYaw − π/2)`, i.e.
+ * screen-right is the yaw **minus** a quarter turn, not plus. The strafe
+ * terms below are therefore negated relative to the naive "right =
+ * forward(yaw+π/2)" assumption; see composeMove.test.ts for the
+ * independent, three.js-driven proof.
+ */
+export function composeMove(fwd: number, strafe: number, camYaw: number): { x: number; z: number } {
+  const sin = Math.sin(camYaw);
+  const cos = Math.cos(camYaw);
+  return {
+    x: sin * fwd - cos * strafe,
+    z: cos * fwd + sin * strafe,
+  };
+}
+
 export interface Input {
   /**
    * Reads the current held-key/drag state into a PlayerInput, rotating WASD
@@ -118,16 +148,10 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
       }
       const fwd = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
       const strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-      const sin = Math.sin(camYaw);
-      const cos = Math.cos(camYaw);
-      // Rotates the (fwd, strafe) input pair into world XZ using the same
-      // forward-vector convention as sim's `c.yaw = atan2(nx, nz)`
-      // (see movement.ts): forward at yaw=0 is (0, +1), right is (+1, 0).
-      // moveCreature normalizes the resulting vector itself (norm2d), so a
-      // diagonal press producing a non-unit magnitude here is fine.
+      const { x, z } = composeMove(fwd, strafe, camYaw);
       return {
-        moveX: sin * fwd + cos * strafe,
-        moveZ: cos * fwd - sin * strafe,
+        moveX: x,
+        moveZ: z,
         sprint: keys.shift,
         interact,
       };
