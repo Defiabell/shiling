@@ -1,11 +1,12 @@
 import * as THREE from "three";
-import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type Terrain } from "@shiling/sim";
+import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
 import { createParticles } from "./render/particles.js";
+import { createScreenFx } from "./render/screenFx.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
@@ -45,6 +46,7 @@ const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
 const hud = createHud();
 const particles = createParticles(scene);
+const screenFx = createScreenFx(camera);
 const eventDiffer = createSimEventDiffer();
 // **CRITICAL（见 simEvents.ts 头部 JSDoc 的快照契约）**：sim.state 是同一个对象、
 // 每次 step() 原地 mutate；prevSnapshot 必须是每步之前对 differ 实际读取字段的
@@ -99,6 +101,13 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
 const views: CreatureViews = new Map();
 let acc = 0;
 let last = performance.now();
+// 最近一次 sim.step() 用的 input——渲染帧尾部要判断"冲刺且实际在动"时，读的是
+// 已经参与过 sim 权威判定的这一份，而不是重新调一次 input.read()（后者不仅要
+// 再算一遍三角函数，语义上也该是"驱动了当前这一步"的那份输入，不是"读取时刻"
+// 恰好碰到的键盘状态——两者在慢帧/一帧多步时可能不是同一份）。掉帧导致本帧
+// while 循环一次都没跑时，沿用上一帧的值（冲刺/移动状态没有理由在没有新 sim
+// 步进的情况下突变）。
+let lastInput: PlayerInput | null = null;
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   // 单帧最多补 0.25s 模拟时间：切后台/掉帧恢复时不会因为一次性追赶太多步而卡死。
@@ -107,7 +116,8 @@ renderer.setAnimationLoop(() => {
   last = now;
   while (acc >= DT) {
     snapshotPrev(views);
-    sim.step(input.read(followCam.yaw));
+    lastInput = input.read(followCam.yaw);
+    sim.step(lastInput);
     // 每个定步之后立刻同步一次视图：prevPos/currPos 对应"这一步之前→之后"，
     // 而不是攒够多步才同步一次导致的粗插值；同时完成 view 的增删（生/死/尸体腐烂）。
     syncCreatures(scene, sim.state, views);
@@ -115,7 +125,12 @@ renderer.setAnimationLoop(() => {
     // prevSnapshot 此时还是"上一步之后"的快照，curr 是"这一步之后"的最新状态，
     // 正是 differ 要比较的那一对（见 simEvents.ts JSDoc 里的调用顺序范式）。
     const events = eventDiffer(prevSnapshot, sim.state, DT);
-    if (events.length > 0) particles.handle(events, { waterLevel: sim.terrain.waterLevel });
+    if (events.length > 0) {
+      particles.handle(events, { waterLevel: sim.terrain.waterLevel });
+      // 同一份 events[] 喂给屏幕特效（Task 7）：只关心玩家自己的 hit/death，
+      // 与 particles.handle 平级消费、互不干扰（各自只读，不改 events）。
+      screenFx.handle(events, sim.state.playerId);
+    }
     prevSnapshot = structuredClone({
       creatures: sim.state.creatures,
       carcasses: sim.state.carcasses,
@@ -135,13 +150,26 @@ renderer.setAnimationLoop(() => {
   updateDigSpots(terrainGroup, sim.terrain);
   updateWater(tSec);
   particles.update(frameDt, tSec);
+  // 冲刺 FOV 的判据是"冲刺键按住 AND 玩家确实在移动"（brief 原话），不是单看
+  // sprint 键——按住 Shift 站着不动/贴墙顶住不该拉 FOV。player.activity==="moving"
+  // 是 movement.ts 权威写入的结果（见该文件 moveCreature），比在渲染层重新判断
+  // "moveX/moveZ 是否非零"更准（后者拿不到"贴墙被挡住"之类的宽高衰减细节）。
+  const player = getPlayer(sim.state);
+  const sprinting = (lastInput?.sprint ?? false) && player.activity === "moving";
+  screenFx.update(frameDt, sprinting);
   // Follow the render-interpolated mesh position (not the raw once-per-step
   // sim position) so the camera reads smooth even when a slow frame makes
   // the while-loop above run several fixed steps back-to-back. Keyed by
   // `creature:${id}` per CreatureViews' convention (see creatureView.ts).
   const playerView = views.get(`creature:${sim.state.playerId}`);
   if (playerView) followCam.update(playerView.mesh.position, input.camDelta());
+  // 震屏偏移必须在 followCam.update() 之后叠加——followCam 每帧都会把
+  // camera.position 摆回"目标 + 轨道半径"算出的位置，若震屏偏移加在它之前会被
+  // 直接覆盖掉（见 camera.ts update() 里的注释）。
+  const shake = screenFx.getShakeOffset();
+  camera.position.x += shake.x;
+  camera.position.y += shake.y;
   input.consume();
-  hud.update(sim.state, computeHudContext(sim.terrain, sim.state, getPlayer(sim.state)));
+  hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
   renderer.render(scene, camera);
 });

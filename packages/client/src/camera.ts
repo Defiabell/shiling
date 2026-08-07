@@ -68,6 +68,14 @@ export function createFollowCamera(camera: THREE.Camera): FollowCamera {
         camera.position.lerp(idealPos, FOLLOW_LERP);
       }
       camera.lookAt(targetVec);
+      // Task 7 (screen shake): main.ts adds a small additive offset to
+      // camera.position right after this update() call returns (from
+      // screenFx.ts's getShakeOffset()). This module intentionally stays
+      // unaware of shake — its only job is "orbit around a moving target" —
+      // so main.ts must call followCam.update() BEFORE applying the shake
+      // offset each frame, never the other way around (this method
+      // unconditionally overwrites camera.position from idealPos/lerp, which
+      // would wipe out an offset applied before it ran).
     },
   };
   return cam;

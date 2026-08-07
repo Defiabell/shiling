@@ -1,4 +1,5 @@
 import { getPlayer, type Creature, type GameState } from "@shiling/sim";
+import { DEATH_SPREAD_MS } from "./render/screenFx.js";
 
 /**
  * Per-frame proximity/target flags the sim knows about but the HUD itself
@@ -291,7 +292,22 @@ export function createHud(): Hud {
     update(state: GameState, ctx: HudContext): void {
       dead = state.playerDead;
       if (dead !== lastDeathVisible) {
-        deathEl.classList.toggle("hud-visible", dead);
+        if (dead) {
+          // Task 7 coordination (CRITICAL — see screenFx.ts's file-header
+          // comment for the full CSS-stacking-context writeup): `.hud-death`
+          // is opaque and would otherwise appear instantly the very same
+          // frame `state.playerDead` flips, completely hiding screenFx's
+          // 1.2s ink-spread-to-black animation underneath it (that overlay
+          // sits at a lower effective stacking order than #hud as a whole,
+          // regardless of `.hud-death`'s own z-index, since #hud already
+          // establishes its own stacking context). Delaying this reveal by
+          // the exact same DEATH_SPREAD_MS lets the ink finish spreading to
+          // solid black first, so the death text "docks onto" an already-
+          // black screen instead of instantly stomping the animation.
+          window.setTimeout(() => deathEl.classList.add("hud-visible"), DEATH_SPREAD_MS);
+        } else {
+          deathEl.classList.remove("hud-visible");
+        }
         lastDeathVisible = dead;
       }
       if (dead) return; // frozen on last-rendered bars/prompt/status underneath the opaque overlay; nothing else to update.
