@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
 
 describe("tanshou ai", () => {
   it("hunts and damages the player", () => {
@@ -42,6 +42,11 @@ describe("tanshou ai", () => {
     const sim = createSim(31);
     const p = getPlayer(sim.state);
     const t = sim.state.creatures.find((c) => c.species === "tanshou")!;
+    // W2（世界扩大、种群密度调整后）：只留玩家和这一只潭狩，隔离掉其它苓鼠/潭狩——
+    // 4 秒的观察窗口里，新世界更高的野生生物总数偶尔会有别的猎物游荡进这只潭狩的
+    // senseRadius，导致它在玩家入洞后的下一 tick 又立刻抓到新目标重新进入 "hunt"，
+    // 这跟本测试要验证的"目标入洞后必须放弃"是两回事，隔离掉避免假阳性。
+    sim.state.creatures = sim.state.creatures.filter((c) => c.id === p.id || c.id === t.id);
     t.pos = { ...p.pos }; t.pos.x += 5; // 进入感知圈，先追一段，确认真的在猎杀
     for (let i = 0; i < TUNING.tickHz; i++) sim.step(idle);
     const hpAtBurrow = p.hp;

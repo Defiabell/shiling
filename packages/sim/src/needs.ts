@@ -1,6 +1,5 @@
 import { SPECIES, TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
-import { hasAttackTargetInRange } from "./eating.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 
@@ -59,17 +58,17 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
 
   for (const c of state.creatures) tickCreatureNeeds(c);
 
-  // dig spot/攻击/进食（前三个消费者，见 eating.ts 顶部注释）都不满足才轮到饮水；
-  // 满足时才把 activity 置 "drinking"，否则若上一 tick 还残留 "drinking"（比如离开水边、
-  // 松开 interact），这里要显式降级回 "idle"——不然它会像 Task 11 修复前的 "eating" 一样
-  // 变成一个永不清零的僵死 activity（虽然 "drinking" 不参与任何衰减跳过逻辑，暂时无副作用，
-  // 但留着就是下一个隐患，一并修掉）。
-  // Finding 1 修复：!hasAttackTargetInRange(...)（从 eating.ts 导出的单一事实来源）挡在
-  // nearWater 之前——之前这里完全没接"攻击"这个消费者，水边战斗时攻击 tick 的 activity 会被
-  // 这段无条件覆写成 "drinking" 并回复口渴，冷却中的 tick（每秒 20 个里 19 个）同样中招。
-  // 只查"目标是否存在"而不是 "activity !== 'attacking'"，因为冷却中攻击分支会把 activity
-  // 降级成 "idle"，跟"没有攻击目标"是同一个信号，用 activity 判会漏掉冷却 tick。
-  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && !hasAttackTargetInRange(state, player) && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
+  // 挖洞/进食（另两个消费者，见 eating.ts 顶部注释）不满足才轮到饮水；满足时才把 activity
+  // 置 "drinking"，否则若上一 tick 还残留 "drinking"（比如离开水边、松开 interact），这里
+  // 要显式降级回 "idle"——不然它会像 Task 11 修复前的 "eating" 一样变成一个永不清零的僵死
+  // activity（虽然 "drinking" 不参与任何衰减跳过逻辑，暂时无副作用，但留着就是下一个隐患，
+  // 一并修掉）。
+  // 键位拆分（W2）新语义：饮水只看 input.attack 是否按下，不再看"范围内是否存在攻击目标"
+  // ——左键(攻击)与 E(饮水/进食/挖掘)已是两个独立字段，举着左键就直接不喝水（不管这一下
+  // 有没有真的打中什么），而单独按 E（哪怕范围内正好站着一只猎物）现在应当正常喝水——
+  // 这是用户键位拆分后"意图已经显式"的直接体现，不再需要跨文件反查 eating.ts 的攻击目标
+  // 扫描结果（旧版本导出的 hasAttackTargetInRange 已随之移除）。
+  if (player && player.activity !== "dead" && input.interact && player.activity !== "digging" && !input.attack && player.activity !== "eating" && player.burrowId === null && nearWater(player, terrain)) {
     player.activity = "drinking";
     player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * DT);
   } else if (player && player.activity === "drinking") {

@@ -55,15 +55,23 @@ function clamp01(v: number): number {
 }
 
 /**
- * 按高度返回地形基础色（不含坡度墨染）：
+ * 按高度返回地形基础色（不含坡度墨染）。W2（playtest feedback「地貌单调」）新增了
+ * 沼泽湿度带，四种地貌读法：水塘（isWater，本函数不覆盖——水面另有独立的水层网格盖住）
+ * / 沼泽 swamp / 草甸 meadow / 山地 rocky：
  * - h <= shoreMax（waterLevel + 0.6）：贴水滩涂一律 terrainShore 起步；其中更靠近
  *   实际水面的内层——|h - waterLevel| < 0.5——再向 waterDeep lerp 0.4，叠出
  *   "近水湿润深色 → 稍高处干燥浅色"的两层渐变（0.5~0.6 之间仍是纯 shore，不参与
  *   这一档）。
- * - h >= peakMin（hillAmp * 0.75）：纯 terrainPeak。
- * - 二者之间：按归一化高度 t 在 Low → Mid → High → Peak 四色之间做三段线性插值。
+ * - shoreMax < h <= swampMax（waterLevel + 0.9，即 moisture proxy 的上限——越接近
+ *   waterLevel 越"湿"）：沼泽湿度带，按 moisture（1=贴着 shoreMax、0=到 swampMax 为止）
+ *   把 terrainLow（草甸最低色）向 terrainSwamp 混合，读作"低平近水地"。这条带对应
+ *   scatter.ts 里芦苇（reeds）的采样范围，颜色与点缀在空间上是一致的。
+ * - h >= peakMin（hillAmp * 0.75）：纯 terrainPeak（山地 rocky 的顶端）。
+ * - swampMax 到 peakMin 之间：按归一化高度 t 在 Low → Mid → High → Peak 四色之间做
+ *   三段线性插值——后半段（High→Peak）本身偏灰，读作"山地 rocky"，配合 scatter.ts
+ *   在这个高度带把草丛稀疏化、多摆岩石，视觉上与草甸区分开。
  */
-function terrainBandColor(h: number, waterLevel: number, shoreMax: number, peakMin: number): THREE.Color {
+function terrainBandColor(h: number, waterLevel: number, shoreMax: number, swampMax: number, peakMin: number): THREE.Color {
   const shore = new THREE.Color(PALETTE.terrainShore);
   if (h <= shoreMax) {
     if (Math.abs(h - waterLevel) < 0.5) {
@@ -77,8 +85,14 @@ function terrainBandColor(h: number, waterLevel: number, shoreMax: number, peakM
   const high = new THREE.Color(PALETTE.terrainHigh);
   const peak = new THREE.Color(PALETTE.terrainPeak);
 
-  const span = Math.max(1e-6, peakMin - shoreMax);
-  const t = clamp01((h - shoreMax) / span);
+  if (h <= swampMax) {
+    const swamp = new THREE.Color(PALETTE.terrainSwamp);
+    const moisture = clamp01((swampMax - h) / Math.max(1e-6, swampMax - shoreMax));
+    return low.clone().lerp(swamp, moisture);
+  }
+
+  const span = Math.max(1e-6, peakMin - swampMax);
+  const t = clamp01((h - swampMax) / span);
   const third = 1 / 3;
   if (t <= third) return low.lerp(mid, t / third);
   if (t <= 2 * third) return mid.lerp(high, (t - third) / third);
@@ -97,13 +111,14 @@ function applyTerrainVertexColors(geometry: THREE.BufferGeometry, terrain: Terra
   if (!positions || !normals) throw new Error("applyTerrainVertexColors: missing position/normal attribute");
 
   const shoreMax = terrain.waterLevel + 0.6;
+  const swampMax = terrain.waterLevel + 0.9; // 沼泽湿度带上限（moisture proxy，W2）——与 scatter.ts 的芦苇采样带同公式
   const peakMin = params.hillAmp * 0.75;
   const ink = new THREE.Color(PALETTE.outlineInk);
 
   const colors = new Float32Array(positions.count * 3);
   for (let i = 0; i < positions.count; i++) {
     const h = positions.getY(i);
-    const color = terrainBandColor(h, terrain.waterLevel, shoreMax, peakMin);
+    const color = terrainBandColor(h, terrain.waterLevel, shoreMax, swampMax, peakMin);
     const slope = clamp01(1 - normals.getY(i));
     color.lerp(ink, clamp01(slope * PALETTE.slopeInkFactor));
     colors[i * 3] = color.r;

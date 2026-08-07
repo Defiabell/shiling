@@ -11,6 +11,7 @@ import { buildScatter } from "./render/scatter.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
+import { createMinimap } from "./minimap.js";
 import { showTitle } from "./title.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
@@ -23,7 +24,9 @@ const scene = new THREE.Scene();
 // 背景交给天空穹顶接管（setupAtmosphere 里的 SphereGeometry + ShaderMaterial），
 // 不再用 renderer 清屏色 / 单一 scene.background 顶替。
 scene.background = null;
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
+// far 500→700（W2，世界 size 240→480 后对角线 ~679m，700 留出安全余量——见 atmosphere.ts
+// 顶部 SKY_RADIUS 注释，天空穹顶半径 400 仍然稳稳包住相机可能到达的最远位置）。
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 700);
 camera.position.set(0, 60, 80);
 camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -34,7 +37,9 @@ mountPaperOverlay();
 const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX);
 scene.add(terrainGroup);
 // Patch 3c：地表点缀，地形建好之后一次性构建（静态 InstancedMesh，不逐帧更新）。
-buildScatter(scene, sim.terrain, seed);
+// W2：额外传入 QINGQIU_GRAYBOX（WorldParams）——scatter.ts 需要 hillAmp 算山地 rocky
+// 高度阈值，Terrain 接口本身不暴露它。
+buildScatter(scene, sim.terrain, seed, QINGQIU_GRAYBOX);
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -53,6 +58,12 @@ function isPlayerBurrowed(): boolean {
 const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
 const hud = createHud();
+// W2（playtest feedback「要右上角全局小地图」）：右上角实时小地图，静态底图只渲染一次，
+// 每帧只按 tick 是否推进决定要不要重绘覆盖层（见 minimap.ts 的 dirty-check）。
+// worldSize 直接读 sim.terrain.size（而不是另外传 QINGQIU_GRAYBOX.size）——两者理论上
+// 恒等（createSim 默认就用 QINGQIU_GRAYBOX），但从 terrain 实例自己读，不依赖"默认参数
+// 与这里手动传入的常量保持同步"这条隐含假设（code review 建议）。
+const minimap = createMinimap(sim.terrain, sim.terrain.size);
 const particles = createParticles(scene, sim.terrain);
 const screenFx = createScreenFx(camera);
 const eventDiffer = createSimEventDiffer();
@@ -86,7 +97,10 @@ function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
  * Per-render-frame proximity/target probe for the HUD's context prompt.
  * Read-only: never mutates sim state, only re-derives the same distance
  * checks tickDigging/tickEating/tickNeeds use internally so the prompt
- * tracks what interact would actually do this tick.
+ * tracks what E (interact) or the left mouse button (attack) would actually
+ * do this tick — nearPrey specifically mirrors eating.ts's attack-target scan
+ * (findAttackTarget), which is now gated on input.attack, not input.interact
+ * (W2 key split); the other three flags still correspond to interact.
  *
  * Known graybox simplification (Task 16 brief only specifies these 5 prompt
  * strings, with no distinct "enter an already-dug burrow" copy): nearDigSpot
@@ -178,6 +192,16 @@ if (import.meta.env.DEV) {
         aiState: c.aiState,
         activity: c.activity,
       })),
+    // W2 verification hooks: read-only probes so an external Playwright script
+    // can locate specific biome bands (water/swamp/meadow/rocky) and confirm
+    // the E-drinking/left-click-attack key split without reaching into sim
+    // internals or hardcoding coordinates against a non-deterministic
+    // (Date.now()-seeded) dev-server world.
+    isWater: (x: number, z: number) => sim.terrain.isWater(x, z),
+    heightAt: (x: number, z: number) => sim.terrain.heightAt(x, z),
+    getThirst: () => getPlayer(sim.state).needs.thirst,
+    getWorldSize: () => sim.terrain.size,
+    getLastInput: () => lastInput,
   };
 }
 
@@ -267,6 +291,9 @@ renderer.setAnimationLoop(() => {
   input.consume();
   if (started) {
     hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
+    // followCam.yaw（镜头朝向，不是玩家朝向）驱动小地图的视野锥——与 HUD 同样按
+    // started 冻结，标题画面期间不在小地图上跑动画。
+    minimap.update(sim.state, followCam.yaw);
   }
   renderer.render(scene, camera);
 });

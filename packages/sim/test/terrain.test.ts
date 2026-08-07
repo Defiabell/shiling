@@ -9,13 +9,15 @@ describe("createTerrain", () => {
     expect(t.heightAt(10.5, -33.2)).toBe(t2.heightAt(10.5, -33.2));
   });
   it("heights bounded by amplitude", () => {
-    for (let i = -120; i <= 120; i += 7)
+    // W2：世界 size 240→480，采样范围随之翻倍（step 同比放大，覆盖同样的相对边界）。
+    for (let i = -240; i <= 240; i += 14)
       expect(Math.abs(t.heightAt(i, -i))).toBeLessThanOrEqual(QINGQIU_GRAYBOX.hillAmp);
   });
   it("has both land and water", () => {
+    // W2：范围/步长同比 ×2（220→440 跨度，step 5→10），采样点数与旧世界基本一致。
     let water = 0, land = 0;
-    for (let x = -110; x <= 110; x += 5)
-      for (let z = -110; z <= 110; z += 5) t.isWater(x, z) ? water++ : land++;
+    for (let x = -220; x <= 220; x += 10)
+      for (let z = -220; z <= 220; z += 10) t.isWater(x, z) ? water++ : land++;
     expect(water).toBeGreaterThan(20);
     expect(land).toBeGreaterThan(water); // 陆地为主
   });

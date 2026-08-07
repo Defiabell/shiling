@@ -54,7 +54,17 @@ export interface PlayerInput {
   moveX: number;
   moveZ: number;
   sprint: boolean;
+  /**
+   * E 键（挖掘/进食/饮水/出洞——所有"情境类"交互，见 digging.ts/eating.ts/needs.ts）。
+   * 键位拆分（W2）之前这个字段还兼管"撕咬"，现在撕咬已独立到下面的 `attack`。
+   */
   interact: boolean;
+  /**
+   * 左键（撕咬），键位拆分（W2，playtest feedback「单一 E 键在重叠时无法选择操作」）
+   * 新增字段：与 `interact` 完全独立——同一 tick 两者可以同时为 true 也可以只有其一，
+   * eating.ts 把攻击与进食判定拆成两条互不阻塞的分支，各自只看自己对应的这个字段。
+   */
+  attack: boolean;
 }
 
 export interface GameState {

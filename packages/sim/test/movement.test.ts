@@ -4,7 +4,7 @@ import { moveCreature } from "../src/movement.js";
 import { SPECIES } from "@shiling/content";
 import type { Creature } from "../src/state.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
 
 function findLandNear(sim: ReturnType<typeof createSim>, x: number, z: number) {
   // 把玩家硬放到指定点（测试用）

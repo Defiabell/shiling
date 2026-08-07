@@ -185,19 +185,23 @@ const HUD_CSS = `
   flex-shrink: 0;
 }
 .hud-prompt-key {
-  width: 28px;
+  /* min-width（而非固定 width）：键位拆分（W2）后撕咬提示要显示"左键"（2 字）而不是
+     "E"（1 字），min-width+左右 padding 让两种长度的文案都能不裁切地居中显示。 */
+  min-width: 28px;
   height: 28px;
+  padding: 0 6px;
   border-radius: 6px;
   background: #fff;
   color: ${CARD.border};
   border: 3px solid ${CARD.border};
   box-shadow: 0 3px 0 ${CARD.border}; /* 键帽"按下感"——实心 offset，不是真的按下状态 */
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .hud-prompt-word {
   font-size: 16px;
@@ -436,29 +440,37 @@ function updateBar(handle: BarHandle, value: number): void {
   }
 }
 
-/** Single seal glyph + full action word for one context-prompt state. */
+/** Single seal glyph + full action word + keycap label for one context-prompt state. */
 interface ContextPrompt {
   glyph: string;
   word: string;
+  /**
+   * 键位拆分（W2）：撕咬现在绑左键，不再是 E——其余四种提示（出洞/挖掘/进食/饮水）
+   * 仍然都是 E。这一份 ContextPrompt 只是"该显示哪个键帽"的展示层信息，不影响判定：
+   * 真正决定按哪个键有效的是 sim 的 input.attack/input.interact 分别独立判定（见
+   * eating.ts/needs.ts 顶部注释）——单一 E 键"重叠时无法选择"的问题已经在输入层解开，
+   * 这里的优先级链只是决定"同一时刻多个情境重叠时，先提示哪一个"，纯展示，不阻塞。
+   */
+  key: string;
 }
 
 /**
- * Context prompt priority mirrors sim's own interact priority chain
- * (tickDigging runs before tickEating's attack-then-eat before tickNeeds'
- * drink — see eating.ts's top-of-file comment): dig > attack > eat > drink.
- * Burrowed always wins outright since none of the other three interactions
- * are even reachable while burrowId !== null (movement/dig/eat all
- * early-return in that state; see digging.ts/eating.ts). Presentation only
- * (seal glyph + separate action word inside a bright pill instead of the
- * old ink-wash seal+tag) — the ordering and the underlying words
- * (挖掘/撕咬/进食/饮水/出洞) are unchanged.
+ * Context prompt priority mirrors sim's own tick order (tickDigging runs
+ * before tickEating's attack/eat before tickNeeds' drink): dig > attack >
+ * eat > drink. Burrowed always wins outright since none of the other three
+ * interactions are even reachable while burrowId !== null (movement/dig/eat
+ * all early-return in that state; see digging.ts/eating.ts). Presentation
+ * only (seal glyph + separate action word + keycap inside a bright pill
+ * instead of the old ink-wash seal+tag) — the ordering and the underlying
+ * words (挖掘/撕咬/进食/饮水/出洞) are unchanged; only the keycap shown for
+ * 撕咬 changed from "E" to "左键" (W2 key split).
  */
 function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
-  if (player.burrowId !== null) return { glyph: "出", word: "出洞" };
-  if (ctx.nearDigSpot) return { glyph: "挖", word: "挖掘" };
-  if (ctx.nearPrey) return { glyph: "咬", word: "撕咬" };
-  if (ctx.nearCarcass) return { glyph: "食", word: "进食" };
-  if (ctx.nearWater) return { glyph: "饮", word: "饮水" };
+  if (player.burrowId !== null) return { glyph: "出", word: "出洞", key: "E" };
+  if (ctx.nearDigSpot) return { glyph: "挖", word: "挖掘", key: "E" };
+  if (ctx.nearPrey) return { glyph: "咬", word: "撕咬", key: "左键" };
+  if (ctx.nearCarcass) return { glyph: "食", word: "进食", key: "E" };
+  if (ctx.nearWater) return { glyph: "饮", word: "饮水", key: "E" };
   return null;
 }
 
@@ -508,6 +520,8 @@ export function createHud(): Hud {
   promptSealEl.className = "hud-prompt-seal";
   const promptKeyEl = document.createElement("div");
   promptKeyEl.className = "hud-prompt-key";
+  // 初始文案任意——nextGlyph !== lastGlyph 的分支会在第一次 update() 时写入真实值，
+  // 这里不需要提前确定是 "E" 还是 "左键"（键位拆分后不再总是 "E"）。
   promptKeyEl.textContent = "E";
   const promptWordEl = document.createElement("div");
   promptWordEl.className = "hud-prompt-word";
@@ -599,6 +613,7 @@ export function createHud(): Hud {
         } else {
           promptSealEl.textContent = nextPrompt.glyph;
           promptWordEl.textContent = nextPrompt.word;
+          promptKeyEl.textContent = nextPrompt.key;
           promptPillEl.classList.add("hud-visible");
           // Re-trigger the 180ms spring pop-in even when already visible and
           // switching to a different glyph — same remove/reflow/re-add

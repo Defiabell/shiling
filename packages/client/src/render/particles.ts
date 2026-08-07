@@ -274,7 +274,7 @@ export function createParticles(
     depthWrite: false,
   });
   const effectPoints = new THREE.Points(effectGeometry, effectMaterial);
-  // 事件粒子会出现在 240x240 世界的任意位置，且每帧原地重写 position 而不重建
+  // 事件粒子会出现在 480x480 世界（W2 扩大后）的任意位置，且每帧原地重写 position 而不重建
   // 几何体；按初始状态（一堆停在 y=-999 的死粒子）算出的包围球会错误裁掉后续
   // 在别处出现的真实 burst，因此关掉裁剪。
   effectPoints.frustumCulled = false;

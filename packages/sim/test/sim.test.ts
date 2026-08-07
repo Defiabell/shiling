@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createSim } from "../src/sim.js";
 
-const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false };
+const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
 
 describe("createSim", () => {
   it("spawns player and world creatures", () => {
     const sim = createSim(1);
     const species = sim.state.creatures.map((c) => c.species).sort();
-    expect(species.filter((s) => s === "lingshu")).toHaveLength(12);
-    expect(species.filter((s) => s === "tanshou")).toHaveLength(2);
+    expect(species.filter((s) => s === "lingshu")).toHaveLength(26);
+    expect(species.filter((s) => s === "tanshou")).toHaveLength(4);
     expect(species.filter((s) => s === "youshou")).toHaveLength(1);
   });
   it("advances ticks", () => {

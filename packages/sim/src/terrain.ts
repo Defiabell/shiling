@@ -19,7 +19,9 @@ export interface Terrain {
 }
 
 // value-noise 两层波长（米），与世界大小无关的绝对尺度。
-const COARSE_WAVELENGTH = 48;
+// COARSE_WAVELENGTH 48→72（W2，世界扩大到 480 后地貌单调——旧波长在新世界里会重复出
+// 太多小起伏，拉宽粗层波长让地形块头更大、更容易读出"沼泽/草甸/山地"这种大尺度分区）。
+const COARSE_WAVELENGTH = 72;
 const FINE_WAVELENGTH = 12;
 const FINE_WEIGHT = 0.25; // 细层振幅相对粗层的比例
 // 陆地基准偏移：value noise 组合本身是零均值对称分布，边缘渐落又会把外圈大片区域
