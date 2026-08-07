@@ -44,23 +44,29 @@ const PAPER_RGB = "232, 226, 211";
 /**
  * 字体子集扩容（Task 9 决策，见 task-9-report.md「字体子集决策」一节）：
  * Task 8 给 HUD 请求的 30 字子集（28 汉字 + "R" + 破折号）不含标题画面新增的
- * 「山海之间，吞灵化形」「入　山」用到的汉字，也不含《》「」这两对全角引号/
- * 书名号。选择方案 A——用同一套 fonts.googleapis.com `text=` 技术重新请求一份
- * **并集**子集（旧 31 codepoint ∪ 新增），覆盖后原地替换
- * `public/fonts/mashanzheng.woff2`，而不是二选一里的方案 B（新增文案直接退回
- * 楷体 fallback）：标题《食灵》120px 是全场最大的文字，字体一旦按字符退化
- * 会非常显眼地割裂，且 Google 按 `text=` 请求的子集文件本身很小
- * （17.2KB，对比 Task 8 已确认过的默认 unicode-range 拆分方式会产生十几个
- * 文件），并入后依旧是单一小文件，不存在"文件太大"的顾虑。
+ * 「山海之间，吞灵化形」「入　山」用到的汉字。选择方案 A——用同一套
+ * fonts.googleapis.com `text=` 技术重新请求一份**并集**子集（旧 31
+ * codepoint ∪ 新增），覆盖后原地替换 `public/fonts/mashanzheng.woff2`，而
+ * 不是二选一里的方案 B（新增文案直接退回楷体 fallback）：标题「食灵」120px
+ * 是全场最大的文字，字体一旦按字符退化会非常显眼地割裂，且 Google 按
+ * `text=` 请求的子集文件本身很小，并入后依旧是单一小文件，不存在"文件太大"
+ * 的顾虑。
  *
- * 新增的 14 个 codepoint：山 海 之 间 吞 化 形 入 《 》「 」 　(表意空格
- * U+3000，按钮文案「入　山」中间那个全角空格，字形上其实与字体无关，但一并
- * 请求不费事) ，(全角逗号 U+FF0C，字幕「山海之间，吞灵化形」里的那个逗号——
- * 第一版手工枚举漏了这个标点，被 code review 抓到；教训是标点必须跟着完整
- * 字符串一起核对，不能只数汉字)。用 fontTools `TTFont(...).getBestCmap()`
- * 把新文件的 cmap 逐一对照 hud.ts + title.ts 两个消费方**实际的 textContent
- * 字面量**（不是手工枚举的"应该"字符表）验证过零缺口——42 个不重复字符全部
- * 命中，见 task-9-report.md。
+ * 新增的 8 个汉字 codepoint：山 海 之 间 吞 化 形 入，外加 　(表意空格
+ * U+3000，按钮文案「入　山」中间那个全角空格) 和 ，(全角逗号 U+FF0C，字幕
+ * 「山海之间，吞灵化形」里的那个逗号——第一版手工枚举漏了这个标点，被 code
+ * review 抓到；教训是标点必须跟着完整字符串一起核对，不能只数汉字)。
+ *
+ * **括号剥除 + 二次裁剪（controller ruling，Task 9 review 第二轮）**：标题/
+ * 字幕最初按 plan/brief 字面渲染成"《食灵》"/"「山海之间，吞灵化形」"，但
+ * plan 文本里的书名号/引号是**引用记号**，不是要渲染的字符——Task 8 死亡
+ * 界面（身死／魂归青丘／食灵）和 README 都不带括号，标题画面统一改成裸字
+ * "食灵"/"山海之间，吞灵化形"（见下方 `showTitle()` 里的详细注释）。剥除后
+ * 《》「」这 4 个括号 codepoint 不再被任何运行时字符串用到，顺手把子集从
+ * 45 重新裁剪到 41——用 fontTools `TTFont(...).getBestCmap()` 把新文件的
+ * cmap 逐一对照 hud.ts + title.ts 两个消费方**实际的 textContent 字面量**
+ * （不是手工枚举的"应该"字符表）验证过恰好 41/41 双向精确匹配（零缺口、
+ * 零多余字形），见 task-9-report.md。
  */
 const FONT_CSS = `
 @font-face {
@@ -160,13 +166,18 @@ export function showTitle(onEnter: () => void): void {
   const overlay = document.createElement("div");
   overlay.id = OVERLAY_ID;
 
+  // 剥括号惯例（controller ruling，Task 9 review）：plan/brief 文本里的
+  // 《》「」是引用记号，不是要渲染的字符——Task 8 死亡界面（身死／魂归青丘——
+  // 按 R 转世／食灵）和 README 的写法都不带括号，标题画面理应统一同一套惯例，
+  // 而不是按字面照抄 brief 里的引用符号。裸字「食灵」在 120px 竖排书法下也
+  // 更有笔意（书名号会在这个字号下显得像多余的框线）。
   const main = document.createElement("h1");
   main.className = "title-main";
-  main.textContent = "《食灵》";
+  main.textContent = "食灵";
 
   const sub = document.createElement("p");
   sub.className = "title-sub";
-  sub.textContent = "「山海之间，吞灵化形」";
+  sub.textContent = "山海之间，吞灵化形";
 
   const button = document.createElement("button");
   button.type = "button";
