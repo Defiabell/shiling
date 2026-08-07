@@ -3,6 +3,7 @@ import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type T
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
+import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
@@ -10,17 +11,17 @@ import { createHud, type HudContext } from "./hud.js";
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 const sim = createSim(Date.now() >>> 0);
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0e0f12, 80, 220);
+// 背景交给天空穹顶接管（setupAtmosphere 里的 SphereGeometry + ShaderMaterial），
+// 不再用 renderer 清屏色 / 单一 scene.background 顶替。
+scene.background = null;
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
 camera.position.set(0, 60, 80);
 camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x30281f, 1.0));
-const sun = new THREE.DirectionalLight(0xfff2d9, 1.2);
-sun.position.set(60, 100, 20);
-scene.add(sun);
+setupAtmosphere(scene, renderer);
+mountPaperOverlay();
 const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX);
 scene.add(terrainGroup);
 addEventListener("resize", () => {
