@@ -50,7 +50,7 @@ const FIREFLY_COUNT = 40;
 const EFFECT_CAPACITY = 472;
 const DEAD_Y = -999;
 const POINT_SIZE = 0.45;
-const FIREFLY_POINT_SIZE = POINT_SIZE * 0.5; // 用户反馈"小黄点"太显眼像拾取物——减半
+const FIREFLY_POINT_SIZE = POINT_SIZE * 0.5; // 用户反馈"小黄点"太显眼像拾取物——减半。纯视觉调参，不关联任何游玩机制（size 只影响渲染，spawn()/handle() 里的事件粒子 size 参数同理，见文件头注释）。
 
 // ---- hit（墨溅）----
 const HIT_COUNT = 12;

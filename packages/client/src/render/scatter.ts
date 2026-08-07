@@ -18,7 +18,7 @@ import { PALETTE } from "./palette.js";
  */
 
 const LAND_MARGIN = 0.8; // heightAt > waterLevel + margin
-const MAX_REJECTION_ATTEMPTS = 400;
+const MAX_REJECTION_ATTEMPTS = 10_000; // matches sim.ts/terrain.ts's own rejection-sampling loops, same defensive margin for a future water-majority biome
 
 const GRASS_COUNT = 220;
 const ROCK_COUNT = 40;
