@@ -2,11 +2,14 @@ import { generatePaperNoiseDataUrl } from "./render/atmosphere.js";
 import { PALETTE } from "./render/palette.js";
 
 /**
- * 标题画面（Task 9）：全屏纸色噪底遮罩，压在已经在跑的 3D 场景（main.ts 把
- * `started` 锁在 false，世界静止在 tick 0，但渲染循环照常跑——见该文件的 gate
- * 注释）之上，让"活的青丘"透过半透明纸色背景隐约可见，呼应水墨卷轴展开的观感。
- * 点击「入　山」后本模块自己负责 600ms 淡出动画 + 卸载 DOM，再回调 onEnter——
- * main.ts 不需要知道淡出的具体时长/实现，只需要在 onEnter 里把 `started` 置真。
+ * 标题画面（宝可梦系明快游戏 UI restyle）：全屏亮暖底遮罩，压在已经在跑的 3D
+ * 场景（main.ts 把 `started` 锁在 false，世界静止在 tick 0，但渲染循环照常跑
+ * ——见该文件的 gate 注释）之上。此前的水墨版本靠半透明纸色让背后场景隐约透
+ * 出；这一版改为接近不透明的亮暖渐变（呼应 hud.ts 卡片同一套暖纸白/亮色语
+ * 言），噪点纹理仍然复用同一份 `generatePaperNoiseDataUrl()`（只是现在叠在
+ * 渐变上做纸感颗粒，不再承担"半透明可视深度"的角色）。点击「入　山」后本模
+ * 块自己负责 600ms 淡出动画 + 卸载 DOM，再回调 onEnter——main.ts 不需要知道
+ * 淡出的具体时长/实现，只需要在 onEnter 里把 `started` 置真。
  */
 
 const OVERLAY_ID = "shiling-title-overlay";
@@ -19,54 +22,25 @@ const FADE_MS = 600;
 function hexToCssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, "0")}`;
 }
-function hexToRgbTriplet(hex: number): string {
-  const r = (hex >> 16) & 0xff;
-  const g = (hex >> 8) & 0xff;
-  const b = hex & 0xff;
-  return `${r}, ${g}, ${b}`;
-}
 
-const inkHex = hexToCssColor(PALETTE.outlineInk); // #14161a — 墨：标题字/按钮底色
-const inkRgb = hexToRgbTriplet(PALETTE.outlineInk);
-const cinnabarHex = hexToCssColor(PALETTE.cinnabar); // #c23b22 — 朱砂：按钮 hover 描边
+const cinnabarHex = hexToCssColor(PALETTE.cinnabar); // #c23b22 — 按钮底色，与 hud.ts 的朱砂强调色同源
 
 /**
- * 纸白——与 hud.ts 私有的 `UI.paper` 同一个字面量（0xe8e2d3），但那个常量没有
- * export（HUD-only neutral，见 hud.ts 头注释），这里独立声明一份而不是改动
- * hud.ts 的可见性：两处都是"UI-only、不在共享 PALETTE 里"的同类做法，各自
- * 独立成一个 module-local 常量，与本工程"每个模块自成一体"的既有惯例一致
- * （atmosphere/hud/screenFx 都各自维护自己的 style/color 常量，不共享一个
- * 全局 UI 模块）。
+ * 亮色 UI 常量，字面值与 hud.ts 的 CARD.border/TEXT.ink 分组一致（#2b2b33
+ * 同时是"文字主色"与"卡片/按钮描边"）——两个模块各自独立声明同一份字面量，
+ * 延续本工程"每个模块自成一体，不跨模块 import UI-only 常量"的既有惯例
+ * （旧版 PAPER_HEX 就是同一套做法）。拆成 INK/CARD_BORDER 两个名字纯粹是
+ * 让各调用点表达自己的语义，不是两份独立数据。
  */
-const PAPER_HEX = "#e8e2d3";
-const PAPER_RGB = "232, 226, 211";
+const INK = "#2b2b33";
+const CARD_BORDER = "#2b2b33";
 
 /**
- * 字体子集扩容（Task 9 决策，见 task-9-report.md「字体子集决策」一节）：
- * Task 8 给 HUD 请求的 30 字子集（28 汉字 + "R" + 破折号）不含标题画面新增的
- * 「山海之间，吞灵化形」「入　山」用到的汉字。选择方案 A——用同一套
- * fonts.googleapis.com `text=` 技术重新请求一份**并集**子集（旧 31
- * codepoint ∪ 新增），覆盖后原地替换 `public/fonts/mashanzheng.woff2`，而
- * 不是二选一里的方案 B（新增文案直接退回楷体 fallback）：标题「食灵」120px
- * 是全场最大的文字，字体一旦按字符退化会非常显眼地割裂，且 Google 按
- * `text=` 请求的子集文件本身很小，并入后依旧是单一小文件，不存在"文件太大"
- * 的顾虑。
- *
- * 新增的 8 个汉字 codepoint：山 海 之 间 吞 化 形 入，外加 　(表意空格
- * U+3000，按钮文案「入　山」中间那个全角空格) 和 ，(全角逗号 U+FF0C，字幕
- * 「山海之间，吞灵化形」里的那个逗号——第一版手工枚举漏了这个标点，被 code
- * review 抓到；教训是标点必须跟着完整字符串一起核对，不能只数汉字)。
- *
- * **括号剥除 + 二次裁剪（controller ruling，Task 9 review 第二轮）**：标题/
- * 字幕最初按 plan/brief 字面渲染成"《食灵》"/"「山海之间，吞灵化形」"，但
- * plan 文本里的书名号/引号是**引用记号**，不是要渲染的字符——Task 8 死亡
- * 界面（身死／魂归青丘／食灵）和 README 都不带括号，标题画面统一改成裸字
- * "食灵"/"山海之间，吞灵化形"（见下方 `showTitle()` 里的详细注释）。剥除后
- * 《》「」这 4 个括号 codepoint 不再被任何运行时字符串用到，顺手把子集从
- * 45 重新裁剪到 41——用 fontTools `TTFont(...).getBestCmap()` 把新文件的
- * cmap 逐一对照 hud.ts + title.ts 两个消费方**实际的 textContent 字面量**
- * （不是手工枚举的"应该"字符表）验证过恰好 41/41 双向精确匹配（零缺口、
- * 零多余字形），见 task-9-report.md。
+ * 字体子集不变（restyle 决策，见 hud.ts 头部同一条注释的说明）：本次改动
+ * 只碰样式，不碰文案——标题「食灵」、副题「山海之间，吞灵化形」、按钮
+ * 「入　山」三处文字与此前完全一致，Ma Shan Zheng 现在只用在标题一处（副题
+ * /按钮改用系统字体），字形覆盖范围只会变得更宽松，不需要重新请求/裁剪
+ * `public/fonts/mashanzheng.woff2`。
  */
 const FONT_CSS = `
 @font-face {
@@ -77,6 +51,8 @@ const FONT_CSS = `
   font-display: swap;
 }
 `;
+
+const SYSTEM_FONT = `-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
 
 function ensureStyleInjected(noiseDataUrl: string): void {
   if (document.getElementById(STYLE_ID)) return;
@@ -93,17 +69,17 @@ ${FONT_CSS}
   align-items: center;
   justify-content: center;
   gap: 28px;
-  /* 半透纸色 + 噪点纹理用 background-blend-mode 叠在同一层背景上（单 div 两层
-     背景合成，不必再像 atmosphere.ts 那样叠两个 div）：0.88 的纸色不透明度
-     让背后"活的青丘"透出朦胧轮廓，呼应"卷轴展开"的水墨观感。 */
-  background-color: rgba(${PAPER_RGB}, 0.88);
-  background-image: url(${noiseDataUrl});
-  background-repeat: repeat;
-  background-size: ${NOISE_TILE_SIZE}px ${NOISE_TILE_SIZE}px;
-  background-blend-mode: multiply;
+  /* 亮暖渐变 + 噪点纹理叠在同一层背景上（多重 background，不必再像
+     atmosphere.ts 那样叠两个 div）：渐变负责"亮"这个基调，噪点用
+     multiply 压一层纸纤维颗粒感，两者都不追求透出背后场景——这版不再是
+     半透明卷轴叠影，而是一整块不透明的亮色标题背板。 */
+  background-image: linear-gradient(160deg, #fff8ec 0%, #ffe1a0 60%, #ffcf7e 100%), url(${noiseDataUrl});
+  background-repeat: no-repeat, repeat;
+  background-size: cover, ${NOISE_TILE_SIZE}px ${NOISE_TILE_SIZE}px;
+  background-blend-mode: normal, multiply;
   opacity: 1;
   transition: opacity ${FADE_MS}ms ease;
-  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif;
+  font-family: ${SYSTEM_FONT};
 }
 #${OVERLAY_ID}.title-fade-out {
   opacity: 0;
@@ -112,35 +88,50 @@ ${FONT_CSS}
 .title-main {
   writing-mode: vertical-rl;
   margin: 0;
+  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 唯二书法字体用点之一（另一处见 hud.ts 的 .hud-death-title） */
   font-size: 120px;
   font-weight: 400;
   letter-spacing: 0.15em;
-  color: ${inkHex};
-  text-shadow: 3px 3px 0 rgba(${PAPER_RGB}, 0.5);
+  color: ${INK};
+  /* 4px 白描边 + 柔光晕，让墨色大字从暖底噪点纹理里跳出来（贴纸/logo 感，
+     宝可梦标题常见手法）。-webkit-text-stroke 在 Chromium/Firefox 均生效；
+     paint-order 保证描边画在填色下面，不会把笔画中间的细节吃掉。 */
+  -webkit-text-stroke: 4px #fff;
+  paint-order: stroke fill;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.7);
 }
 .title-sub {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: 0.3em;
-  color: rgba(${inkRgb}, 0.78);
+  font-family: ${SYSTEM_FONT};
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  color: ${INK};
+  opacity: 0.75;
 }
 .title-enter {
   margin-top: 12px;
-  padding: 14px 44px;
-  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif;
-  font-size: 28px;
+  padding: 16px 56px;
+  font-family: ${SYSTEM_FONT};
+  font-weight: 700;
+  font-size: 24px;
   letter-spacing: 0.2em;
-  background: ${inkHex};
-  color: ${PAPER_HEX};
-  border: 2px solid transparent;
-  border-radius: 4px;
+  background: ${cinnabarHex};
+  color: #fff;
+  border: 3px solid ${CARD_BORDER};
+  border-radius: 20px; /* 大圆角矩形，呼应 hud.ts 死亡卡同一档圆角 */
+  box-shadow: 0 4px 0 rgba(43, 43, 51, 0.35); /* 实心 offset 阴影，不用 blur */
   cursor: pointer;
-  transition: border-color 200ms ease, transform 200ms ease;
+  transition: transform 150ms ease, box-shadow 150ms ease;
 }
 .title-enter:hover,
 .title-enter:focus-visible {
-  border-color: ${cinnabarHex};
-  transform: scale(1.04);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 rgba(43, 43, 51, 0.35); /* 抬起时阴影加深，强化"离开桌面"的立体感 */
+}
+.title-enter:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 rgba(43, 43, 51, 0.35); /* 按下感——阴影几乎吃掉，贴回桌面 */
 }
 `;
   document.head.appendChild(style);
@@ -148,7 +139,7 @@ ${FONT_CSS}
 
 /**
  * 挂载全屏标题遮罩；点击「入　山」触发 600ms 淡出，淡出结束后自己把 DOM 摘掉
- * 再调 onEnter（main.ts 在 onEnter 里把 `started` 置 true，具体见 main.ts 头部
+ * 再调 onEnter（main.ts 在 onEnter 里把 `started` 置真，具体见 main.ts 头部
  * gate 注释）。`{ once: true }` 防止淡出过程中重复点击二次触发。
  */
 export function showTitle(onEnter: () => void): void {
@@ -166,11 +157,9 @@ export function showTitle(onEnter: () => void): void {
   const overlay = document.createElement("div");
   overlay.id = OVERLAY_ID;
 
-  // 剥括号惯例（controller ruling，Task 9 review）：plan/brief 文本里的
-  // 《》「」是引用记号，不是要渲染的字符——Task 8 死亡界面（身死／魂归青丘——
-  // 按 R 转世／食灵）和 README 的写法都不带括号，标题画面理应统一同一套惯例，
-  // 而不是按字面照抄 brief 里的引用符号。裸字「食灵」在 120px 竖排书法下也
-  // 更有笔意（书名号会在这个字号下显得像多余的框线）。
+  // 剥括号惯例（Task 9 controller ruling，沿用至今）：plan/brief 文本里的
+  // 《》「」是引用记号，不是要渲染的字符——hud.ts 死亡界面（身死／魂归青丘——
+  // 按 R 转世／食灵）和 README 的写法都不带括号，标题画面统一同一套惯例。
   const main = document.createElement("h1");
   main.className = "title-main";
   main.textContent = "食灵";
