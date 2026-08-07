@@ -121,9 +121,17 @@ function buildYoushouModel(): CreatureModel {
   body.position.set(0, BODY_Y, 0);
   attach(group, body);
 
-  const belly = makeMesh(new THREE.CapsuleGeometry(0.3, 0.45, 6, 12), PALETTE.playerBelly);
+  const BELLY_RADIUS = 0.3;
+  const belly = makeMesh(new THREE.CapsuleGeometry(BELLY_RADIUS, 0.45, 6, 12), PALETTE.playerBelly);
   belly.rotation.x = Math.PI / 2;
-  belly.position.set(0, BODY_Y - 0.22, 0.04);
+  // Widened sideways (scale.x only — rotation.x=90° leaves the local X axis
+  // untouched, so this is a pure world-X stretch, not a vertical one) so it
+  // still peeks out past the main body's circular cross-section at this
+  // height instead of being fully swallowed by it. position.y = BELLY_RADIUS
+  // (not BODY_Y - 0.22, which sank its underside 0.1 below the shared ground
+  // plane) so its own underside rests exactly on the ground like the main body.
+  belly.scale.x = 1.3;
+  belly.position.set(0, BELLY_RADIUS, 0.1);
   attach(group, belly);
 
   const headMount = makeMount(group, 0, BODY_Y + 0.18, 0.85);
@@ -301,6 +309,38 @@ function carcassShape(species: string): CarcassShape {
   }
 }
 
+const CARCASS_SQUASH_Y = 0.35;
+const CARCASS_TILT_Z = 0.6;
+
+/**
+ * How far to lift the `tilt` wrapper so the squashed+tipped carcass's lowest
+ * vertex lands exactly on the ground (y=0), instead of a shared guessed
+ * `position.y` (the M0.5 Task 3 bug this replaces: one magic offset applied
+ * across three different species' radii/lengths, sinking each one a
+ * different, wrong amount below ground once tipped).
+ *
+ * `tilt.rotation.z` sweeps everything inside `tilt` around *tilt's own*
+ * origin. A fixed offset baked onto `body.position` (a child of `tilt`,
+ * applied *before* that rotation) gets swept along by it too — how far its
+ * lowest point ends up below tilt's origin then depends on the body's own
+ * radius/length in a way a single shared constant can't capture. So instead
+ * of guessing, this measures the actual squashed+rotated geometry (mirroring
+ * exactly what `body`/`tilt` apply at render time — see the two calls below)
+ * and lands the correction on `tilt.position.y`, which — unlike `body`'s
+ * position — is translated *after* `tilt`'s own rotation in the composed
+ * transform (Three.js composes an Object3D's local matrix as T·R·S), so it
+ * is not itself swept by it.
+ */
+function carcassGroundLift(geometry: THREE.BufferGeometry): number {
+  const probe = geometry.clone();
+  probe.scale(1, CARCASS_SQUASH_Y, 1);
+  probe.rotateZ(CARCASS_TILT_Z);
+  probe.computeBoundingBox();
+  const minY = probe.boundingBox?.min.y ?? 0;
+  probe.dispose();
+  return -minY;
+}
+
 /**
  * 尸体：flattened, uniformly carcass-tinted, tipped over, no outline ("消隐感").
  *
@@ -313,16 +353,17 @@ function carcassShape(species: string): CarcassShape {
 export function buildCarcassModel(species: string): CreatureModel {
   const group = new THREE.Group();
   const shape = carcassShape(species);
+  const geometry = shape.makeGeometry();
 
-  const body = makeMesh(shape.makeGeometry(), PALETTE.carcass);
-  body.scale.y *= 0.35;
-  body.position.y = 0.16;
+  const body = makeMesh(geometry, PALETTE.carcass);
+  body.scale.y = CARCASS_SQUASH_Y;
 
   // creatureView drives `group.rotation` every frame (yaw + attack-pitch), so
   // the sideways tip has to live on a child wrapper instead: setting it on
   // `group` directly would get overwritten by the very next applyInterp() call.
   const tilt = new THREE.Group();
-  tilt.rotation.z = 0.6;
+  tilt.rotation.z = CARCASS_TILT_Z;
+  tilt.position.y = carcassGroundLift(geometry);
   tilt.add(body);
   group.add(tilt); // no outline() call: carcass models are unlined per spec
 
