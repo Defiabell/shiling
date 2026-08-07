@@ -12,6 +12,25 @@ import { PALETTE } from "./palette.js";
  * `rotation.y = yaw` to `group`. So every model below is built facing +Z at
  * rotation.y = 0 — head/eyes toward +Z, tail toward -Z.
  */
+/**
+ * Per-frame procedural-animation input, recomputed fresh every call — see
+ * `CreatureModel.animate`. `activity`/`locomotion` are deliberately plain
+ * `string` rather than importing `@shiling/sim`'s `Activity`/`Locomotion`
+ * unions: this module builds the graybox stand-in for a future Meshy GLB
+ * swap (see the `mounts`/`parts` doc comments above) and stays sim-agnostic
+ * on purpose — creatureView, which already depends on `@shiling/sim` for
+ * other types, is where those exact string literals get validated against
+ * the real unions.
+ */
+export interface AnimateCtx {
+  activity: string;
+  locomotion: string;
+  /** Horizontal speed estimate (m/s) from creatureView's interpolation data; ≈0 when stationary. */
+  speedHint: number;
+  /** Monotonic seconds (wall-clock derived) — the sole phase source for every sin/spring below. */
+  tSec: number;
+}
+
 export interface CreatureModel {
   group: THREE.Group;
   /**
@@ -26,8 +45,95 @@ export interface CreatureModel {
    * drives *is* the seam a GLB swap will later replace.
    */
   parts: { head?: THREE.Object3D; tail?: THREE.Object3D; body: THREE.Object3D };
+  /**
+   * Task 4: per-render-frame procedural animation, no skeleton — pure
+   * sin/spring writes onto `group`/`parts`. creatureView.applyInterp calls
+   * this *after* it has already lerped this frame's interpolated
+   * position/yaw onto `group` (see that file's doc comment): the one `+=`
+   * below (bob onto `group.position.y`) relies on that ordering to avoid
+   * accumulating — every other write here is an absolute
+   * baseline-plus-fresh-trig-term assignment, recomputed from `ctx.tSec`
+   * each call, so calling this every frame is always safe regardless of
+   * call order relative to that lerp.
+   */
+  animate(ctx: AnimateCtx): void;
   /** Frees every geometry/material in the model, outlines included — creatures die often. */
   dispose(): void;
+}
+
+/**
+ * Shared `animate` implementation for every living species (youshou/lingshu/
+ * tanshou): the M0.5 Task 4 formulas only ever touch `group` and
+ * `parts.body`/`head`/`tail`, which every living builder provides in the same
+ * shape, so one generic closure covers all three instead of copy-pasted
+ * per-species logic.
+ *
+ * Baseline `body` rotation/scale are captured once here — called as the last
+ * step of each builder, after that builder has finished orienting `body`
+ * (e.g. `rotation.x = Math.PI/2` to swing the capsule's long axis onto +Z) —
+ * so every per-frame write is `baseline + offset`, never a bare overwrite:
+ * overwriting absolutely would erase that baked orientation the instant
+ * locomotion isn't "swim" (rotation.x) or activity isn't idle/eating
+ * (scale.y).
+ *
+ * Attack-spring state (`attackPitch`) and `lastTSec` (for frameDt) live in
+ * this closure, one instance per model — creatureView no longer writes
+ * `group.rotation.x` itself (Task 4 moved 100% ownership here), so there is
+ * nothing to read back off the object; the spring's "current value" has to be
+ * remembered somewhere, and a closure variable scoped to this one model
+ * instance is the simplest place.
+ */
+function createLivingAnimate(
+  group: THREE.Group,
+  parts: { head?: THREE.Object3D; tail?: THREE.Object3D; body: THREE.Object3D },
+): CreatureModel["animate"] {
+  const { body, head, tail } = parts;
+  const baseBodyRotX = body.rotation.x;
+  const baseBodyRotZ = body.rotation.z;
+  const baseBodyScaleY = body.scale.y;
+
+  let attackPitch = 0;
+  let lastTSec: number | null = null;
+
+  return (ctx: AnimateCtx) => {
+    // First call has no prior sample to diff against — 0 keeps the attack
+    // spring from jumping on the very first frame instead of racing toward
+    // its target using a bogus (huge, or negative on a clock hiccup) dt.
+    const frameDt = lastTSec === null ? 0 : Math.max(0, ctx.tSec - lastTSec);
+    lastTSec = ctx.tSec;
+
+    const swimming = ctx.locomotion === "swim";
+    const bobFreq = 4 + ctx.speedHint * 2;
+    const bobAmp = Math.min(0.08, ctx.speedHint * 0.02) * (swimming ? 0.5 : 1);
+    // += : relies on creatureView.applyInterp having just written this
+    // frame's fresh interpolated position.y immediately before calling
+    // animate() — see CreatureModel.animate's doc comment.
+    group.position.y += Math.abs(Math.sin(ctx.tSec * bobFreq)) * bobAmp;
+    // Same frequency as the bob, per spec ("同频微滚") — a fixed ±0.04 roll
+    // regardless of speed, only its rate follows speedHint.
+    body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * bobFreq) * 0.04;
+
+    body.scale.y =
+      ctx.activity === "idle" || ctx.activity === "eating"
+        ? baseBodyScaleY + Math.sin(ctx.tSec * 2.2) * 0.02
+        : baseBodyScaleY;
+
+    body.rotation.x = baseBodyRotX + (swimming ? Math.sin(ctx.tSec * 3) * 0.08 : 0);
+
+    // Spring always runs (target flips 0.35↔0 on the activity edge) so the
+    // lunge eases back out on exit instead of snapping — not gated to only
+    // execute "while attacking".
+    const targetPitch = ctx.activity === "attacking" ? 0.35 : 0;
+    attackPitch += (targetPitch - attackPitch) * Math.min(1, 10 * frameDt);
+    group.rotation.x = attackPitch;
+
+    if (head) {
+      head.rotation.x = ctx.activity === "eating" ? 0.4 + Math.sin(ctx.tSec * 5) * 0.15 : 0;
+    }
+    if (tail) {
+      tail.rotation.y = Math.sin(ctx.tSec * (2 + ctx.speedHint * 3)) * 0.3;
+    }
+  };
 }
 
 const OUTLINE_SCALE = 1.06;
@@ -153,10 +259,12 @@ function buildYoushouModel(): CreatureModel {
   tail.position.set(0, 0.1, -0.14);
   attach(tailMount, tail);
 
+  const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
     mounts: { head: headMount, tail: tailMount },
-    parts: { head: headMount, tail: tailMount, body },
+    parts,
+    animate: createLivingAnimate(group, parts),
     dispose: () => disposeTree(group),
   };
 }
@@ -218,10 +326,12 @@ function buildLingshuModel(): CreatureModel {
   tail.position.set(0, 0, -0.08);
   attach(tailMount, tail);
 
+  const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
     mounts: { head: headMount, tail: tailMount },
-    parts: { head: headMount, tail: tailMount, body },
+    parts,
+    animate: createLivingAnimate(group, parts),
     dispose: () => disposeTree(group),
   };
 }
@@ -266,10 +376,12 @@ function buildTanshouModel(): CreatureModel {
   tail.position.set(0, 0, -0.4);
   attach(tailMount, tail);
 
+  const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
     mounts: { head: headMount, tail: tailMount, back: backMount },
-    parts: { head: headMount, tail: tailMount, body },
+    parts,
+    animate: createLivingAnimate(group, parts),
     dispose: () => disposeTree(group),
   };
 }
@@ -371,6 +483,13 @@ export function buildCarcassModel(species: string): CreatureModel {
     group,
     mounts: {},
     parts: { body },
+    // No-op per spec: a carcass never locomotes/breathes/attacks/eats, and
+    // critically must never touch `group.rotation.x` — the inner `tilt`
+    // child (see comment above) already owns the tip-over, and creatureView
+    // no longer writes a fixed attack-pitch onto `group` itself, so leaving
+    // this empty is what keeps `group.rotation`/`.position.y` exactly what
+    // applyInterp's lerp wrote, undisturbed.
+    animate: () => {},
     dispose: () => disposeTree(group),
   };
 }

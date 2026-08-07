@@ -1,12 +1,6 @@
 import * as THREE from "three";
-import type { GameState, Vec3 } from "@shiling/sim";
+import { dist2d, DT, type GameState, type Vec3 } from "@shiling/sim";
 import { buildCarcassModel, buildCreatureModel, type CreatureModel } from "./creatureModels.js";
-
-// Graybox visual feedback: pitch the mesh forward this many radians while the
-// underlying sim activity is "attacking" (client only reflects state, it
-// never decides when an attack happens). Task 4 will replace this hard snap
-// with a spring animation driven off model.parts instead of the whole group.
-const ATTACK_TILT_RAD = 0.3;
 
 export interface CreatureView {
   /** = model.group. Kept as a top-level field (existing call sites read .mesh.position for the follow camera). */
@@ -19,8 +13,17 @@ export interface CreatureView {
   currPos: THREE.Vector3;
   prevYaw: number;
   currYaw: number;
-  /** Set from the most recent state read; drives the attack forward-tilt in applyInterp. */
-  attacking: boolean;
+  /**
+   * Most recently synced activity/locomotion strings — feed model.animate's
+   * ctx every frame (Task 4). Carcasses have neither field on the sim's
+   * Carcass type, so their view keeps the constructor defaults below
+   * forever; harmless, since buildCarcassModel's animate ignores ctx
+   * entirely (no-op).
+   */
+  activity: string;
+  locomotion: string;
+  /** = model.animate, captured once at view construction (Task 4's per-frame procedural animation). */
+  animate: CreatureModel["animate"];
 }
 
 /**
@@ -43,10 +46,12 @@ function carcassKey(id: number): string {
 function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureView {
   const pos = new THREE.Vector3(groundPos.x, groundPos.y, groundPos.z);
   model.group.position.copy(pos);
-  // "YXZ": yaw (world Y) applied before pitch (local X), so the attack tilt
-  // always pitches the nose relative to current facing, not a fixed world
-  // axis. Harmless for carcasses — their pitch/yaw stay 0, and their own
-  // tip-over lives on an inner wrapper this rotation.order never touches.
+  // "YXZ": yaw (world Y) applied before pitch (local X), so the attack-spring
+  // tilt animate() drives onto rotation.x always pitches the nose relative to
+  // current facing, not a fixed world axis. Harmless for carcasses — their
+  // yaw stays 0 and their animate() never touches rotation.x (no-op), and
+  // their own tip-over lives on an inner wrapper this rotation.order never
+  // touches.
   model.group.rotation.order = "YXZ";
   return {
     mesh: model.group,
@@ -55,7 +60,9 @@ function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureVi
     currPos: pos.clone(),
     prevYaw: yaw,
     currYaw: yaw,
-    attacking: false,
+    activity: "idle",
+    locomotion: "walk",
+    animate: model.animate,
   };
 }
 
@@ -64,7 +71,7 @@ function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureVi
  * newly-appeared creatures/carcasses, removes models for ones that vanished
  * (a kill removes the prey from state.creatures; a fully-eaten carcass is
  * removed from state.carcasses), and refreshes each surviving view's
- * currPos/currYaw/attacking flag. Pure state → view sync — no game logic.
+ * currPos/currYaw/activity/locomotion. Pure state → view sync — no game logic.
  */
 export function syncCreatures(scene: THREE.Scene, state: GameState, views: CreatureViews): void {
   const liveKeys = new Set<string>();
@@ -86,7 +93,8 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
     // (already terrain-surface height) maps straight across — no half-height lift.
     view.currPos.set(c.pos.x, c.pos.y, c.pos.z);
     view.currYaw = c.yaw;
-    view.attacking = c.activity === "attacking";
+    view.activity = c.activity;
+    view.locomotion = c.locomotion;
     // Hidden while burrowed (underground, out of view) or once dead: a dead
     // player's creature entry lingers (see key comment above) but the
     // carcass model at the same spot is the one that should be visible.
@@ -138,16 +146,29 @@ function lerpAngle(a: number, b: number, t: number): number {
 /**
  * Render-frame interpolation: blends each view's prev→curr pose by alpha
  * (leftover accumulator / DT) and writes the result onto the model's root
- * transform. Also applies the graybox attack-tilt (pitch forward by
- * ATTACK_TILT_RAD) for as long as the most recently synced state has
- * activity === "attacking".
+ * transform (position + yaw only — pitch/roll/scale are Task 4's
+ * animate()'s job, not this function's, so it never touches rotation.x or
+ * any part transform).
+ *
+ * Then drives `model.animate` (via `view.animate`) for procedural
+ * locomotion/attack/eat motion. Order matters: animate's one `+=` (the
+ * movement bob onto `group.position.y`) counts on this function having
+ * *just* overwritten position.y with a fresh lerp — recomputed from
+ * prevPos/currPos, never carried over from a prior frame — immediately
+ * before animate() runs, so the bob never accumulates across frames even
+ * though it's a bare `+=`.
+ *
+ * speedHint reuses the same prevPos/currPos this function already lerps
+ * from — dist2d (horizontal-only, matches "水平速度") over one fixed
+ * timestep — rather than computing anything new: it's constant for the
+ * whole fixed step, independent of alpha.
  */
-export function applyInterp(views: CreatureViews, alpha: number): void {
+export function applyInterp(views: CreatureViews, alpha: number, tSec: number): void {
   const t = Math.max(0, Math.min(1, alpha));
   for (const view of views.values()) {
     view.mesh.position.lerpVectors(view.prevPos, view.currPos, t);
-    const yaw = lerpAngle(view.prevYaw, view.currYaw, t);
-    const pitch = view.attacking ? ATTACK_TILT_RAD : 0;
-    view.mesh.rotation.set(pitch, yaw, 0);
+    view.mesh.rotation.y = lerpAngle(view.prevYaw, view.currYaw, t);
+    const speedHint = dist2d(view.prevPos, view.currPos) / DT;
+    view.animate({ activity: view.activity, locomotion: view.locomotion, speedHint, tSec });
   }
 }

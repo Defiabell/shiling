@@ -102,7 +102,12 @@ renderer.setAnimationLoop(() => {
     syncCreatures(scene, sim.state, views);
     acc -= DT;
   }
-  applyInterp(views, acc / DT);
+  // Wall-clock seconds — the sole phase source model.animate's sin/spring
+  // formulas key off of (Task 4). A future water-surface animation (Task 5)
+  // is expected to reuse this same tSec, hence hoisting it out here instead
+  // of computing it inline in the call below.
+  const tSec = now / 1000;
+  applyInterp(views, acc / DT, tSec);
   updateDigSpots(terrainGroup, sim.terrain);
   // Follow the render-interpolated mesh position (not the raw once-per-step
   // sim position) so the camera reads smooth even when a slow frame makes
