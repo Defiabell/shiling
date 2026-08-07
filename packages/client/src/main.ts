@@ -4,6 +4,8 @@ import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
+import { createSimEventDiffer } from "./render/simEvents.js";
+import { createParticles } from "./render/particles.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
@@ -42,6 +44,14 @@ function isPlayerBurrowed(): boolean {
 const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
 const hud = createHud();
+const particles = createParticles(scene);
+const eventDiffer = createSimEventDiffer();
+// **CRITICAL（见 simEvents.ts 头部 JSDoc 的快照契约）**：sim.state 是同一个对象、
+// 每次 step() 原地 mutate；prevSnapshot 必须是每步之前对 differ 实际读取字段的
+// 独立深拷贝，否则 prev/curr 会变成同一份引用，事件流会静默永远清零。这里严格
+// 照抄 JSDoc 里给的写法：只拷贝 differ 用到的字段（不 clone 整份含 terrain 的
+// GameState，省一点没必要的深拷贝体积）。
+let prevSnapshot: GameState | null = null;
 
 /**
  * Mirrors needs.ts's private drinking check (Task 7): "in water" or an
@@ -92,7 +102,8 @@ let last = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   // 单帧最多补 0.25s 模拟时间：切后台/掉帧恢复时不会因为一次性追赶太多步而卡死。
-  acc += Math.min(0.25, (now - last) / 1000);
+  const frameDt = Math.min(0.25, (now - last) / 1000);
+  acc += frameDt;
   last = now;
   while (acc >= DT) {
     snapshotPrev(views);
@@ -100,6 +111,19 @@ renderer.setAnimationLoop(() => {
     // 每个定步之后立刻同步一次视图：prevPos/currPos 对应"这一步之前→之后"，
     // 而不是攒够多步才同步一次导致的粗插值；同时完成 view 的增删（生/死/尸体腐烂）。
     syncCreatures(scene, sim.state, views);
+    // 事件 diff 必须紧跟在这一步 sim.step() 之后、prevSnapshot 更新之前调用——
+    // prevSnapshot 此时还是"上一步之后"的快照，curr 是"这一步之后"的最新状态，
+    // 正是 differ 要比较的那一对（见 simEvents.ts JSDoc 里的调用顺序范式）。
+    const events = eventDiffer(prevSnapshot, sim.state, DT);
+    if (events.length > 0) particles.handle(events, { waterLevel: sim.terrain.waterLevel });
+    prevSnapshot = structuredClone({
+      creatures: sim.state.creatures,
+      carcasses: sim.state.carcasses,
+      playerDead: sim.state.playerDead,
+      playerId: sim.state.playerId,
+      tick: sim.state.tick,
+      nextId: sim.state.nextId,
+    }) as GameState;
     acc -= DT;
   }
   // Wall-clock seconds — the sole phase source model.animate's sin/spring
@@ -110,6 +134,7 @@ renderer.setAnimationLoop(() => {
   applyInterp(views, acc / DT, tSec);
   updateDigSpots(terrainGroup, sim.terrain);
   updateWater(tSec);
+  particles.update(frameDt, tSec);
   // Follow the render-interpolated mesh position (not the raw once-per-step
   // sim position) so the camera reads smooth even when a slow frame makes
   // the while-loop above run several fixed steps back-to-back. Keyed by
