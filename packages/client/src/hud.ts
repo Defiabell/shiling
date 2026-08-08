@@ -193,8 +193,9 @@ const HUD_CSS = `
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 .hud-prompt-key {
-  /* min-width（而非固定 width）：键位拆分（W2）后撕咬提示要显示"左键"（2 字）而不是
-     "E"（1 字），min-width+左右 padding 让两种长度的文案都能不裁切地居中显示。 */
+  /* min-width（而非固定 width）：历史上撕咬提示显示过"左键"（2 字，W2 键位拆分），
+     Post-fix-6 起改回单字符"J"，但仍留 min-width+左右 padding——万一将来又出现更长的
+     键帽文案，不必再改这条规则，两种长度的文案都能不裁切地居中显示。 */
   min-width: 26px;
   height: 24px;
   padding: 0 6px;
@@ -381,13 +382,16 @@ interface ContextPrompt {
  * only (key badge + action word inside a glass pill, no separate seal glyph
  * — variant C's mockup drops the seal badge the previous bright-UI skin had)
  * — the ordering and the underlying words (挖掘/撕咬/进食/饮水/出洞) are
- * unchanged; only the keycap shown for 撕咬 changed from "E" to "左键" (W2
- * key split, carried over unchanged from before).
+ * unchanged; the keycap shown for 撕咬 went "E" to "左键" (W2 key split) to
+ * "J" (Post-fix-6, owner feedback "no comfortable trackpad mouse buttons" —
+ * keyboard is now the primary attack input; input.ts ORs KeyJ into the same
+ * PlayerInput.attack field left-click already drove, so this is purely a
+ * display-string change, not a behavior change).
  */
 function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
   if (player.burrowId !== null) return { word: "出洞", key: "E" };
   if (ctx.nearDigSpot) return { word: "挖掘", key: "E" };
-  if (ctx.nearPrey) return { word: "撕咬", key: "左键" };
+  if (ctx.nearPrey) return { word: "撕咬", key: "J" };
   if (ctx.nearCarcass) return { word: "进食", key: "E" };
   if (ctx.nearWater) return { word: "饮水", key: "E" };
   return null;

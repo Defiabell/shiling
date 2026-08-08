@@ -13,6 +13,7 @@ import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
 import { createMinimap } from "./minimap.js";
 import { showTitle } from "./title.js";
+import { createPauseOverlay } from "./pause.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 // 捕获成变量（而不是像原先那样直接内联进 createSim(...)）：Patch 3c 的地表
@@ -149,6 +150,29 @@ showTitle(() => {
   started = true;
 });
 
+// Post-fix-6（owner feedback「trackpad 用户没有舒适的鼠标按键／不知道有冲刺」）：Esc
+// 暂停/继续，与上面的 `started` 门闩同一套模式——`paused` 冻结 acc 累加/sim.step/
+// hud.update/followCam.update()/震屏与冲刺 FOV（screenFx.update()）/方向键转镜头
+// （见下方渲染循环里几处新增的 `&& !paused`／`if (!paused)`），但 applyInterp/
+// updateWater/particles.update 这些纯吃 tSec/frameDt 的 backdrop 动画无条件继续
+// 执行——世界的模拟状态与镜头都冻在暂停那一刻，backdrop 继续"活"，跟 Task 9 的
+// `started` gate 时期标题画面背后的处理完全同一个套路。
+// followCam.update()/震屏偏移那两处整段跳过而不是"传 0 delta"——原因见下方那处调用点
+// 旁边的注释（避免 shake 在暂停期间因为 base 位置没有被 followCam 重新计算而悄悄叠加）；
+// screenFx.update() 同理单独 gate（见其调用点旁边的注释：不冻结的话震屏衰减/冲刺 FOV
+// 弹簧会拿真实 frameDt 继续推进，画面并没有真的"冻住"）。
+let paused = false;
+const pauseOverlay = createPauseOverlay();
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "Escape") return;
+  if (e.repeat) return; // 边沿检测：长按 Esc 不应该每帧来回切换
+  // 守卫（brief 原话）：标题画面（started 还是 false）和死亡画面（playerDead）都不响应
+  // Esc——玩家还没入山/已经身死时，暂停这个概念本身就不成立，不该凭空冒出暂停面板。
+  if (!started || sim.state.playerDead) return;
+  paused = !paused;
+  pauseOverlay.setVisible(paused);
+});
+
 // Post-fix-1 verification hook (Bug 1, A/D 左右相反): dev-only, tree-shaken
 // out of production builds (`import.meta.env.DEV` is a Vite compile-time
 // constant, so `pnpm build` drops this whole block — see vite build output).
@@ -202,6 +226,19 @@ if (import.meta.env.DEV) {
     getThirst: () => getPlayer(sim.state).needs.thirst,
     getWorldSize: () => sim.terrain.size,
     getLastInput: () => lastInput,
+    // Post-fix-6 verification hooks: getTick lets an external Playwright
+    // script assert sim.state.tick is frozen across the pause window (no acc
+    // accumulation/sim.step while `paused`) and resumes advancing once
+    // unpaused; getPlayerId lets it pick a non-player creature out of
+    // getCreatures() to J-attack (the player's own species, "youshou", is not
+    // otherwise distinguishable from getCreatures() alone).
+    getTick: () => sim.state.tick,
+    getPlayerId: () => sim.state.playerId,
+    // Post-fix-6 verification hook: lets an external Playwright script assert
+    // camera.fov itself is frozen during pause (screenFx.update()'s sprint-FOV
+    // spring is gated by `!paused` — see that call site's comment; before that
+    // fix this value kept drifting toward the sprint target every paused frame).
+    getCameraFov: () => camera.fov,
   };
 }
 
@@ -213,11 +250,15 @@ renderer.setAnimationLoop(() => {
   // Task 9 gate：`started` 为 false 时完全跳过这个 if 块（不喂 sim.step，acc
   // 也不累加）——世界冻结在 tick 0；下面 applyInterp 等视觉更新仍无条件执行，
   // 让 backdrop 继续"活"（生物 idle 动画、水面、粒子都只吃 tSec/frameDt，
-  // 不依赖这里是否 step 过）。
-  if (started) {
+  // 不依赖这里是否 step 过）。Post-fix-6：`paused` 复用同一个 gate（`&& !paused`），
+  // 暂停时同样不累加 acc/不喂 sim.step；`last = now` 那两行留在这个 if 之外保持
+  // 无条件执行（上面已经是这样，未改动）——恢复时 frameDt 只是"这一帧到上一帧"的
+  // 正常间隔，不会因为暂停期间攒下的墙钟时间被塞进 acc 而在恢复瞬间触发一次追赶式
+  // 连续 step（与 title gate 当年解决的是同一个坑，见本文件顶部对应注释）。
+  if (started && !paused) {
     acc += frameDt;
   }
-  while (started && acc >= DT) {
+  while (started && !paused && acc >= DT) {
     snapshotPrev(views);
     lastInput = input.read(followCam.yaw);
     sim.step(lastInput);
@@ -258,38 +299,68 @@ renderer.setAnimationLoop(() => {
   // 是 movement.ts 权威写入的结果（见该文件 moveCreature），比在渲染层重新判断
   // "moveX/moveZ 是否非零"更准（后者拿不到"贴墙被挡住"之类的宽高衰减细节）。
   const player = getPlayer(sim.state);
+  // Post-fix-6（code review 抓到的真实 bug）：screenFx.update() 必须同样按
+  // `!paused` 冻结——它内部用真实 frameDt 推进震屏指数衰减 + 冲刺 FOV 弹簧，并
+  // 直接写 camera.fov/调用 updateProjectionMatrix()，如果不冻结，暂停期间画面
+  // 会继续"震屏慢慢平息"或者"FOV 慢慢弹回/弹到冲刺目标值"——与"世界视觉上冻在
+  // 暂停那一刻"这个 gate 的核心承诺直接矛盾（尤其是"受击瞬间按 Esc"或"冲刺切换
+  // 瞬间按 Esc"这两种时机下肉眼可见）。sprinting 的计算本身不需要挪进 if——
+  // 单纯算一个布尔值不产生任何副作用，真正有副作用的是 update() 调用本身。
   const sprinting = (lastInput?.sprint ?? false) && player.activity === "moving";
-  screenFx.update(frameDt, sprinting);
+  if (!paused) {
+    screenFx.update(frameDt, sprinting);
+  }
   // Follow the render-interpolated mesh position (not the raw once-per-step
   // sim position) so the camera reads smooth even when a slow frame makes
   // the while-loop above run several fixed steps back-to-back. Keyed by
   // `creature:${id}` per CreatureViews' convention (see creatureView.ts).
   const playerView = views.get(`creature:${sim.state.playerId}`);
-  if (playerView) {
+  // Post-fix-6：这一整块（方向键合成拖拽量 + followCam.update() + 震屏叠加）在
+  // `paused` 时整段跳过，不是"传 0 delta 但仍调用"——跳过 followCam.update() 意味着
+  // camera.position 这一帧完全不被触碰，精确停在暂停前最后一帧算出的位置（"冻结的
+  // 镜头看冻结的世界"）。如果只跳过方向键合成量而仍然调用 followCam.update()/叠加
+  // shake，camDelta() 仍可能因为鼠标拖拽（input.ts 不知道 paused，pointermove 照样
+  // 攒 accumDx/accumDy）而转动镜头；如果反过来只跳过 followCam.update() 但仍叠加
+  // shake，会在一个没有被 followCam 重新算过的旧 camera.position 上反复加 shake，
+  // 越叠越偏（followCam.update() 本该在每帧先把 position 摆回 idealPos 再让 shake
+  // 叠加在"干净"的那个基准上——见下面注释）。两处必须一起跳过。
+  if (playerView && !paused) {
+    // 方向键转镜头：先把本帧的合成拖拽量叠进 accumDx/accumDy，再走原有的
+    // camDelta()/consume() 通路——这样自动回正的 2s 抑制计时器（camera.ts 的
+    // idleSinceDragSec）天然把方向键也当成"手动拖拽"处理，不需要在 camera.ts 里
+    // 再开一条判定分支（见 input.ts addArrowLook() 头部注释）。
+    input.addArrowLook(frameDt);
     // isMoving mirrors the sprint-FOV gate just above (activity==="moving" is
     // movement.ts's authoritative signal); auto-recenter (M0.5 postfix-3)
     // only engages while the player is actually walking/running somewhere,
     // never while standing still deciding where to look.
     followCam.update(playerView.mesh.position, input.camDelta(), frameDt, player.yaw, player.activity === "moving", input.isDragging());
+    // 震屏偏移必须在 followCam.update() 之后叠加——followCam 每帧都会把
+    // camera.position 摆回"目标 + 轨道半径"算出的位置，若震屏偏移加在它之前会被
+    // 直接覆盖掉（见 camera.ts update() 里的注释）。
+    const shake = screenFx.getShakeOffset();
+    camera.position.x += shake.x;
+    camera.position.y += shake.y;
   }
-  // 震屏偏移必须在 followCam.update() 之后叠加——followCam 每帧都会把
-  // camera.position 摆回"目标 + 轨道半径"算出的位置，若震屏偏移加在它之前会被
-  // 直接覆盖掉（见 camera.ts update() 里的注释）。
-  const shake = screenFx.getShakeOffset();
-  camera.position.x += shake.x;
-  camera.position.y += shake.y;
   // input.consume() 必须无条件每帧调用，不能塞进下面的 `if (started)`——
-  // followCam.update() 在它上面已经无条件读过 input.camDelta() 一次（Task 9
-  // 之前就是这个顺序，未改动），如果只在 started 时才 consume，标题画面淡出
-  // 期间（title.ts 的 `.title-fade-out` 会把 pointer-events 提前设成
-  // none——即 600ms 淡出动画播放中、onEnter/started 还没真正置真的这段窗口，
-  // canvas 已经能重新接收拖拽）攒下的 dx/dy 永远清不掉，会被 followCam
-  // 每一帧重复叠加成越转越远的镜头（code review 抓到的真实 bug）。
+  // followCam.update() 在它上面（标题画面期间——此时 `paused` 恒为 false，见
+  // 下方 Esc 监听器的守卫，Post-fix-6 的 gate 在这个场景里完全不生效）已经读过
+  // 一次 input.camDelta()（Task 9 之前就是这个顺序，未改动），如果只在 started
+  // 时才 consume，标题画面淡出期间（title.ts 的 `.title-fade-out` 会把
+  // pointer-events 提前设成 none——即 600ms 淡出动画播放中、onEnter/started
+  // 还没真正置真的这段窗口，canvas 已经能重新接收拖拽）攒下的 dx/dy 永远清不掉，
+  // 会被 followCam 每一帧重复叠加成越转越远的镜头（code review 抓到的真实
+  // bug）。暂停期间（`paused` 为真，此时 followCam.update() 会被跳过）道理不变：
+  // 这一帧攒下的 dx/dy 同样必须清掉，否则恢复的第一帧会突然吃到一大坨积压的
+  // 拖拽/方向键增量。
   // Task 9 gate：只有 HUD 更新需要按 started 冻结——标题画面还在时 HUD 应
   // 保持 createHud() 刚建好时的初始空状态，藏在标题遮罩底下，直到玩家点
-  // 「入山」。
+  // 「入山」。Post-fix-6：`paused` 复用同一个 gate——sim.state 在暂停期间本来就
+  // 不会变（上面的 while 循环已经跳过），这里额外加 `&& !paused` 严格来说只是
+  // 省掉几次必然得到同一结果的 dirty-check 比较，但语义上更直接地对应 brief 的
+  // "no hud.update" 要求，而不是依赖"反正数据没变所以更新也没用"这层隐含推论。
   input.consume();
-  if (started) {
+  if (started && !paused) {
     hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
     // followCam.yaw（镜头朝向，不是玩家朝向）驱动小地图的视野锥——与 HUD 同样按
     // started 冻结，标题画面期间不在小地图上跑动画。

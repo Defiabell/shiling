@@ -1,7 +1,24 @@
 import type { PlayerInput } from "@shiling/sim";
 
 /** Native key codes we listen for (layout-independent, unlike e.key). */
-const GAME_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight", "KeyE"]);
+const GAME_KEYS = new Set([
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "ShiftLeft",
+  "ShiftRight",
+  "KeyE",
+  // Post-fix-6（owner feedback「trackpad 没有舒适的鼠标按键／不知道有冲刺」）：J 键
+  // 撕咬（键盘转主键，左键降级备用，见下方 read() 的 attackHeld || keys.j）+ 方向键
+  // 转镜头（见 addArrowLook()）。同一个 Set 兼管 keydown/keyup 的 preventDefault——
+  // 方向键默认会滚动页面，必须一并加进来才能拦住。
+  "KeyJ",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+]);
 
 interface KeyState {
   w: boolean;
@@ -10,6 +27,54 @@ interface KeyState {
   d: boolean;
   shift: boolean;
   e: boolean;
+  j: boolean;
+  arrowLeft: boolean;
+  arrowRight: boolean;
+  arrowUp: boolean;
+  arrowDown: boolean;
+}
+
+/**
+ * 方向键转镜头速率（Post-fix-6）。camDelta 的消费方（camera.ts）把 dx/dy 当作"这一帧
+ * 的鼠标拖拽像素量"，乘以它自己的 DRAG_SENSITIVITY（0.008 rad/px）换算成弧度——这里
+ * 反过来，把"想要的 rad/s"除以同一个系数，换算成每帧要在 accumDx/accumDy 里累加多少
+ * 像素等价量。camera.ts 本身不需要知道这份合成量到底来自方向键还是真实拖拽：两者共用
+ * 同一个 camDelta()/consume() 通路，auto-recenter 的手动输入判定
+ * `isDragging || dx !== 0 || dy !== 0`（见 camera.ts）因此对方向键天然生效，不需要在
+ * camera.ts 里再开一条判定分支。
+ *
+ * DRAG_SENSITIVITY 与 camera.ts 的同名常量必须保持同一个数值——两处各自独立声明字面量
+ * （沿用本工程"每个模块自成一体，不跨模块 import UI-only 常量"的既有惯例），改一处记得
+ * 同步改另一处。
+ */
+const ARROW_YAW_RATE = 2.2; // rad/s
+const ARROW_PITCH_RATE = 1.2; // rad/s
+const DRAG_SENSITIVITY = 0.008;
+
+/**
+ * Pure yaw/pitch-held-key → synthetic camDelta conversion, extracted out of
+ * addArrowLook() for the same reason composeMove() was extracted out of
+ * read() above (see that function's doc comment): lets
+ * test/addArrowLook.test.ts pin down the rate/sign math — and, via a
+ * camera.ts round-trip, that the two modules' independently-declared
+ * DRAG_SENSITIVITY literals stay in sync — without any DOM/canvas wiring.
+ */
+export function computeArrowLook(
+  arrowLeft: boolean,
+  arrowRight: boolean,
+  arrowUp: boolean,
+  arrowDown: boolean,
+  frameDt: number,
+): { dx: number; dy: number } {
+  const yawDir = (arrowRight ? 1 : 0) - (arrowLeft ? 1 : 0);
+  const pitchDir = (arrowDown ? 1 : 0) - (arrowUp ? 1 : 0);
+  // 符号与鼠标拖拽的 accumDx/accumDy 完全同义："方向右/下"就是视觉上"往右/往下拖拽"
+  // 一次——ArrowRight 像拖右（dx 正，yaw 增），ArrowUp 像拖上（dy 负，pitch 增，见
+  // camera.ts 的 `pitch = pitch - delta.dy * DRAG_SENSITIVITY`）。
+  return {
+    dx: (yawDir * ARROW_YAW_RATE * frameDt) / DRAG_SENSITIVITY,
+    dy: (pitchDir * ARROW_PITCH_RATE * frameDt) / DRAG_SENSITIVITY,
+  };
 }
 
 /**
@@ -63,6 +128,17 @@ export interface Input {
    * just because one frame's delta happened to be zero.
    */
   isDragging(): boolean;
+  /**
+   * Post-fix-6: accumulates a synthetic camDelta contribution from currently
+   * held arrow keys, scaled by frameDt so held-key rotation runs at a fixed
+   * rad/s rate independent of frame rate (see ARROW_YAW_RATE/ARROW_PITCH_RATE
+   * above). Must be called exactly once per render frame, before the same
+   * frame's camDelta()/consume() — it writes into the very same accumulator
+   * mouse-drag pointermove uses, so it flows through the existing
+   * camDelta()/consume() path (and camera.ts's auto-recenter suppression)
+   * without camera.ts needing to know the delta's source.
+   */
+  addArrowLook(frameDt: number): void;
 }
 
 /**
@@ -71,9 +147,13 @@ export interface Input {
  *
  * 键位拆分（W2，playtest feedback「单一 E 键在重叠时无法选择操作」）：此前左键单纯拖拽
  * 镜头、E 兼管撕咬+挖掘/进食/饮水。现在拆成三块，互不冲突：
- *   - 左键（button 0）：按住 = 撕咬（PlayerInput.attack）。
+ *   - 左键（button 0）：按住 = 撕咬（PlayerInput.attack）。Post-fix-6 起 J 键 OR 进同一个
+ *     字段，且键盘转为主键——trackpad 用户没有舒适的左键手势，HUD 提示也改成显示「J」
+ *     （见 hud.ts contextPrompt），左键保留作兼容备用，判定逻辑上两者完全等价、没有优先级。
  *   - 右键（button 2）：按住拖拽 = 转镜头（原来挂在"任意按键"上的拖拽逻辑收窄到只认
- *     右键；contextmenu 仍然要 preventDefault，否则松开右键拖拽会弹原生菜单）。
+ *     右键；contextmenu 仍然要 preventDefault，否则松开右键拖拽会弹原生菜单）。Post-fix-6
+ *     另加方向键 ←→↑↓ 转镜头（见 addArrowLook()）——同一套 discoverability 修复，键盘
+ *     玩家不需要碰鼠标就能兼顾移动/攻击/转镜头三件事。
  *   - E 键：不变，仍是挖掘/进食/饮水/出洞这些情境交互（PlayerInput.interact）。
  * 两个鼠标按钮各自独立跟踪按下状态，都通过 Pointer Capture 保证在画布外松开也能收到
  * pointerup（避免"按下时在画布内、拖出画布外松开"导致状态卡死在按下）。
@@ -86,7 +166,19 @@ export interface Input {
  * detect the exit press).
  */
 export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => boolean = () => false): Input {
-  const keys: KeyState = { w: false, a: false, s: false, d: false, shift: false, e: false };
+  const keys: KeyState = {
+    w: false,
+    a: false,
+    s: false,
+    d: false,
+    shift: false,
+    e: false,
+    j: false,
+    arrowLeft: false,
+    arrowRight: false,
+    arrowUp: false,
+    arrowDown: false,
+  };
   let dragging = false; // 右键拖拽中
   let attackHeld = false; // 左键按住
   let lastX = 0;
@@ -114,6 +206,21 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         break;
       case "KeyE":
         keys.e = pressed;
+        break;
+      case "KeyJ":
+        keys.j = pressed;
+        break;
+      case "ArrowLeft":
+        keys.arrowLeft = pressed;
+        break;
+      case "ArrowRight":
+        keys.arrowRight = pressed;
+        break;
+      case "ArrowUp":
+        keys.arrowUp = pressed;
+        break;
+      case "ArrowDown":
+        keys.arrowDown = pressed;
         break;
     }
   }
@@ -197,7 +304,8 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         moveZ: z,
         sprint: keys.shift,
         interact,
-        attack: attackHeld,
+        // Post-fix-6：J OR 左键，两者完全等价（见文件头注释）。
+        attack: attackHeld || keys.j,
       };
     },
     camDelta() {
@@ -209,6 +317,11 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
     },
     isDragging() {
       return dragging;
+    },
+    addArrowLook(frameDt: number) {
+      const { dx, dy } = computeArrowLook(keys.arrowLeft, keys.arrowRight, keys.arrowUp, keys.arrowDown, frameDt);
+      accumDx += dx;
+      accumDy += dy;
     },
   };
 }

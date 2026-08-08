@@ -128,6 +128,20 @@ ${FONT_CSS}
 .title-enter:active {
   transform: scale(0.97);
 }
+.title-hint {
+  /* Post-fix-6（owner feedback「trackpad 用户不知道有冲刺」discoverability
+     gap）：一行静态操作提示，位于按钮下方——不需要动效/交互，纯玻璃语言细体
+     宽字距文字（呼应 hud.ts 的 .hud-status-text 同样"无背板、只靠字体+字距"
+     的克制处理），比 .title-sub 更淡更小，视觉上明确是次要信息。 */
+  margin: 4px 0 0;
+  font-family: ${SYSTEM_FONT};
+  font-size: 12px;
+  font-weight: 300;
+  letter-spacing: 0.2em;
+  color: #c8d2dc;
+  opacity: 0.65;
+  text-align: center;
+}
 `;
   document.head.appendChild(style);
 }
@@ -167,7 +181,14 @@ export function showTitle(onEnter: () => void): void {
   button.className = "title-enter";
   button.textContent = "入　山"; // U+3000 表意全角空格，视觉上比普通空格更宽——呼应《食灵》的疏朗排布
 
-  overlay.append(main, sub, button);
+  // Post-fix-6：入山按钮下方补一行操作提示（owner feedback「trackpad 没有舒适的鼠标
+  // 按键／不知道冲刺存在」——discoverability gap，标题画面先亮出完整键位，不必等到
+  // 进游戏后靠暂停面板才第一次看到）。纯静态文案，不随任何状态变化，不需要 dirty-check。
+  const hint = document.createElement("p");
+  hint.className = "title-hint";
+  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　Esc 暂停";
+
+  overlay.append(main, sub, button, hint);
   document.body.appendChild(overlay);
 
   button.addEventListener(
