@@ -128,6 +128,13 @@ ${FONT_CSS}
 .title-enter:active {
   transform: scale(0.97);
 }
+.title-enter:disabled {
+  /* Postfix 7（Meshy GLB 预载门闩）：载入中禁用态——调暗+去掉可点击光标/悬停发光，
+     不做骨架屏一类的额外动效，静态玻璃语言已经足够克制地传达"还不能点"。 */
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
 .title-hint {
   /* Post-fix-6（owner feedback「trackpad 用户不知道有冲刺」discoverability
      gap）：一行静态操作提示，位于按钮下方——不需要动效/交互，纯玻璃语言细体
@@ -150,8 +157,14 @@ ${FONT_CSS}
  * 挂载全屏标题遮罩；点击「入　山」触发 600ms 淡出，淡出结束后自己把 DOM 摘掉
  * 再调 onEnter（main.ts 在 onEnter 里把 `started` 置真，具体见 main.ts 头部
  * gate 注释）。`{ once: true }` 防止淡出过程中重复点击二次触发。
+ *
+ * `modelsReady`（Postfix 7）：main.ts 传入 `loadModelLibrary()` 的 promise——
+ * 按钮初始渲染为禁用态+「载入中…」文案，promise 落定（无论 resolve 还是意外
+ * reject，`.finally()` 两边都接住，绝不会卡死不可点）后才切换成可点的
+ * 「入　山」。showTitle 本身不关心 promise 里装的是什么，只当作一个纯粹的
+ * "何时可点" 信号——保持这个函数与 modelLibrary.ts 完全解耦。
  */
-export function showTitle(onEnter: () => void): void {
+export function showTitle(modelsReady: Promise<unknown>, onEnter: () => void): void {
   // 幂等 guard，对齐 atmosphere.ts 的 mountPaperOverlay()/screenFx.ts 的
   // ensureOverlayDiv() 同一套"重复调用不重复挂载"惯例——main.ts 目前只在
   // 模块顶层调用一次，不会真的撞上，但保持这个约定比让 showTitle 是本文件
@@ -179,7 +192,12 @@ export function showTitle(onEnter: () => void): void {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "title-enter";
-  button.textContent = "入　山"; // U+3000 表意全角空格，视觉上比普通空格更宽——呼应《食灵》的疏朗排布
+  button.disabled = true;
+  button.textContent = "载入中…";
+  modelsReady.finally(() => {
+    button.disabled = false;
+    button.textContent = "入　山"; // U+3000 表意全角空格，视觉上比普通空格更宽——呼应《食灵》的疏朗排布
+  });
 
   // Post-fix-6：入山按钮下方补一行操作提示（owner feedback「trackpad 没有舒适的鼠标
   // 按键／不知道冲刺存在」——discoverability gap，标题画面先亮出完整键位，不必等到

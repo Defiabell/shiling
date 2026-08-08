@@ -1,11 +1,16 @@
 import * as THREE from "three";
 import { PALETTE } from "./palette.js";
+import type { ModelLibrary, LibraryEntry } from "./modelLibrary.js";
 
 /**
- * A creature's renderable graybox: a named-mount hierarchy of MeshLambertMaterial
- * primitives standing in for the eventual Meshy-generated GLB. `group`'s origin
- * is the ground-contact point (feet), not the geometric center — creatureView
- * places it directly at the sim's feet/terrain-surface position, no half-height
+ * A creature's renderable model. Two families share the exact same
+ * `CreatureModel` contract below: the original procedural graybox (a named-
+ * mount hierarchy of MeshLambertMaterial primitives) for any species without
+ * a loaded Meshy GLB, and — as of Postfix 7 (see modelLibrary.ts) — a real
+ * Meshy-generated model for youshou/lingshu/tanshou, swapped in transparently
+ * via `setModelLibrary()` below. `group`'s origin is the ground-contact point
+ * (feet), not the geometric center, for both families — creatureView places
+ * it directly at the sim's feet/terrain-surface position, no half-height
  * lift needed.
  *
  * Sim yaw convention: forward = (sin(yaw), cos(yaw)), and creatureView applies
@@ -16,10 +21,10 @@ import { PALETTE } from "./palette.js";
  * Per-frame procedural-animation input, recomputed fresh every call — see
  * `CreatureModel.animate`. `activity`/`locomotion` are deliberately plain
  * `string` rather than importing `@shiling/sim`'s `Activity`/`Locomotion`
- * unions: this module builds the graybox stand-in for a future Meshy GLB
- * swap (see the `mounts`/`parts` doc comments above) and stays sim-agnostic
- * on purpose — creatureView, which already depends on `@shiling/sim` for
- * other types, is where those exact string literals get validated against
+ * unions: this module stays sim-agnostic on purpose (true of both the
+ * procedural graybox and, since Postfix 7, the Meshy GLB variants above) —
+ * creatureView, which already depends on `@shiling/sim` for other types, is
+ * where those exact string literals get validated against
  * the real unions.
  */
 export interface AnimateCtx {
@@ -34,15 +39,18 @@ export interface AnimateCtx {
 export interface CreatureModel {
   group: THREE.Group;
   /**
-   * Named anchors — the seam a future Meshy GLB swap will hang its own parts
-   * off of, at the same local transform this graybox model uses. Species
+   * Named anchors — for the procedural graybox, the seam a Meshy GLB swap
+   * hangs its own parts off of (see buildGlbCreatureModel), at the same
+   * local transform this graybox model uses; for a GLB model itself,
+   * bbox-derived M1 attachment points (not currently animated). Species
    * only create the subset of {head, back, tail, jaw} they actually use.
    */
   mounts: Record<string, THREE.Object3D>;
   /**
    * Animation handles for Task 4 (idle bob, attack lunge, tail wag, ...).
    * head/tail double as mounts.head/mounts.tail: the anchor an animation
-   * drives *is* the seam a GLB swap will later replace.
+   * drives *is* the seam a GLB swap replaces (a GLB model's `parts.head`/
+   * `.tail` stay undefined — see buildGlbCreatureModel).
    */
   parts: { head?: THREE.Object3D; tail?: THREE.Object3D; body: THREE.Object3D };
   /**
@@ -177,25 +185,38 @@ function buildGroundShadow(radius: number): THREE.Mesh {
 }
 
 /**
+ * Nose-to-tail-tip torso length (full extent along the model's forward axis:
+ * capsule length + both end-cap radii for youshou/tanshou, sphere diameter
+ * scaled for lingshu) — the same "shared constant" shadowRadiusFor below
+ * multiplies by SHADOW_RADIUS_FACTOR. Exported so modelLibrary.ts (Postfix 7,
+ * Meshy GLB swap) has one source of truth for the target size each raw GLB
+ * gets uniformly rescaled to, instead of a second hand-copied literal that
+ * could silently drift from CAPSULE_BODY/LINGSHU_BODY.
+ */
+export function bodyFootprintLength(species: string): number {
+  switch (species) {
+    case "youshou":
+      return CAPSULE_BODY.youshou.length + 2 * CAPSULE_BODY.youshou.radius;
+    case "tanshou":
+      return CAPSULE_BODY.tanshou.length + 2 * CAPSULE_BODY.tanshou.radius;
+    default:
+      // lingshu + defensive fallback, mirrors carcassShape's own default branch.
+      return 2 * LINGSHU_BODY.radius * LINGSHU_BODY.scale[2];
+  }
+}
+
+/**
  * Per-species shadow radius, derived from the same body-shape constants the
  * living models below build their capsule/sphere geometry from (never a
  * hardcoded duplicate) — so a future tweak to CAPSULE_BODY/LINGSHU_BODY can't
  * silently desync the shadow's size from the silhouette it's meant to ground.
- * "Body length" = full extent along the model's forward axis: capsule length
- * + both end-cap radii for youshou/tanshou, sphere diameter (scaled) for
- * lingshu. Shared by both the living builders and buildCarcassModel (a
- * carcass reuses the same underlying body shape — see carcassShape above).
+ * Shared by both the living builders and buildCarcassModel (a carcass reuses
+ * the same underlying body shape — see carcassShape above) — and, as of
+ * Postfix 7, by the GLB variants too (bodyFootprintLength is species-shape
+ * agnostic either way).
  */
 function shadowRadiusFor(species: string): number {
-  switch (species) {
-    case "youshou":
-      return SHADOW_RADIUS_FACTOR * (CAPSULE_BODY.youshou.length + 2 * CAPSULE_BODY.youshou.radius);
-    case "tanshou":
-      return SHADOW_RADIUS_FACTOR * (CAPSULE_BODY.tanshou.length + 2 * CAPSULE_BODY.tanshou.radius);
-    default:
-      // lingshu + defensive fallback, mirrors carcassShape's own default branch.
-      return SHADOW_RADIUS_FACTOR * (2 * LINGSHU_BODY.radius * LINGSHU_BODY.scale[2]);
-  }
+  return SHADOW_RADIUS_FACTOR * bodyFootprintLength(species);
 }
 
 interface MeshOpts {
@@ -243,14 +264,18 @@ function makeMount(parent: THREE.Object3D, x: number, y: number, z: number): THR
   return anchor;
 }
 
+/** Frees one mesh's own geometry/material (array-aware, matching Mesh.material's union type) — the single-mesh building block disposeTree below traverses with, and the GLB builders' dispose() (Postfix 7) call directly on just their per-instance blob shadow. */
+function disposeMesh(mesh: THREE.Mesh): void {
+  mesh.geometry.dispose();
+  const material = mesh.material;
+  if (Array.isArray(material)) material.forEach((m) => m.dispose());
+  else material.dispose();
+}
+
 /** Frees every geometry/material under `root` (outlines included — traverse() walks the whole subtree regardless of nesting depth). */
 function disposeTree(root: THREE.Object3D): void {
   root.traverse((obj) => {
-    if (!(obj instanceof THREE.Mesh)) return;
-    obj.geometry.dispose();
-    const material = obj.material;
-    if (Array.isArray(material)) material.forEach((m) => m.dispose());
-    else material.dispose();
+    if (obj instanceof THREE.Mesh) disposeMesh(obj);
   });
 }
 
@@ -452,7 +477,102 @@ function buildTanshouModel(): CreatureModel {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Meshy GLB swap (Postfix 7) — module-level library injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Set once by main.ts after `loadModelLibrary()` (modelLibrary.ts) resolves
+ * during the title-screen preload. Module-level rather than a parameter
+ * threaded through creatureView.ts/syncCreatures: keeps every existing
+ * `buildCreatureModel(species)` / `buildCarcassModel(species)` call site
+ * unchanged — this file is the only one that needs to know a library exists.
+ * Starts `{}` (every species reads as "no GLB yet") so a build that runs
+ * before the preload resolves — or a species whose GLB failed to load — just
+ * falls through to the procedural builders below, no null-checks needed at
+ * the call sites.
+ */
+let modelLibrary: ModelLibrary = {};
+
+/** Called once by main.ts once loadModelLibrary() resolves (or a species entry is null — see that file's per-species try/catch). */
+export function setModelLibrary(library: ModelLibrary): void {
+  modelLibrary = library;
+}
+
+/**
+ * GLB swap for a species with a loaded Meshy model: same CreatureModel
+ * contract as the procedural builders above, but `parts.body` is a torso-
+ * height pivot wrapping the whole single-mesh GLB (see the pivot comment
+ * below) and head/tail stay undefined — createLivingAnimate's optional-
+ * chaining on those two already no-ops (see its doc comment), so bob/breath/
+ * attack-lean still apply to the whole model via `group`/`parts.body`, just
+ * without the separate head-nod/tail-wag sub-animation the procedural models
+ * drive on their own separate head/tail mounts.
+ *
+ * No ink outline (deliberate style call, unlike every procedural model
+ * above): these are PBR-textured ~20k-tri imports, and an inverted-hull
+ * outline would double the triangle count *and* visually fight the baked
+ * texture read that a flat-color procedural mesh doesn't have to contend
+ * with — procedural fallbacks (GLB load failure) keep their outline as
+ * normal, only the GLB path skips it.
+ */
+function buildGlbCreatureModel(species: string, entry: LibraryEntry): CreatureModel {
+  const group = new THREE.Group();
+
+  // entry.geometry/entry.livingMaterial are library-owned and shared across
+  // every live instance of this species (e.g. 26 lingshu share one GPU
+  // buffer) — only this Mesh wrapper is per-instance. See dispose() below.
+  const body = new THREE.Mesh(entry.geometry, entry.livingMaterial);
+
+  // createLivingAnimate's breathing scale / roll / swim-tilt writes go onto
+  // whatever it's handed as `parts.body`, rotating/scaling around *that
+  // object's own local origin* — every procedural body positions itself at
+  // roughly torso-center height for exactly this reason (e.g.
+  // buildYoushouModel's `body.position.set(0, BODY_Y, 0)`). entry.geometry's
+  // own local origin, by contrast, sits at the model's FEET (modelLibrary.ts
+  // bakes ground-alignment to y=0), so rotating `body` directly would swing
+  // the whole model's silhouette around a much longer lever arm than the
+  // procedural amplitudes were tuned against. `pivot` re-centers that origin
+  // to roughly torso height and is what actually gets passed to `parts.body`
+  // below — `body` itself is never touched again after this offset.
+  const pivotY = entry.bbox.max.y * 0.5;
+  body.position.y = -pivotY;
+  const pivot = new THREE.Group();
+  pivot.position.y = pivotY;
+  pivot.add(body);
+  group.add(pivot);
+
+  // Mount anchors derived from the baked (ground-aligned, +Z-facing) bbox —
+  // added straight to `group` (not `pivot`), so they stay put regardless of
+  // the breathing/roll animation above; not wired into `parts` (so
+  // createLivingAnimate never touches them either), kept for M1 (future
+  // attachments/effects hanging off a specific body point).
+  const headMount = makeMount(group, 0, entry.bbox.max.y * 0.8, entry.bbox.max.z);
+  const backMount = makeMount(group, 0, entry.bbox.max.y, (entry.bbox.max.z + entry.bbox.min.z) / 2);
+  const tailMount = makeMount(group, 0, entry.bbox.max.y * 0.3, entry.bbox.min.z);
+
+  const shadow = buildGroundShadow(shadowRadiusFor(species));
+  group.add(shadow);
+
+  const parts = { body: pivot };
+  return {
+    group,
+    mounts: { head: headMount, back: backMount, tail: tailMount },
+    parts,
+    animate: createLivingAnimate(group, parts),
+    dispose: () => {
+      // entry.geometry/entry.livingMaterial are library-owned — never
+      // disposed here, that would break every other living instance of this
+      // species still sharing the same GPU buffers. Only the shadow disc
+      // (built fresh per instance by buildGroundShadow) belongs to us alone.
+      disposeMesh(shadow);
+    },
+  };
+}
+
 export function buildCreatureModel(species: string): CreatureModel {
+  const entry = modelLibrary[species];
+  if (entry) return buildGlbCreatureModel(species, entry);
   switch (species) {
     case "youshou":
       return buildYoushouModel();
@@ -520,6 +640,47 @@ function carcassGroundLift(geometry: THREE.BufferGeometry): number {
 }
 
 /**
+ * GLB carcass variant — reuses the exact same baked geometry as the living
+ * GLB model (library-owned, never disposed here — see buildGlbCreatureModel's
+ * dispose() comment, same ownership rule applies) with the OTHER shared
+ * material clone (`entry.carcassMaterial`, tinted PALETTE.carcass once at
+ * load time in modelLibrary.ts), squashed/tilted/ground-lifted exactly like
+ * the procedural carcasses below. carcassGroundLift works on *any*
+ * BufferGeometry — it was written against capsule/sphere shapes but only
+ * ever does a generic clone→scale→rotateZ→bbox probe, so the already
+ * ground-aligned, +Z-facing GLB geometry plugs in unchanged.
+ */
+function buildGlbCarcassModel(species: string, entry: LibraryEntry): CreatureModel {
+  const group = new THREE.Group();
+
+  const body = new THREE.Mesh(entry.geometry, entry.carcassMaterial);
+  body.scale.y = CARCASS_SQUASH_Y;
+
+  const tilt = new THREE.Group();
+  tilt.rotation.z = CARCASS_TILT_Z;
+  tilt.position.y = carcassGroundLift(entry.geometry);
+  tilt.add(body);
+  group.add(tilt); // no outline: GLB carcasses never had one to begin with (see buildGlbCreatureModel)
+
+  const shadow = buildGroundShadow(shadowRadiusFor(species));
+  group.add(shadow);
+
+  return {
+    group,
+    mounts: {},
+    parts: { body },
+    // No-op per spec, same reasoning as the procedural carcass below (a
+    // carcass never locomotes/breathes/attacks/eats).
+    animate: () => {},
+    dispose: () => {
+      // entry.geometry/entry.carcassMaterial are library-owned — never
+      // disposed here (see buildGlbCreatureModel's dispose() comment).
+      disposeMesh(shadow);
+    },
+  };
+}
+
+/**
  * 尸体：flattened, uniformly carcass-tinted, tipped over, no outline ("消隐感").
  *
  * Reuses the *native* (un-rotated) body geometry rather than the living
@@ -529,6 +690,8 @@ function carcassGroundLift(geometry: THREE.BufferGeometry): number {
  * height instead — the "collapsed" look this spec wants.
  */
 export function buildCarcassModel(species: string): CreatureModel {
+  const entry = modelLibrary[species];
+  if (entry) return buildGlbCarcassModel(species, entry);
   const group = new THREE.Group();
   const shape = carcassShape(species);
   const geometry = shape.makeGeometry();

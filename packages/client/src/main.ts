@@ -3,6 +3,8 @@ import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type P
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
+import { setModelLibrary } from "./render/creatureModels.js";
+import { loadModelLibrary } from "./render/modelLibrary.js";
 import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
 import { createParticles } from "./render/particles.js";
@@ -33,6 +35,16 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
+// Postfix 7（Meshy GLB 生物模型）：越早发起加载越好——三个 GLB 合计 ~1.8MB，
+// 与下面地形/点缀/图集的构建完全无关，kick off 后不 await，title 画面的
+// 「入山」按钮门闩在 showTitle() 调用处（下方）单独处理。setModelLibrary 落定
+// 后，buildCreatureModel/buildCarcassModel（creatureModels.ts）才会开始用 GLB
+// 而不是程序化 graybox——任何单个物种加载失败都只让那个物种保留程序化模型
+// （console.warn，见 modelLibrary.ts 的 per-species try/catch），不影响其余两个。
+const modelLibraryPromise = loadModelLibrary().then((library) => {
+  setModelLibrary(library);
+  return library;
+});
 setupAtmosphere(scene, renderer);
 mountPaperOverlay();
 const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX);
@@ -137,7 +149,16 @@ let lastInput: PlayerInput | null = null;
 // 「入山」之前就已经能看到生物模型——它们的 idle 呼吸/摆尾动画只吃下面
 // applyInterp 传的 tSec（wall-clock），不依赖 sim 是否已经 step 过，所以不必
 // 等第一次 sim.step() 才出现在场景里。
-syncCreatures(scene, sim.state, views);
+//
+// Postfix 7：这次首同步特意挪到 modelLibraryPromise resolve 之后（而不是像
+// Task 9 原先那样立即同步）——syncCreatures 只在"视图不存在"时才 build 新
+// 模型，一旦某个 creature 的 view 已经用程序化 graybox 建好，后续 GLB 加载完成
+// 也不会重建替换（没有热替换机制）。既然「入山」按钮本来就要等 GLB 加载完才能点
+// （title.ts 的 modelsReady 门闩），backdrop 生物索性也晚一点点出现，用户看到的
+// 第一帧就已经是最终 GLB 模型，不会有"先程序化、点开后永远程序化"的视觉不一致。
+modelLibraryPromise.then(() => {
+  syncCreatures(scene, sim.state, views);
+});
 
 // Task 9 gate：`started` 锁在 false 时，渲染循环照常跑（地形/生物/粒子/水面
 // 全部继续用 tSec 播视觉动画，backdrop 是"活的"），但下面的 `if (started)`
@@ -146,7 +167,7 @@ syncCreatures(scene, sim.state, views);
 // acc（fixed-step 累加器）也刻意留在 if 内部才开始累加，避免标题画面挂着的
 // 这段时间被计入 frameDt 后，点击瞬间攒出一大坨 acc 触发追赶式连续 step。
 let started = false;
-showTitle(() => {
+showTitle(modelLibraryPromise, () => {
   started = true;
 });
 
@@ -216,6 +237,13 @@ if (import.meta.env.DEV) {
         aiState: c.aiState,
         activity: c.activity,
       })),
+    // Postfix 7 verification hook: killCreature moves a dead non-player
+    // creature out of state.creatures and into state.carcasses (see
+    // creatureView.ts's carcassKey doc comment) — an external Playwright
+    // script needs this to find exactly where a kill's carcass landed so it
+    // can frame a screenshot on it, instead of guessing an offset from the
+    // prey's last position before it died.
+    getCarcasses: () => sim.state.carcasses.map((c) => ({ id: c.id, species: c.species, x: c.pos.x, z: c.pos.z })),
     // W2 verification hooks: read-only probes so an external Playwright script
     // can locate specific biome bands (water/swamp/meadow/rocky) and confirm
     // the E-drinking/left-click-attack key split without reaching into sim
