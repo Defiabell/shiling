@@ -1,0 +1,37 @@
+{
+  "id": "tanshou",
+  "nameCn": "潭狩（猎手）",
+  "generatedAt": "2026-08-08T13:58:07.010Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k"
+  },
+  "prompt": "A stylized hand-painted fantasy game creature: a low-slung menacing panther-like predator, four muscular legs, standing on the ground, dark crimson-black fur, sharp bony spines running along its back, glowing amber eyes, a long sinuous tail, sharp claws, lean powerful quadruped body, dramatic dangerous silhouette, painterly stylized non-photorealistic look, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic fur texture, blurry, low detail, extra limbs, missing legs, distorted anatomy, humanoid, bipedal, two legs, text, watermark, logo, multiple creatures, human, cute, friendly, bright colors, cartoonish, happy expression",
+  "tasks": {
+    "previewTaskId": "019fe1a7-5ae3-71d1-929c-92af116012e2",
+    "refineTaskId": "019fe1a8-4477-7984-8a39-67289cc61516"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 11254136,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fe1a8-4477-7984-8a39-67289cc61516/output/preview.png?Expires=4939747200&Signature=hsw5G9POXx1ouYzr6IlhkIo9J~DJW6ZvWMgeApPyBKNbJ9rOba1m57fmWwwi9s3hEXGnGraUaN07aCZZt3yDdbrEQroRdJFWg90dh08eXtamtM0LMnUDIW1bQ5UMblp~SrM0Sj52jUQHhHmwGWRvXh10OqJQcMdHj0LUBbydLmWPn4GzaLQRznBc9nDH-ioCwVxnBlImJbpxP2FrlcWQvejj7dKcnuKUrhPsvon3raCrBL0MizT8pVb854s7qVw5BiiIAtWgiQKwH2gGs6EX4FGEv0ZG5zjD3UMMC1nO3YFu9Vh~wlqNT10kRN6Z4MGC9kFyMRpz6H3yQozAmnvgsg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applied: Meshy's rigging API is documented as biped-only; this creature is a quadruped. See meshy-pipeline-report.md.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-08T14:05:05.448Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplifyRatio": 0.066,
+      "simplifyError": 0.01
+    },
+    "glbBytesBeforeOptimize": 11254136,
+    "glbBytesAfterOptimize": 660040,
+    "reason": "Raw Meshy refine output was 300k-920k triangles (should_remesh was not set on the preview request), producing 11-28MB GLBs. Decimated locally with meshoptimizer instead of re-spending credits on a redo."
+  }
+}

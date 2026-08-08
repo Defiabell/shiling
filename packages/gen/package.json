@@ -1,0 +1,15 @@
+{
+  "name": "@shiling/gen",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "generate": "node src/generate-creatures.ts",
+    "validate": "node src/validate-glb.ts",
+    "optimize": "node src/optimize-glb.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@gltf-transform/cli": "^4.4.1"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "youshou",
+  "nameCn": "幼兽（玩家）",
+  "generatedAt": "2026-08-08T13:50:36.044Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k"
+  },
+  "prompt": "A stylized hand-painted fantasy game creature: a chubby fox-cat hybrid cub, four short legs, standing on the ground, small nub-like antlers on its head, a big fluffy tail, soft cream-colored belly fur, vivid warm orange coat, large round friendly eyes, cute and endearing, clean readable silhouette, painterly stylized non-photorealistic look, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic fur texture, blurry, low detail, extra limbs, missing legs, distorted anatomy, humanoid, bipedal, two legs, text, watermark, logo, multiple creatures, human, scary, menacing, dark colors",
+  "tasks": {
+    "previewTaskId": "019fe1a0-b287-7838-8f38-7fea69a0385a",
+    "refineTaskId": "019fe1a1-e181-7abb-ab2d-564489ae0b88"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 13672464,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fe1a1-e181-7abb-ab2d-564489ae0b88/output/preview.png?Expires=4939747200&Signature=TEkbxec1QMfaGOYmaFD1JJdfdAxDSOg0q5sdtcJvjX87hFpGgPmexjWgkLJ1iFSIPZZ~EXQk4vIyP0JRUubM3pT0YHR5lp-Lk~lD6gTz1UgXHpFcwEGGN4TxCZOpHw5ja0WUAFe4CTf7tEwhM4lN2dctap-HUkJN3NIwHUM3ornLO3iVnX-6Ax5J7b2TfNYTBYSKN6IDml8OIeN-2FQXET0pIcmSw~gIPxGMq~xnfr~OcAzFkhI6Ddu2EAAMiqSngvNL~fnhz1Fs8rKg2bFQfglFsHyEpYkEItjIfN~BcUNY~~L7MF-EflmNH9SCf3whLbX6cTUxSTlbsSFKG5eDdg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applied: Meshy's rigging API is documented as biped-only; this creature is a quadruped. See meshy-pipeline-report.md.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-08T14:05:04.241Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplifyRatio": 0.05,
+      "simplifyError": 0.01
+    },
+    "glbBytesBeforeOptimize": 13672464,
+    "glbBytesAfterOptimize": 681160,
+    "reason": "Raw Meshy refine output was 300k-920k triangles (should_remesh was not set on the preview request), producing 11-28MB GLBs. Decimated locally with meshoptimizer instead of re-spending credits on a redo."
+  }
+}
