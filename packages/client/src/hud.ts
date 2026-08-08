@@ -24,78 +24,63 @@ export interface Hud {
 
 const STYLE_ID = "shiling-hud-style";
 
-/**
- * hex → "#rrggbb" / "r, g, b" — same convert-at-the-call-site approach
- * screenFx.ts's hexToRgbTriplet uses (see that file's header comment): a
- * hand-written ShaderMaterial has no shared sRGB pipeline to piggyback on
- * for a plain CSS string either, and there's no shared conversion helper in
- * palette.ts to import — every consumer does its own trivial bit-shift.
- */
 function hexToCssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, "0")}`;
 }
-function hexToRgbTriplet(hex: number): string {
-  const r = (hex >> 16) & 0xff;
-  const g = (hex >> 8) & 0xff;
-  const b = hex & 0xff;
-  return `${r}, ${g}, ${b}`;
-}
-
-// PALETTE-derived: kept for the two spots that still want to key off the
-// world's own ink/cinnabar tones rather than a bespoke UI literal (see each
-// use site below for why) — "可与 PALETTE 引用混用" per the restyle brief.
-const inkRgb = hexToRgbTriplet(PALETTE.outlineInk); // 世界墨色，仅用于死亡遮罩底
-const cinnabarHex = hexToCssColor(PALETTE.cinnabar); // #c23b22 — 与本次亮卡设计的朱砂强调色数值完全重合
 
 /**
- * 亮色游戏 UI 分组常量（宝可梦系明快风格 restyle，取代此前的水墨 fashion 皮肤）。
- * 三组各管一件事：CARD 是所有卡片/pill/徽章共用的底/描边/投影语言，BAR 是数值
- * 条专属的渐变端点，ACCENT 是目前只有一处用到的强调色（备用位留给未来徽章类型）。
- * TEXT.ink 与 CARD.border 刻意同值——brief 原话是同一个 #2b2b33 同时充当"文字
- * 主色"和"卡片描边"，起别名只是为了让调用点表达各自的语义,不是两份独立数据。
+ * 弱光玻璃皮肤 token（variant C — owner 选定方向，取代宝可梦系亮卡片皮肤）。
+ * 数值直接抄自比稿 mockup 的 `.C` 分区（scratchpad/shiling-ui-mockups.html）：
+ * 半透明深色玻璃底 + backdrop-filter 模糊 + 1px hairline 内描边，克制、不抢
+ * 3D 场景。三组各管一件事：GLASS 是玻璃底/描边/模糊的共用语言，TEXT 是两档
+ * 文字灰度，ACCENT 是三条需求环＋情境词强调色。
+ *
+ * amberHex 是唯一一个字面值恰好与 PALETTE 重合的例外——PALETTE.lampWarm
+ * (#e8b45f，注释原文"UI 朱砂/灯火"）与 mockup 给的饥饿环 amber 强调色数值
+ * 完全相同，两者语义也一致（"暖光"），直接从 PALETTE 取而不是另开一份字面量；
+ * 青/灰/红三色 mockup 没有对应的世界色可复用，就地字面量声明（沿用本工程
+ * "每个模块自成一体，不跨模块 import UI-only 常量"的既有惯例）。
  */
-const CARD = {
-  bg: "#f7f1e3", // 暖纸白
-  border: "#2b2b33", // 3px 墨黑描边
-  radius: "14px",
-  shadow: "0 3px 0 rgba(43, 43, 51, 0.35)", // 实心 offset 阴影，不用 blur——卡通感
-} as const;
+const amberHex = hexToCssColor(PALETTE.lampWarm);
 
-const BAR = {
-  trackBg: "#e3dcc9",
-  hungerFrom: "#f5a623", hungerTo: "#e07b1f",
-  thirstFrom: "#35b6d9", thirstTo: "#1f7fa8",
-  fatigueFrom: "#b8c0c8", fatigueTo: "#8a949e",
-  low: "#e0452b",
-} as const;
-
-const ACCENT = {
-  successGreen: "#4caf6d", // 目前仅状态徽章呼吸灯用到
+const GLASS = {
+  ring: "rgba(14, 16, 22, 0.5)", // 环形仪表玻璃底（mockup .ring）
+  pill: "rgba(14, 16, 22, 0.55)", // 情境提示 pill 玻璃底，比环深一档（mockup .cpill）
+  hairlineRing: "rgba(255, 255, 255, 0.1)", // 环描边（mockup .ring 的 inset box-shadow）
+  hairlinePill: "rgba(255, 255, 255, 0.12)", // pill/键帽描边（mockup .cpill 的 inset box-shadow）
+  blurRing: "4px",
+  blurPill: "6px",
+  track: "rgba(255, 255, 255, 0.09)", // conic-gradient 未填充部分
 } as const;
 
 const TEXT = {
-  ink: CARD.border,
-  onAccent: "#fff", // 朱砂/深色 pill 上的白字
+  primary: "#e8ecf2", // 环内数字/pill 动作词主色
+  dim: "#c8d2dc", // 状态字 + 疲劳环色（两处刻意同值——mockup 原话疲劳用同一档灰）
 } as const;
 
-/** 情境 pill 弹入动画时长（brief：scale 0.6→1.05→1，180ms）。 */
-const PROMPT_POP_MS = 180;
+const ACCENT = {
+  hunger: amberHex, // #e8b45f
+  thirst: "#7fd4e8",
+  low: "#e0452b",
+  lowGlow: "rgba(224, 69, 43, 0.55)",
+} as const;
+
+/** 情境 pill 切换/淡入动画时长（brief：opacity+translateY 4px，160ms，不要弹跳）。 */
+const PROMPT_FADE_MS = 160;
 
 // Injected once into <head>; #hud itself stays pointer-events:none so the
 // bars/prompt/status never steal the canvas's drag-to-look mouse input —
 // the death overlay is the sole exception (see .hud-death below), since once
 // the player is dead there is nothing left in the 3D view worth dragging.
 //
-// Font split (restyle decision): the base #hud font-family is now the system
-// bold-rounded stack — brief's "清晰第一" directive for all regular UI copy.
-// Ma Shan Zheng (still vendored at public/fonts/mashanzheng.woff2, subset
-// unchanged — see Task 8/9 history for how that 41-glyph subset was built)
-// is now opted into by exactly two elements: `.hud-death-title` here (身死)
-// and title.ts's `.title-main` (食灵). Every other string this HUD renders
-// (labels, prompt words, status text, the death hint, the new "R 重来" key
-// hint) uses copy that was already vendored under the old scheme OR never
-// touches the custom font at all under the new one, so no font-subset
-// regeneration is needed — see brief's own note confirming this.
+// Font split (unchanged rule, carried over from the previous restyle): the
+// base #hud font-family is the system thin/regular stack — variant C's own
+// "克制" directive doubles down on this (font-weight 300 default). Ma Shan
+// Zheng (still vendored at public/fonts/mashanzheng.woff2, subset unchanged
+// — see Task 8/9 history for how that 41-glyph subset was built) stays
+// opted into by exactly the same two elements as before: `.hud-death-title`
+// here (身死) and title.ts's `.title-main` (食灵). No other string this HUD
+// renders touches the custom font, so no font-subset regeneration is needed.
 const HUD_CSS = `
 @font-face {
   font-family: "Ma Shan Zheng";
@@ -104,98 +89,119 @@ const HUD_CSS = `
   font-style: normal;
   font-display: swap;
 }
+/* 注册后才能让下面 .hud-ring-fill 的 "transition: --pct 150ms linear" 平滑过渡
+   （浏览器要知道 --pct 是个 <percentage> 才能在两个值之间插值,不是直接跳变）。
+   不支持 @property 的浏览器（老版本 Safari/Firefox）不会报错——只是退化成
+   conic-gradient 百分比直接跳变、没有过渡动画，环的填充比例本身仍然完全正确，
+   不是功能性缺口，个人项目单浏览器场景不特别兜底。 */
+@property --pct {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
+}
 #hud {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 10;
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: ${TEXT.ink};
+  font-weight: 300;
+  color: ${TEXT.primary};
   user-select: none;
 }
 
-/* ---- 右上：状态徽章（亮卡片 + 呼吸灯，横排） ---- */
-.hud-status-badge {
+/* ---- 左下：三个环形需求仪表（无卡片底，每环自带玻璃圆底） ---- */
+.hud-rings {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: ${CARD.bg};
-  border: 3px solid ${CARD.border};
-  border-radius: ${CARD.radius};
-  box-shadow: ${CARD.shadow};
+  left: 20px;
+  bottom: 20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
 }
-.hud-status-badge.hud-visible { display: flex; }
-.hud-status-dot {
-  width: 9px;
-  height: 9px;
+.hud-ring {
+  position: relative;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
-  background: ${ACCENT.successGreen};
-  animation: hud-dot-breathe 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+  background: ${GLASS.ring};
+  backdrop-filter: blur(${GLASS.blurRing});
+  -webkit-backdrop-filter: blur(${GLASS.blurRing});
+  box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset;
 }
-@keyframes hud-dot-breathe {
-  0%, 100% { opacity: 0.4; transform: scale(0.85); }
-  50% { opacity: 1; transform: scale(1.15); }
+.hud-ring-fill {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  transition: --pct 150ms linear;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  background: conic-gradient(var(--ring-color) 0% var(--pct), ${GLASS.track} var(--pct) 100%);
 }
-.hud-status-text {
+.hud-ring-hunger .hud-ring-fill { --ring-color: ${ACCENT.hunger}; }
+.hud-ring-thirst .hud-ring-fill { --ring-color: ${ACCENT.thirst}; }
+.hud-ring-fatigue .hud-ring-fill { --ring-color: ${TEXT.dim}; }
+/* 低量态：环色整体切红（"环色变" ${ACCENT.low}），三档 selector 都要盖过——
+   .hud-ring.hud-low 比任何单一 .hud-ring-<need> 多一层 class，specificity
+   天然更高，不需要 !important。 */
+.hud-ring.hud-low .hud-ring-fill { --ring-color: ${ACCENT.low}; }
+.hud-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 14px;
-  font-weight: 700;
-  color: ${TEXT.ink};
-  white-space: nowrap;
+  font-weight: 300;
+  color: ${TEXT.primary};
+  letter-spacing: 0.06em;
+}
+/* 柔和脉冲：只呼吸环外发光（box-shadow），不碰 fill 的透明度——brief 明确要求
+   "不要突兀闪烁"，旧亮色皮肤 hud-bar-flicker 那种 opacity 硬闪是要避免的反例。 */
+.hud-ring.hud-low {
+  animation: hud-ring-glow-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hud-ring-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 0 0 rgba(224, 69, 43, 0); }
+  50% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 16px 4px ${ACCENT.lowGlow}; }
 }
 
-/* ---- 中下：情境提示胶囊（朱砂方印点缀 + 键帽 + 动作词） ---- */
+/* ---- 中下：情境提示玻璃胶囊（键帽 + 动作词，末字 amber 强调） ---- */
 .hud-prompt-pill {
   position: absolute;
   bottom: 100px;
   left: 50%;
-  transform: translateX(-50%) scale(1);
+  transform: translateX(-50%);
+  opacity: 1;
   display: none;
   align-items: center;
-  gap: 10px;
-  padding: 6px 18px 6px 6px;
-  background: ${CARD.bg};
-  border: 3px solid ${CARD.border};
-  border-radius: 999px; /* 唯一明确要求"胶囊"形的元素——其余卡片/徽章都是 14px 圆角矩形 */
-  box-shadow: ${CARD.shadow};
+  gap: 12px;
+  padding: 8px 20px 8px 8px;
+  background: ${GLASS.pill};
+  backdrop-filter: blur(${GLASS.blurPill});
+  -webkit-backdrop-filter: blur(${GLASS.blurPill});
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
 }
 .hud-prompt-pill.hud-visible { display: flex; }
-.hud-prompt-pill.hud-pill-pop {
-  animation: hud-pill-pop ${PROMPT_POP_MS}ms ease-out;
+.hud-prompt-pill.hud-fade-in {
+  animation: hud-prompt-fade-in ${PROMPT_FADE_MS}ms ease-out;
 }
-@keyframes hud-pill-pop {
-  0% { transform: translateX(-50%) scale(0.6); }
-  60% { transform: translateX(-50%) scale(1.05); }
-  100% { transform: translateX(-50%) scale(1); }
-}
-.hud-prompt-seal {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: ${cinnabarHex};
-  color: ${TEXT.onAccent};
-  font-size: 15px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+@keyframes hud-prompt-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 .hud-prompt-key {
   /* min-width（而非固定 width）：键位拆分（W2）后撕咬提示要显示"左键"（2 字）而不是
      "E"（1 字），min-width+左右 padding 让两种长度的文案都能不裁切地居中显示。 */
-  min-width: 28px;
-  height: 28px;
+  min-width: 26px;
+  height: 24px;
   padding: 0 6px;
   border-radius: 6px;
-  background: #fff;
-  color: ${CARD.border};
-  border: 3px solid ${CARD.border};
-  box-shadow: 0 3px 0 ${CARD.border}; /* 键帽"按下感"——实心 offset，不是真的按下状态 */
-  font-size: 13px;
+  background: ${TEXT.primary};
+  color: #0e1016;
+  font-size: 12px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -204,167 +210,88 @@ const HUD_CSS = `
   white-space: nowrap;
 }
 .hud-prompt-word {
-  font-size: 16px;
-  font-weight: 700;
-  color: ${TEXT.ink};
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.2em;
+  color: ${TEXT.primary};
   white-space: nowrap;
 }
-
-/* ---- 左下：三条数值卡片 ---- */
-.hud-card {
-  position: absolute;
-  left: 20px;
-  bottom: 20px;
-  width: 220px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: ${CARD.bg};
-  border: 3px solid ${CARD.border};
-  border-radius: ${CARD.radius};
-  box-shadow: ${CARD.shadow};
-}
-.hud-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.hud-bar-label {
-  width: 26px;
-  height: 26px;
-  border-radius: 999px; /* 深色 pill 标签，brief 字面要求 */
-  background: ${CARD.border};
-  color: ${TEXT.onAccent};
-  font-size: 13px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.hud-bar-track {
-  flex: 1;
-  height: 16px;
-  border-radius: 999px;
-  background: ${BAR.trackBg};
-  border: 2px solid ${CARD.border};
-  overflow: hidden; /* 见 .hud-bar-shine 注释——务必内缩，不能外探 */
-  position: relative;
-}
-.hud-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  position: relative;
-  transition: width 0.15s linear;
-}
-.hud-bar-fill.hud-hunger {
-  background: linear-gradient(to right, ${BAR.hungerFrom}, ${BAR.hungerTo});
-}
-.hud-bar-fill.hud-thirst {
-  background: linear-gradient(to right, ${BAR.thirstFrom}, ${BAR.thirstTo});
-}
-.hud-bar-fill.hud-fatigue {
-  background: linear-gradient(to right, ${BAR.fatigueFrom}, ${BAR.fatigueTo});
-}
-.hud-bar-shine {
-  /* right:3px（内缩，不外探）——Task 8 的血泪教训:.hud-bar-track 的
-     overflow:hidden 是必要的（防止方角填充戳出圆角轨道），而疲劳条初始
-     就是满量 100%（见 sim.ts 的初始状态），right:-3px 会在每局游戏刚开始
-     就被裁掉半个圆。inset 在 fill 的 100% 宽度内则永远落在裁剪区内。 */
-  position: absolute;
-  right: 3px;
-  top: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
-  box-shadow: 0 0 3px rgba(255, 255, 255, 0.6);
-  transform: translateY(-50%);
-}
-.hud-bar-track.hud-low {
-  animation: hud-bar-bounce 0.6s ease-in-out infinite;
-}
-.hud-bar-track.hud-low .hud-bar-fill {
-  background: ${BAR.low};
-  animation: hud-bar-flicker 0.8s ease-in-out infinite;
-}
-@keyframes hud-bar-bounce {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.06); }
-}
-@keyframes hud-bar-flicker {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+.hud-prompt-word-accent {
+  color: ${ACCENT.hunger};
+  font-weight: 300;
 }
 
-/* ---- 死亡界面：暗色半透明 scrim 上一张大亮卡 ---- */
+/* ---- 右上：状态字（小地图正下方，无底框细体宽字距） ---- */
+.hud-status-text {
+  /* top 174px = minimap.ts SKIN.top(16) + SKIN.cssSize(148) + 10px 间隙——
+     两个文件各自声明一份坐标常量，改任一侧都要同步核对（模块自成一体的既有
+     惯例，见 title.ts 头部注释），这里只留一句可搜索的数字关系作提示。 */
+  position: fixed;
+  top: 174px;
+  right: 16px;
+  width: 148px;
+  display: none;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 300;
+  letter-spacing: 0.5em;
+  color: ${TEXT.dim};
+}
+.hud-status-text.hud-visible { display: block; }
+
+/* ---- 死亡界面：全黑底极简排版，无卡片 ---- */
 .hud-death {
   position: fixed;
   inset: 0;
   display: none;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(${inkRgb}, 0.72); /* 世界墨色半透明 scrim，不是纯黑——身下的亮卡才是视觉主体 */
+  gap: 22px;
+  background: #0e1016; /* 全黑底，与玻璃底色同一色相（rgba(14,16,22,*)）系全不透明版 */
   pointer-events: auto;
   z-index: 20;
 }
 .hud-death.hud-visible { display: flex; }
-.hud-death-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  padding: 44px 64px;
-  background: ${CARD.bg};
-  border: 4px solid ${CARD.border}; /* 比常规卡片更粗——"粗描边"的大卡 */
-  border-radius: 20px;
-  box-shadow: 0 6px 0 rgba(43, 43, 51, 0.35);
-}
 .hud-death-title {
   font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 唯二书法字体用点之一 */
-  font-size: 52px;
-  font-weight: 700;
-  color: ${TEXT.ink};
-  letter-spacing: 0.1em;
+  font-size: 48px;
+  font-weight: 400;
+  color: #ffffff;
+  letter-spacing: 0.15em;
+}
+.hud-death-divider {
+  width: 64px;
+  height: 1px;
+  /* rgba(127,212,232,*) = #7fd4e8 = ACCENT.thirst 的青色发光——与小地图外发光
+     （minimap.ts 的 cmap box-shadow）同一色相，串起弱光玻璃皮肤的统一微光基调。 */
+  background: rgba(127, 212, 232, 0.6);
+  box-shadow: 0 0 8px rgba(127, 212, 232, 0.6);
 }
 .hud-death-hint {
-  font-size: 18px;
-  font-weight: 600;
-  color: ${TEXT.ink};
-  opacity: 0.82;
-  letter-spacing: 0.05em;
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.15em;
+  color: ${TEXT.dim};
 }
-.hud-death-keyhint {
-  /* 按钮外观提示——仍然只是文字装饰，真正的转世触发还是走下面 window
-     keydown 的 KeyR 监听，这里不挂 click handler。 */
-  padding: 10px 28px;
-  background: ${cinnabarHex};
-  color: ${TEXT.onAccent};
-  font-size: 16px;
-  font-weight: 700;
-  border-radius: 999px;
-  border: 3px solid ${CARD.border};
-  box-shadow: 0 3px 0 rgba(43, 43, 51, 0.35);
-  letter-spacing: 0.1em;
-}
-.hud-death-seal {
-  position: absolute;
-  top: -18px;
-  right: -18px;
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
-  background: ${cinnabarHex};
-  color: ${TEXT.onAccent};
-  writing-mode: vertical-rl;
-  font-size: 16px;
-  letter-spacing: 2px;
-  display: flex;
+.hud-death-keycap {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 3px solid ${CARD.border};
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  margin: 0 4px;
+  vertical-align: middle;
+  border-radius: 6px;
+  background: ${GLASS.ring};
+  backdrop-filter: blur(${GLASS.blurRing});
+  -webkit-backdrop-filter: blur(${GLASS.blurRing});
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
+  color: ${TEXT.primary};
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0; /* 键帽内单字符不继承父级的宽字距 */
 }
 `;
 
@@ -384,65 +311,56 @@ function pct(value: number): number {
   return Math.round(clamped);
 }
 
-interface BarHandle {
-  track: HTMLDivElement;
-  fill: HTMLDivElement;
+interface RingHandle {
+  ringEl: HTMLDivElement;
+  fillEl: HTMLDivElement;
   lastPct: number;
   lastLow: boolean;
 }
 
 /**
- * Builds one bar row: pill label + thick gradient bar. The shine dot is a
- * child of `fill`, inset 3px from its right edge (see the clipping rationale
- * on `.hud-bar-shine` above), so it rides along with the fill's width purely
- * through CSS layout — no extra per-frame JS beyond the existing width write
- * below. The low-state class toggles on `track` (not `fill`): bounce needs
- * to scale the whole box (border included), and the fill-only flicker is
- * reached via a descendant selector off that same class.
+ * Builds one ring gauge: glass circle + masked conic-gradient fill + centered
+ * glyph. The fill's `--pct` custom property drives the conic-gradient split
+ * point (see `@property --pct` above for the transition-eligible declaration)
+ * — updateRing() only ever calls `style.setProperty`, never rewrites the
+ * whole `background` string, so the CSS `transition: --pct 150ms linear`
+ * on `.hud-ring-fill` animates the sweep smoothly per the existing dirty-check
+ * discipline (mirrors the old bright-UI bar's `transition: width 0.15s`).
  */
-function buildBar(label: string, modifierClass: string): { row: HTMLDivElement; handle: BarHandle } {
-  const row = document.createElement("div");
-  row.className = "hud-bar-row";
+function buildRing(label: string, modifierClass: string): { el: HTMLDivElement; handle: RingHandle } {
+  const ringEl = document.createElement("div");
+  ringEl.className = `hud-ring ${modifierClass}`;
+
+  const fillEl = document.createElement("div");
+  fillEl.className = "hud-ring-fill";
+  fillEl.style.setProperty("--pct", "0%");
 
   const labelEl = document.createElement("div");
-  labelEl.className = "hud-bar-label";
+  labelEl.className = "hud-ring-label";
   labelEl.textContent = label;
 
-  const track = document.createElement("div");
-  track.className = "hud-bar-track";
+  ringEl.appendChild(fillEl);
+  ringEl.appendChild(labelEl);
 
-  const fill = document.createElement("div");
-  fill.className = `hud-bar-fill ${modifierClass}`;
-  fill.style.width = "0%";
-
-  const shine = document.createElement("div");
-  shine.className = "hud-bar-shine";
-  fill.appendChild(shine);
-
-  track.appendChild(fill);
-  row.appendChild(labelEl);
-  row.appendChild(track);
-
-  return { row, handle: { track, fill, lastPct: -1, lastLow: false } };
+  return { el: ringEl, handle: { ringEl, fillEl, lastPct: -1, lastLow: false } };
 }
 
-/** Writes width%/low-class only when the rounded percent or low-state actually changed since the last call. */
-function updateBar(handle: BarHandle, value: number): void {
+/** Writes --pct / low-class only when the rounded percent or low-state actually changed since the last call. */
+function updateRing(handle: RingHandle, value: number): void {
   const p = pct(value);
   if (p !== handle.lastPct) {
-    handle.fill.style.width = `${p}%`;
+    handle.fillEl.style.setProperty("--pct", `${p}%`);
     handle.lastPct = p;
   }
   const low = p < LOW_THRESHOLD;
   if (low !== handle.lastLow) {
-    handle.track.classList.toggle("hud-low", low);
+    handle.ringEl.classList.toggle("hud-low", low);
     handle.lastLow = low;
   }
 }
 
-/** Single seal glyph + full action word + keycap label for one context-prompt state. */
+/** Action word + keycap label for one context-prompt state. */
 interface ContextPrompt {
-  glyph: string;
   word: string;
   /**
    * 键位拆分（W2）：撕咬现在绑左键，不再是 E——其余四种提示（出洞/挖掘/进食/饮水）
@@ -460,22 +378,23 @@ interface ContextPrompt {
  * eat > drink. Burrowed always wins outright since none of the other three
  * interactions are even reachable while burrowId !== null (movement/dig/eat
  * all early-return in that state; see digging.ts/eating.ts). Presentation
- * only (seal glyph + separate action word + keycap inside a bright pill
- * instead of the old ink-wash seal+tag) — the ordering and the underlying
- * words (挖掘/撕咬/进食/饮水/出洞) are unchanged; only the keycap shown for
- * 撕咬 changed from "E" to "左键" (W2 key split).
+ * only (key badge + action word inside a glass pill, no separate seal glyph
+ * — variant C's mockup drops the seal badge the previous bright-UI skin had)
+ * — the ordering and the underlying words (挖掘/撕咬/进食/饮水/出洞) are
+ * unchanged; only the keycap shown for 撕咬 changed from "E" to "左键" (W2
+ * key split, carried over unchanged from before).
  */
 function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
-  if (player.burrowId !== null) return { glyph: "出", word: "出洞", key: "E" };
-  if (ctx.nearDigSpot) return { glyph: "挖", word: "挖掘", key: "E" };
-  if (ctx.nearPrey) return { glyph: "咬", word: "撕咬", key: "左键" };
-  if (ctx.nearCarcass) return { glyph: "食", word: "进食", key: "E" };
-  if (ctx.nearWater) return { glyph: "饮", word: "饮水", key: "E" };
+  if (player.burrowId !== null) return { word: "出洞", key: "E" };
+  if (ctx.nearDigSpot) return { word: "挖掘", key: "E" };
+  if (ctx.nearPrey) return { word: "撕咬", key: "左键" };
+  if (ctx.nearCarcass) return { word: "进食", key: "E" };
+  if (ctx.nearWater) return { word: "饮水", key: "E" };
   return null;
 }
 
 /**
- * Status badge label. burrowId !== null takes precedence over everything
+ * Status text label. burrowId !== null takes precedence over everything
  * (activity is pinned to "idle" and locomotion to "burrow" while burrowed —
  * see digging.ts's enterBurrow/exitBurrow). digging and eating are mutually
  * exclusive by construction (`activity` is a single field), but either can
@@ -504,68 +423,61 @@ export function createHud(): Hud {
   if (!root) throw new Error("createHud: #hud container not found in DOM");
   root.innerHTML = "";
 
-  const statusBadgeEl = document.createElement("div");
-  statusBadgeEl.className = "hud-status-badge";
-  const statusDotEl = document.createElement("div");
-  statusDotEl.className = "hud-status-dot";
   const statusTextEl = document.createElement("div");
   statusTextEl.className = "hud-status-text";
-  statusBadgeEl.appendChild(statusDotEl);
-  statusBadgeEl.appendChild(statusTextEl);
-  root.appendChild(statusBadgeEl);
+  root.appendChild(statusTextEl);
 
   const promptPillEl = document.createElement("div");
   promptPillEl.className = "hud-prompt-pill";
-  const promptSealEl = document.createElement("div");
-  promptSealEl.className = "hud-prompt-seal";
   const promptKeyEl = document.createElement("div");
   promptKeyEl.className = "hud-prompt-key";
-  // 初始文案任意——nextGlyph !== lastGlyph 的分支会在第一次 update() 时写入真实值，
+  // 初始文案任意——nextWord !== lastWord 的分支会在第一次 update() 时写入真实值，
   // 这里不需要提前确定是 "E" 还是 "左键"（键位拆分后不再总是 "E"）。
   promptKeyEl.textContent = "E";
   const promptWordEl = document.createElement("div");
   promptWordEl.className = "hud-prompt-word";
-  promptPillEl.appendChild(promptSealEl);
+  const promptWordMainEl = document.createElement("span");
+  const promptWordAccentEl = document.createElement("span");
+  promptWordAccentEl.className = "hud-prompt-word-accent";
+  promptWordEl.appendChild(promptWordMainEl);
+  promptWordEl.appendChild(promptWordAccentEl);
   promptPillEl.appendChild(promptKeyEl);
   promptPillEl.appendChild(promptWordEl);
   root.appendChild(promptPillEl);
 
-  const cardEl = document.createElement("div");
-  cardEl.className = "hud-card";
-  const hunger = buildBar("饥", "hud-hunger");
-  const thirst = buildBar("渴", "hud-thirst");
-  const fatigue = buildBar("疲", "hud-fatigue");
-  cardEl.appendChild(hunger.row);
-  cardEl.appendChild(thirst.row);
-  cardEl.appendChild(fatigue.row);
-  root.appendChild(cardEl);
+  const ringsEl = document.createElement("div");
+  ringsEl.className = "hud-rings";
+  const hunger = buildRing("饥", "hud-ring-hunger");
+  const thirst = buildRing("渴", "hud-ring-thirst");
+  const fatigue = buildRing("疲", "hud-ring-fatigue");
+  ringsEl.appendChild(hunger.el);
+  ringsEl.appendChild(thirst.el);
+  ringsEl.appendChild(fatigue.el);
+  root.appendChild(ringsEl);
 
   const deathEl = document.createElement("div");
   deathEl.className = "hud-death";
-  const deathCard = document.createElement("div");
-  deathCard.className = "hud-death-card";
   const deathTitle = document.createElement("div");
   deathTitle.className = "hud-death-title";
   deathTitle.textContent = "身死";
+  const deathDivider = document.createElement("div");
+  deathDivider.className = "hud-death-divider";
   const deathHint = document.createElement("div");
   deathHint.className = "hud-death-hint";
-  deathHint.textContent = "魂归青丘——按 R 转世";
-  const deathKeyhint = document.createElement("div");
-  deathKeyhint.className = "hud-death-keyhint";
-  deathKeyhint.textContent = "R 重来";
-  const deathSeal = document.createElement("div");
-  deathSeal.className = "hud-death-seal";
-  deathSeal.textContent = "食灵";
-  deathCard.appendChild(deathTitle);
-  deathCard.appendChild(deathHint);
-  deathCard.appendChild(deathKeyhint);
-  deathCard.appendChild(deathSeal);
-  deathEl.appendChild(deathCard);
+  const deathKeycap = document.createElement("span");
+  deathKeycap.className = "hud-death-keycap";
+  deathKeycap.textContent = "R";
+  // 按钮不再单独存在（variant C"克制、无卡片"——见 mockup 只画了键帽+文字，
+  // 没有第二个"R 重来"胶囊），R 就地嵌进这一行提示文案里，文案本身不变。
+  deathHint.append("魂归青丘——按 ", deathKeycap, " 转世");
+  deathEl.appendChild(deathTitle);
+  deathEl.appendChild(deathDivider);
+  deathEl.appendChild(deathHint);
   root.appendChild(deathEl);
 
   let dead = false;
   let lastDeathVisible = false;
-  let lastGlyph = ""; // "" = prompt hidden — mirrors lastStatus's empty-string-as-hidden convention
+  let lastWord = ""; // "" = prompt hidden — mirrors lastStatus's empty-string-as-hidden convention
   let lastStatus = "";
 
   // Reload is a full page reload (Task 16 brief), not a sim reset call, so a
@@ -589,7 +501,7 @@ export function createHud(): Hud {
           // regardless of `.hud-death`'s own z-index, since #hud already
           // establishes its own stacking context). Delaying this reveal by
           // the exact same DEATH_SPREAD_MS lets the ink finish spreading to
-          // solid black first, so the death card docks onto an already-black
+          // solid black first, so the death screen docks onto an already-black
           // screen instead of instantly stomping the animation.
           window.setTimeout(() => deathEl.classList.add("hud-visible"), DEATH_SPREAD_MS);
         } else {
@@ -597,45 +509,43 @@ export function createHud(): Hud {
         }
         lastDeathVisible = dead;
       }
-      if (dead) return; // frozen on last-rendered bars/prompt/status underneath the overlay; nothing else to update.
+      if (dead) return; // frozen on last-rendered rings/prompt/status underneath the overlay; nothing else to update.
 
       const player = getPlayer(state);
 
-      updateBar(hunger.handle, player.needs.hunger);
-      updateBar(thirst.handle, player.needs.thirst);
-      updateBar(fatigue.handle, player.needs.fatigue);
+      updateRing(hunger.handle, player.needs.hunger);
+      updateRing(thirst.handle, player.needs.thirst);
+      updateRing(fatigue.handle, player.needs.fatigue);
 
       const nextPrompt = contextPrompt(ctx, player);
-      const nextGlyph = nextPrompt?.glyph ?? "";
-      if (nextGlyph !== lastGlyph) {
+      const nextWord = nextPrompt?.word ?? "";
+      if (nextWord !== lastWord) {
         if (nextPrompt === null) {
           promptPillEl.classList.remove("hud-visible");
         } else {
-          promptSealEl.textContent = nextPrompt.glyph;
-          promptWordEl.textContent = nextPrompt.word;
           promptKeyEl.textContent = nextPrompt.key;
+          promptWordMainEl.textContent = nextPrompt.word.slice(0, -1);
+          promptWordAccentEl.textContent = nextPrompt.word.slice(-1);
           promptPillEl.classList.add("hud-visible");
-          // Re-trigger the 180ms spring pop-in even when already visible and
-          // switching to a different glyph — same remove/reflow/re-add
+          // Re-trigger the 160ms fade-in even when already visible and
+          // switching to a different word — same remove/reflow/re-add
           // pattern screenFx.ts's triggerHurt() uses to replay a CSS
           // animation on repeat triggers (simply re-adding an already-
           // present class is a no-op to the class list and won't replay).
-          promptPillEl.classList.remove("hud-pill-pop");
+          promptPillEl.classList.remove("hud-fade-in");
           void promptPillEl.offsetWidth;
-          promptPillEl.classList.add("hud-pill-pop");
+          promptPillEl.classList.add("hud-fade-in");
         }
-        lastGlyph = nextGlyph;
+        lastWord = nextWord;
       }
 
       const nextStatus = statusLabel(player);
       if (nextStatus !== lastStatus) {
-        // Explicit show/hide (unlike the old vertical tag, this badge has a
-        // permanent dot child so `:empty` no longer reads as "no status").
         if (nextStatus === "") {
-          statusBadgeEl.classList.remove("hud-visible");
+          statusTextEl.classList.remove("hud-visible");
         } else {
           statusTextEl.textContent = nextStatus;
-          statusBadgeEl.classList.add("hud-visible");
+          statusTextEl.classList.add("hud-visible");
         }
         lastStatus = nextStatus;
       }

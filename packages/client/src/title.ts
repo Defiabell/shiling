@@ -1,20 +1,18 @@
-import { generatePaperNoiseDataUrl } from "./render/atmosphere.js";
 import { PALETTE } from "./render/palette.js";
 
 /**
- * 标题画面（宝可梦系明快游戏 UI restyle）：全屏亮暖底遮罩，压在已经在跑的 3D
- * 场景（main.ts 把 `started` 锁在 false，世界静止在 tick 0，但渲染循环照常跑
- * ——见该文件的 gate 注释）之上。此前的水墨版本靠半透明纸色让背后场景隐约透
- * 出；这一版改为接近不透明的亮暖渐变（呼应 hud.ts 卡片同一套暖纸白/亮色语
- * 言），噪点纹理仍然复用同一份 `generatePaperNoiseDataUrl()`（只是现在叠在
- * 渐变上做纸感颗粒，不再承担"半透明可视深度"的角色）。点击「入　山」后本模
- * 块自己负责 600ms 淡出动画 + 卸载 DOM，再回调 onEnter——main.ts 不需要知道
- * 淡出的具体时长/实现，只需要在 onEnter 里把 `started` 置真。
+ * 标题画面（variant C「弱光玻璃」——owner 选定方向，取代宝可梦系亮色 restyle）：
+ * 全屏暗色遮罩，压在已经在跑的 3D 场景（main.ts 把 `started` 锁在 false，世界静止
+ * 在 tick 0，但渲染循环照常跑——见该文件的 gate 注释）之上。渐变底直接复用场景自己
+ * 的暮色三色（`PALETTE.skyTop/skyHorizon/skyGlow`——见 atmosphere.ts 的天空穹顶用的
+ * 同一份数值），而不是像上一版那样另开一套亮暖色——"深空渐变底复用场景暮色系"，
+ * 让标题画面本身就是场景暮色的延伸,不是另一层无关的贴纸。点击「入　山」后本模块
+ * 自己负责 600ms 淡出动画 + 卸载 DOM，再回调 onEnter——main.ts 不需要知道淡出的
+ * 具体时长/实现，只需要在 onEnter 里把 `started` 置真。
  */
 
 const OVERLAY_ID = "shiling-title-overlay";
 const STYLE_ID = "shiling-title-style";
-const NOISE_TILE_SIZE = 256;
 
 /** 点击到调用 onEnter 之间的墨色淡出时长——brief 明确要求 600ms，CSS transition 与 setTimeout 必须用同一个数，单一数据源。 */
 const FADE_MS = 600;
@@ -23,24 +21,25 @@ function hexToCssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, "0")}`;
 }
 
-const cinnabarHex = hexToCssColor(PALETTE.cinnabar); // #c23b22 — 按钮底色，与 hud.ts 的朱砂强调色同源
+// 深空渐变三色，直接取 atmosphere.ts 天空穹顶用的同一份 PALETTE 数值（"复用场景
+// 暮色系"）——不是另起一套字面量，标题背景与场景背景在概念上就是同一件事。
+const skyTopHex = hexToCssColor(PALETTE.skyTop);
+const skyHorizonHex = hexToCssColor(PALETTE.skyHorizon);
+const skyGlowHex = hexToCssColor(PALETTE.skyGlow);
 
 /**
- * 亮色 UI 常量，字面值与 hud.ts 的 CARD.border/TEXT.ink 分组一致（#2b2b33
- * 同时是"文字主色"与"卡片/按钮描边"）——两个模块各自独立声明同一份字面量，
- * 延续本工程"每个模块自成一体，不跨模块 import UI-only 常量"的既有惯例
- * （旧版 PAPER_HEX 就是同一套做法）。拆成 INK/CARD_BORDER 两个名字纯粹是
- * 让各调用点表达自己的语义，不是两份独立数据。
+ * 弱光玻璃皮肤 token，字面值与 hud.ts 的 GLASS/ACCENT 分组一致（青色微光同一色
+ * 相）——两个模块各自独立声明同一份字面量，延续本工程"每个模块自成一体，不跨模块
+ * import UI-only 常量"的既有惯例（旧版 PAPER_HEX/CARD_BORDER 就是同一套做法）。
  */
-const INK = "#2b2b33";
-const CARD_BORDER = "#2b2b33";
+const GLASS_HAIRLINE = "rgba(255, 255, 255, 0.16)";
+const GLOW_CYAN = "rgba(127, 212, 232, 0.55)"; // #7fd4e8，与 hud.ts ACCENT.thirst 同一色相
 
 /**
- * 字体子集不变（restyle 决策，见 hud.ts 头部同一条注释的说明）：本次改动
- * 只碰样式，不碰文案——标题「食灵」、副题「山海之间，吞灵化形」、按钮
- * 「入　山」三处文字与此前完全一致，Ma Shan Zheng 现在只用在标题一处（副题
- * /按钮改用系统字体），字形覆盖范围只会变得更宽松，不需要重新请求/裁剪
- * `public/fonts/mashanzheng.woff2`。
+ * 字体子集不变（restyle 决策，见 hud.ts 头部同一条注释的说明）：本次改动只碰
+ * 样式，不碰文案——标题「食灵」、副题「山海之间，吞灵化形」、按钮「入　山」三处
+ * 文字与此前完全一致，Ma Shan Zheng 仍然只用在标题一处，字形覆盖范围不变，不需要
+ * 重新请求/裁剪 `public/fonts/mashanzheng.woff2`。
  */
 const FONT_CSS = `
 @font-face {
@@ -54,7 +53,7 @@ const FONT_CSS = `
 
 const SYSTEM_FONT = `-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
 
-function ensureStyleInjected(noiseDataUrl: string): void {
+function ensureStyleInjected(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
   style.id = STYLE_ID;
@@ -69,14 +68,11 @@ ${FONT_CSS}
   align-items: center;
   justify-content: center;
   gap: 28px;
-  /* 亮暖渐变 + 噪点纹理叠在同一层背景上（多重 background，不必再像
-     atmosphere.ts 那样叠两个 div）：渐变负责"亮"这个基调，噪点用
-     multiply 压一层纸纤维颗粒感，两者都不追求透出背后场景——这版不再是
-     半透明卷轴叠影，而是一整块不透明的亮色标题背板。 */
-  background-image: linear-gradient(160deg, #fff8ec 0%, #ffe1a0 60%, #ffcf7e 100%), url(${noiseDataUrl});
-  background-repeat: no-repeat, repeat;
-  background-size: cover, ${NOISE_TILE_SIZE}px ${NOISE_TILE_SIZE}px;
-  background-blend-mode: normal, multiply;
+  /* 深空渐变——三色直接抄场景天空穹顶用的 PALETTE.skyTop/skyHorizon/skyGlow（见
+     atmosphere.ts 的 SKY_FRAGMENT_SHADER，同一份 mix 逻辑换成 CSS 线性渐变的
+     近似）。不再叠纸纹噪底（variant C 的"干净"气质——旧版噪点纹理在这版直接
+     去掉，而不是压到几乎不可见，噪点与半透明玻璃层叠加视觉上会显脏）。 */
+  background: linear-gradient(180deg, ${skyTopHex} 0%, ${skyHorizonHex} 55%, ${skyGlowHex} 100%);
   opacity: 1;
   transition: opacity ${FADE_MS}ms ease;
   font-family: ${SYSTEM_FONT};
@@ -92,46 +88,45 @@ ${FONT_CSS}
   font-size: 120px;
   font-weight: 400;
   letter-spacing: 0.15em;
-  color: ${INK};
-  /* 4px 白描边 + 柔光晕，让墨色大字从暖底噪点纹理里跳出来（贴纸/logo 感，
-     宝可梦标题常见手法）。-webkit-text-stroke 在 Chromium/Firefox 均生效；
-     paint-order 保证描边画在填色下面，不会把笔画中间的细节吃掉。 */
-  -webkit-text-stroke: 4px #fff;
-  paint-order: stroke fill;
-  text-shadow: 0 0 20px rgba(255, 255, 255, 0.7);
+  /* 墨白反转：暗底上改白字，极淡青色 glow 而不是旧版的暖白描边贴纸感——克制、
+     不抢场景。text-shadow 叠两层：紧贴的白色柔光收边 + 稍宽的青色氛围光。 */
+  color: #ffffff;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.5), 0 0 40px ${GLOW_CYAN};
 }
 .title-sub {
   margin: 0;
   font-family: ${SYSTEM_FONT};
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.25em;
-  color: ${INK};
-  opacity: 0.75;
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.35em;
+  color: #c8d2dc;
+  opacity: 0.85;
 }
 .title-enter {
   margin-top: 12px;
-  padding: 16px 56px;
+  padding: 14px 52px;
   font-family: ${SYSTEM_FONT};
-  font-weight: 700;
-  font-size: 24px;
-  letter-spacing: 0.2em;
-  background: ${cinnabarHex};
-  color: #fff;
-  border: 3px solid ${CARD_BORDER};
-  border-radius: 20px; /* 大圆角矩形，呼应 hud.ts 死亡卡同一档圆角 */
-  box-shadow: 0 4px 0 rgba(43, 43, 51, 0.35); /* 实心 offset 阴影，不用 blur */
+  font-weight: 300;
+  font-size: 20px;
+  letter-spacing: 0.3em;
+  background: rgba(14, 16, 22, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #e8ecf2;
+  border: none;
+  border-radius: 999px; /* 玻璃胶囊，呼应 hud.ts 情境提示 pill 同一形态语言 */
+  box-shadow: 0 0 0 1px ${GLASS_HAIRLINE} inset;
   cursor: pointer;
-  transition: transform 150ms ease, box-shadow 150ms ease;
+  transition: box-shadow 150ms ease, transform 150ms ease;
 }
 .title-enter:hover,
 .title-enter:focus-visible {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 0 rgba(43, 43, 51, 0.35); /* 抬起时阴影加深，强化"离开桌面"的立体感 */
+  /* hover 时 cyan glow 亮起——外发光 + hairline 略提亮，不做位移/阴影那套实心
+     offset 手法（那是上一版宝可梦皮肤的语言，这版克制、静态玻璃质感为主）。 */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28) inset, 0 0 24px -2px ${GLOW_CYAN};
 }
 .title-enter:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 rgba(43, 43, 51, 0.35); /* 按下感——阴影几乎吃掉，贴回桌面 */
+  transform: scale(0.97);
 }
 `;
   document.head.appendChild(style);
@@ -151,15 +146,14 @@ export function showTitle(onEnter: () => void): void {
   // no-op）。
   if (document.getElementById(OVERLAY_ID)) return;
 
-  const noiseDataUrl = generatePaperNoiseDataUrl();
-  ensureStyleInjected(noiseDataUrl);
+  ensureStyleInjected();
 
   const overlay = document.createElement("div");
   overlay.id = OVERLAY_ID;
 
   // 剥括号惯例（Task 9 controller ruling，沿用至今）：plan/brief 文本里的
   // 《》「」是引用记号，不是要渲染的字符——hud.ts 死亡界面（身死／魂归青丘——
-  // 按 R 转世／食灵）和 README 的写法都不带括号，标题画面统一同一套惯例。
+  // 按 R 转世）和 README 的写法都不带括号，标题画面统一同一套惯例。
   const main = document.createElement("h1");
   main.className = "title-main";
   main.textContent = "食灵";

@@ -10,41 +10,54 @@ import { getPlayer, type GameState, type Terrain } from "@shiling/sim";
  *   - overlay：玩家/生物/尸体/挖点/视野锥，每帧按 dirty-check（state.tick 是否推进）
  *     决定要不要清空重绘——静止/暂停时零开销。
  *
- * 皮肤说明：这是临时视觉（brief 原话——owner 定 HUD 整体方向后会重做一版），所有颜色/
- * 尺寸都收在下面这一个 SKIN 常量块里，方便整体重皮时不用满文件找字面量。
+ * 皮肤说明（variant C「弱光玻璃」——owner 已定 HUD 整体方向，这是正式重皮，不再是
+ * 临时视觉）：圆形玻璃罗盘，外框玻璃圆环 + hairline + 微光 glow（比稿 mockup 的
+ * `.cmap`），地形色带整体调暗调冷一档融入玻璃底色，玩家点改 amber 带 glow。所有
+ * 颜色/尺寸仍收在下面这一个 SKIN 常量块里。
  */
 
 const SKIN = {
-  cssSize: 148, // CSS px 边长（正方形卡片）
+  cssSize: 148, // CSS px 边长（圆形卡片外接正方形）
   dpr: 2, // 画布物理像素 = cssSize * dpr，供 retina 清晰度
-  cardBg: "#f7f1e3",
-  cardBorder: "#2b2b33",
-  cardBorderWidth: 3,
-  cardRadius: 14,
-  cardShadow: "0 3px 0 rgba(43, 43, 51, 0.35)",
-  top: 64, // 距顶部：状态徽章（hud.ts .hud-status-badge）固定占位 top16+约36高+12间隙
+  cardBg: "rgba(14, 16, 22, 0.45)", // 玻璃底（mockup .cmap）
+  cardHairline: "rgba(255, 255, 255, 0.14)", // inset 描边（mockup .cmap 的第一层 box-shadow）
+  cardGlow: "rgba(127, 212, 232, 0.25)", // 外发光（mockup .cmap 的第二层 box-shadow）
+  cardBlur: "5px",
+  // mockup 的 `.cmap` 有 padding:6px，内层 `.cmapin` 只填满 padding 之后剩下的空间——
+  // 露出一圈能看见玻璃底色+hairline 的窄边。两张 canvas 若直接 inset:0 铺满整张卡片，
+  // 地形像素会一路铺到卡片最外沿，把 hairline 描边和内嵌发光整个盖住（实测截图验证
+  // 过：不留这圈 padding，hairline/glow 视觉上完全读不出来，只剩下"圆形裁切的地图"，
+  // 不像玻璃罗盘）。canvas 的物理像素分辨率按这个缩小后的边长算，不是整张卡片边长。
+  innerPad: 6,
+  // top:16（不再像旧皮肤那样为右上角的状态徽章预留占位——variant C 把状态字
+  // 挪到小地图正下方，见 hud.ts 的 .hud-status-text 头部注释，两处坐标要同步核对）。
+  top: 16,
   right: 16,
 
   baseGridRes: 120, // 静态底图采样网格边长（120×120）
 
-  bandWater: "#4a7f96",
-  bandSwamp: "#55604e",
-  bandMeadow: "#6d7d5f",
-  bandRocky: "#8d968a",
-  bandPeak: "#c5cdbf",
+  // 地形色带：在旧亮色版本基础上调暗调冷一档（降饱和+压亮度），融入半透明深色
+  // 玻璃底，不再是一张"贴在卡片上的独立地图"，而是从玻璃里透出来的暗色地貌。
+  bandWater: "#33505e",
+  bandSwamp: "#3c4438",
+  bandMeadow: "#4c5648",
+  bandRocky: "#656d64",
+  bandPeak: "#93998f",
 
-  playerColor: "#c23b22",
-  lingshuColor: "#ffffff",
+  playerColor: "#e8b45f", // amber，与 HUD 饥饿环同一强调色
+  playerGlow: "rgba(232, 180, 95, 0.85)",
+  playerGlowBlur: 8,
+  lingshuColor: "#c8d2dc",
   lingshuRadius: 2,
   tanshouColor: "#e0452b",
   tanshouRadius: 3,
-  carcassColor: "#8a8478",
+  carcassColor: "#5f6862",
   carcassRadius: 2,
-  digSpotColor: "#7a5c3a",
-  digSpotDugColor: "#4a3a24",
+  digSpotColor: "#5a4a38",
+  digSpotDugColor: "#332a20",
   digSpotRadius: 3,
 
-  viewConeColor: "rgba(255, 255, 255, 0.2)",
+  viewConeColor: "rgba(232, 236, 242, 0.14)",
   viewConeHalfAngle: Math.PI / 6, // 30°
   playerMarkerSize: 6,
 } as const;
@@ -64,18 +77,19 @@ const MINIMAP_CSS = `
   width: ${SKIN.cssSize}px;
   height: ${SKIN.cssSize}px;
   background: ${SKIN.cardBg};
-  border: ${SKIN.cardBorderWidth}px solid ${SKIN.cardBorder};
-  border-radius: ${SKIN.cardRadius}px;
-  box-shadow: ${SKIN.cardShadow};
-  overflow: hidden; /* 裁出圆角——两张方形 canvas 的四角靠这个盖住 */
+  backdrop-filter: blur(${SKIN.cardBlur});
+  -webkit-backdrop-filter: blur(${SKIN.cardBlur});
+  border-radius: 50%; /* 圆形玻璃罗盘——两张方形 canvas 的四角靠 overflow:hidden 裁成圆 */
+  box-shadow: 0 0 0 1px ${SKIN.cardHairline} inset, 0 0 24px -6px ${SKIN.cardGlow};
+  overflow: hidden;
   pointer-events: none;
   z-index: 10;
 }
 .minimap-canvas {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  /* inset 而非 0——留出 SKIN.innerPad 那圈玻璃底色/hairline，见 SKIN.innerPad
+     的注释：canvas 不能铺到卡片最外沿，否则地形像素会盖住描边/发光。 */
+  inset: ${SKIN.innerPad}px;
   display: block;
 }
 `;
@@ -154,7 +168,9 @@ function renderBaseLayer(ctx: CanvasRenderingContext2D, terrain: Terrain, worldS
  * 玩家三角标记：不用 ctx.rotate（避免"画布 y 朝下、角度约定容易搞反"的坑），直接用
  * 前向量 (dirX, dirY)（已经是地图空间坐标，见 worldToMap 的纯缩放映射——世界前向量
  * 分量原样搬进地图空间，不需要额外翻转）算出尖端+两个底角三个点，per-frame 只做向量
- * 加减法。
+ * 加减法。variant C：amber 填色 + canvas shadowBlur 发光——用完立刻把 shadowBlur
+ * 清零（下一帧/下一个绘制调用不应该继承这个状态，Canvas 2D 的 shadow* 是 ctx 全局态,
+ * 不会随 fill() 自动重置）。
  */
 function drawPlayerMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number, dirX: number, dirY: number, size: number): void {
   const perpX = -dirY;
@@ -173,7 +189,16 @@ function drawPlayerMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.lineTo(rightX, rightY);
   ctx.closePath();
   ctx.fillStyle = SKIN.playerColor;
+  ctx.shadowColor = SKIN.playerGlow;
+  ctx.shadowBlur = SKIN.playerGlowBlur;
   ctx.fill();
+  // 立刻复位两者——见函数头注释，shadow* 是 ctx 全局态。shadowColor 单独复位
+  // 是 code review 补的一处完整性收尾：blur=0 时残留的 shadowColor 目前不会
+  // 产生任何可见效果，但如果后面哪天新增一处只设 shadowBlur、忘了设
+  // shadowColor 的绘制调用，会静默继承这里的 amber——两个字段一起清才是
+  // 真正的"这次绘制的发光状态不外溢"。
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
 }
 
 /** 视野锥：camYaw 的正前方 ±viewConeHalfAngle 的扇形，半径到卡片边缘。 */
@@ -261,7 +286,10 @@ export function createMinimap(terrain: Terrain, worldSize: number): Minimap {
   const overlayCanvas = document.createElement("canvas");
   overlayCanvas.className = "minimap-canvas";
 
-  const pxSize = SKIN.cssSize * SKIN.dpr;
+  // 画布物理像素分辨率按"卡片边长 - 两侧 innerPad"算——canvas 的 CSS 尺寸由
+  // .minimap-canvas 的 inset:innerPad 决定（见上面 CSS），这里必须用同一个缩小后
+  // 的边长，否则 retina 分辨率会算多，且 worldToMap 的映射比例会跟实际显示尺寸不一致。
+  const pxSize = (SKIN.cssSize - SKIN.innerPad * 2) * SKIN.dpr;
   baseCanvas.width = pxSize;
   baseCanvas.height = pxSize;
   overlayCanvas.width = pxSize;
