@@ -48,8 +48,18 @@ import type { Terrain } from "./terrain.js";
  * 读 input.attack（"举着左键就别喝水"），不再像键位拆分前那样需要反查本文件的攻击目标
  * 扫描结果——两个系统各自只认自己对应的输入字段，不再需要跨文件共享一份"攻击目标是否
  * 存在"的判定（旧版本导出的 hasAttackTargetInRange 已随之移除，见 git 历史）。
+ *
+ * 叼运联动（M1 postfix N1，见 carrying.ts）：
+ *   - 攻击禁用：p.carryingCarcassId !== null 时攻击分支整体不判定（"叼着东西没法再
+ *     腾出嘴撕咬"）——见下方攻击分支的守卫。
+ *   - 叼着时按 E 仍能就地进食：不需要特判——carrying.ts 把叼着的尸体钉在
+ *     interactRange 之内（偏移量小于 interactRange），本系统的尸体扫描天然会扫到它。
+ *   - 储粮进食（stash）：interactRange 内没有真实尸体、但站在自己的巢穴附近且
+ *     stash>0 时，作为进食分支的 fallback 从 state.homeNest.stash 里扣（见下方
+ *     "carcassIdx < 0" 分支）。守卫顺序是刻意的——真实尸体永远优先于 stash（新鲜的
+ *     肉"该先腐烂"，不该反而先动用囤积的存粮），只有附近确实没有物理尸体时才退而
+ *     求其次吃储备。
  */
-// terrain 参数仅为与其它 tick* 系统保持一致的签名（本系统的攻击/进食判定不需要地形信息）。
 export function tickEating(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead" || p.burrowId !== null) return;
@@ -62,7 +72,8 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
   const suppressed = moving || p.activity === "digging";
 
   // 1) 攻击：input.attack 独立判定，attackRange 内最近的活着的非玩家生物。
-  if (!suppressed && input.attack) {
+  // 叼着尸体时（carryingCarcassId !== null）整体禁用——见文件头"叼运联动"一节。
+  if (!suppressed && input.attack && p.carryingCarcassId === null) {
     const atk = SPECIES.youshou!;
     const target = findAttackTarget(state, p);
     if (target) {
@@ -94,6 +105,21 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
     if (d <= TUNING.interactRange && d < carcassDist) { carcassIdx = i; carcassDist = d; }
   }
   if (carcassIdx < 0) {
+    // 储粮 fallback（M1 postfix N1）：附近没有真实尸体时，才轮到自己巢穴的存粮——
+    // 守卫顺序见文件头"叼运联动"一节。同时要求站在 interactRange 内（贴着 dig spot
+    // 本身，与真实尸体的判定用同一距离常量），不是"只要有家、随便多远都能吃"。
+    if (state.homeNest && state.homeNest.stash > 0) {
+      const spot = terrain.digSpots.find((s) => s.id === state.homeNest!.spotId);
+      if (spot && dist2d(p.pos, spot.pos) <= TUNING.interactRange) {
+        p.activity = "eating";
+        if (p.feedingCarcassId !== null) p.feedingCarcassId = null; // stash 不是 Carcass，没有对应 id
+        const eaten = Math.min(state.homeNest.stash, TUNING.eatMeatPerSec * DT);
+        state.homeNest.stash -= eaten;
+        // 与真实尸体进食同一公式（含 hungerDecayPerSec*DT 的衰减抵消，见下方原有注释）。
+        p.needs.hunger = Math.min(100, p.needs.hunger + eaten * TUNING.hungerPerMeat + TUNING.hungerDecayPerSec * DT);
+        return;
+      }
+    }
     if (p.feedingCarcassId !== null) p.feedingCarcassId = null;
     if (p.activity === "eating") p.activity = "idle";
     return;

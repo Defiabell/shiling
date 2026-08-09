@@ -32,4 +32,8 @@ export const TUNING = {
   fleeFatigueThresholdSec: 5,   // 连续逃跑超过这么久后进入疲态
   fleeFatigueSpeedMult: 0.65,   // 疲态下的逃跑速度倍率
   fleeRecoverSec: 4,            // 回到非 flee 状态需要持续这么久才清空疲态计时
+  // M1 postfix N1（叼运/筑巢/储粮）：见 carrying.ts / digging.ts 的筑巢分支。
+  carrySpeedMult: 0.75,   // 叼着尸体走路的速度倍率
+  nestBuildSec: 12,       // 在已挖开的洞穴里持续按 E 筑巢所需时长
+  nestStashCap: 120,      // 巢穴存粮上限（meat 单位，与 Carcass.meat 同一量纲）
 } as const;

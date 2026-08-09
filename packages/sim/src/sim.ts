@@ -8,6 +8,7 @@ import { tickDigging } from "./digging.js";
 import { tickEating } from "./eating.js";
 import { tickAi } from "./ai.js";
 import { tickNeeds } from "./needs.js";
+import { tickCarrying } from "./carrying.js";
 
 export const DT = 1 / TUNING.tickHz;
 
@@ -74,6 +75,9 @@ export function spawnCreature(
     aiTimer: TUNING.aiRepathSec,
     fleeTime: 0,
     fleeRecoverTime: 0,
+    carryingCarcassId: null,
+    carryHeld: false,
+    nestProgress: 0,
   };
   state.creatures.push(c);
   return c;
@@ -82,7 +86,7 @@ export function spawnCreature(
 export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): Sim {
   const rng = createRng(seed);
   const terrain = terrainFactory(seed, params);
-  const state: GameState = { tick: 0, playerId: 0, nextId: 1, creatures: [], carcasses: [], playerDead: false };
+  const state: GameState = { tick: 0, playerId: 0, nextId: 1, creatures: [], carcasses: [], playerDead: false, homeNest: null };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
   for (const s of params.spawns) {
@@ -96,8 +100,14 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       state.tick++;
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
-      tickDigging(state, terrain, input); // (Task 8)
-      tickEating(state, terrain, input); // (Task 11)
+      tickDigging(state, terrain, input); // (Task 8; 筑巢分支：M1 postfix N1)
+      tickEating(state, terrain, input); // (Task 11; 储粮进食分支：M1 postfix N1)
+      // 叼运（M1 postfix N1）紧跟在 tickEating 之后：如果玩家边叼边吃（原地按 E 吃掉
+      // 自己叼着的那具尸体），tickEating 可能刚把它的 meat 吃到 <=0 并整个移除——
+      // tickCarrying 必须在那之后运行才能看到"尸体已被吃空移除"这个最终状态，及时清空
+      // carryingCarcassId（见 carrying.ts 头注）。放在 tickAi 之前只是顺着"玩家专属
+      // 系统分组在一起，NPC 系统统一殿后"的既有习惯，无强依赖。
+      tickCarrying(state, terrain, input);
       tickAi(state, terrain, rng); // (Task 9)
       tickNeeds(state, terrain, input); // (Task 7)
     },

@@ -204,7 +204,9 @@ export function showTitle(modelsReady: Promise<unknown>, onEnter: () => void): v
   // 进游戏后靠暂停面板才第一次看到）。纯静态文案，不随任何状态变化，不需要 dirty-check。
   const hint = document.createElement("p");
   hint.className = "title-hint";
-  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　Esc 暂停";
+  // M1 postfix N1（叼运/筑巢/储粮）：补上 C——与 pause.ts 的完整操作列表同步更新，
+  // 不留其一遗漏（这里仍是一句精简提示，不逐字复述 pause 面板的完整说明）。
+  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　C 叼运　Esc 暂停";
 
   overlay.append(main, sub, button, hint);
   document.body.appendChild(overlay);

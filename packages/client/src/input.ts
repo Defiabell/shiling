@@ -18,6 +18,8 @@ const GAME_KEYS = new Set([
   "ArrowRight",
   "ArrowUp",
   "ArrowDown",
+  // M1 postfix N1（叼运/筑巢/储粮）：C 键叼起/放下附近的尸体，PlayerInput.carry。
+  "KeyC",
 ]);
 
 interface KeyState {
@@ -32,6 +34,7 @@ interface KeyState {
   arrowRight: boolean;
   arrowUp: boolean;
   arrowDown: boolean;
+  c: boolean;
 }
 
 /**
@@ -178,6 +181,7 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
     arrowRight: false,
     arrowUp: false,
     arrowDown: false,
+    c: false,
   };
   let dragging = false; // 右键拖拽中
   let attackHeld = false; // 左键按住
@@ -209,6 +213,9 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         break;
       case "KeyJ":
         keys.j = pressed;
+        break;
+      case "KeyC":
+        keys.c = pressed;
         break;
       case "ArrowLeft":
         keys.arrowLeft = pressed;
@@ -294,7 +301,11 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
     read(camYaw: number): PlayerInput {
       const interact = keys.e;
       if (isPlayerBurrowed()) {
-        return { moveX: 0, moveZ: 0, sprint: false, interact, attack: false };
+        // 叼运（M1 postfix N1）同样在洞中被屏蔽——sim 侧其实已经不可能在洞中叼着任何
+        // 东西（digging.ts 的 carryingCarcassId!==null 早退守卫 + carrying.ts 的
+        // burrowId!==null 拾起守卫，两者互斥），这里 carry:false 只是与 attack:false
+        // 同一套防御性收口，不依赖 sim 侧的隐含前提。
+        return { moveX: 0, moveZ: 0, sprint: false, interact, attack: false, carry: false };
       }
       const fwd = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
       const strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
@@ -306,6 +317,7 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         interact,
         // Post-fix-6：J OR 左键，两者完全等价（见文件头注释）。
         attack: attackHeld || keys.j,
+        carry: keys.c,
       };
     },
     camDelta() {

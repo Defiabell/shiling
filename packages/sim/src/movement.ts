@@ -55,7 +55,10 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
 export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
-  moveCreature(p, input.moveX, input.moveZ, input.sprint, terrain);
+  // 叼着尸体减速（M1 postfix N1，carrying.ts）：走同一个 speedScale 出口，与冲刺乘数
+  // 可叠加（冲刺+叼运 = sprintMultiplier×carrySpeedMult），brief 未要求互斥。
+  const speedScale = p.carryingCarcassId !== null ? TUNING.carrySpeedMult : 1;
+  moveCreature(p, input.moveX, input.moveZ, input.sprint, terrain, speedScale);
   // burrowId !== null：moveCreature 对洞中生物直接 no-op（不产生位移），冲刺不该在洞里也扣疲劳
   // ——client 端会屏蔽洞中的移动/冲刺输入，但 sim 是权威层，这里不加守卫就是一个 sim 级漏洞
   // （被客户端输入屏蔽掩盖，直接调 sim 或客户端校验被绕过时仍会白扣疲劳）。

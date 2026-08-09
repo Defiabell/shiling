@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSim } from "../src/sim.js";
 
-const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
+const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
 describe("createSim", () => {
   it("spawns player and world creatures", () => {

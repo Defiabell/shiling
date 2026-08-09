@@ -4,7 +4,7 @@ import { moveCreature } from "../src/movement.js";
 import { SPECIES } from "@shiling/content";
 import type { Creature } from "../src/state.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
 function findLandNear(sim: ReturnType<typeof createSim>, x: number, z: number) {
   // 把玩家硬放到指定点（测试用）
@@ -87,6 +87,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       digProgress: 0, interactHeld: false,
       aiDirX: 0, aiDirZ: 1, aiTimer: 0,
       fleeTime: 0, fleeRecoverTime: 0,
+      carryingCarcassId: null, carryHeld: false, nestProgress: 0,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边

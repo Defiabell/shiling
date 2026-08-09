@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
 describe("player hunting & eating", () => {
   function isolate(sim: ReturnType<typeof createSim>) {
@@ -42,7 +42,7 @@ describe("player hunting & eating", () => {
     const p = getPlayer(sim.state);
     sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 2 });
     sim.step({ ...idle, interact: true });
-    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false });
+    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false });
     expect(p.activity).not.toBe("eating");
     for (let i = 0; i < TUNING.tickHz * 2; i++) sim.step({ ...idle, interact: true });
     expect(sim.state.carcasses.some((c) => c.id === 999)).toBe(false); // 2 肉早被吃光
@@ -78,5 +78,63 @@ describe("player hunting & eating", () => {
     for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step(idle);
     const netPerSec = (shu.needs.hunger - 30) / secs;
     expect(netPerSec).toBeCloseTo(TUNING.grazeHungerPerSec - TUNING.hungerDecayPerSec, 1); // ≈0.45/s
+  });
+});
+
+// M1 postfix N1（叼运/筑巢/储粮）：储粮进食——interactRange 内没有真实尸体、但站在
+// 自己巢穴附近时，E 从 state.homeNest.stash 里吃；真实尸体永远优先于 stash（见
+// eating.ts 文件头"叼运联动"一节）。
+describe("home nest stash eating", () => {
+  function isolate(sim: ReturnType<typeof createSim>) {
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou");
+  }
+
+  it("eats from stash when near the home nest and no carcass is in range", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    const spot = sim.terrain.digSpots[0]!;
+    spot.dug = true; // 已挖开——否则 tickDigging 会把站在未挖点上的 interact 判成挖掘，抢占 activity
+    sim.state.homeNest = { spotId: spot.id, stash: 40 };
+    p.pos = { ...spot.pos };
+    p.needs.hunger = 20;
+    // interactHeld=true：模拟"已经按住 E 走近"，避免 tickDigging 把这一次按下判成
+    // 新按下沿而直接入洞（进洞后 tickEating 整体早退，见 digging.ts 的 burrow 分支）——
+    // 站在自家已建成的巢穴旁边、E 已经按住不松手，才是储粮进食这条分支真正被触达的方式。
+    p.interactHeld = true;
+    const secs = 3;
+    for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step({ ...idle, interact: true });
+    const eaten = TUNING.eatMeatPerSec * secs;
+    expect(sim.state.homeNest!.stash).toBeCloseTo(40 - eaten, 0);
+    expect(p.needs.hunger).toBeCloseTo(20 + eaten * TUNING.hungerPerMeat, 0);
+    expect(p.activity).toBe("eating");
+  });
+
+  it("a nearby physical carcass takes priority over stash eating", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    const spot = sim.terrain.digSpots[0]!;
+    spot.dug = true;
+    sim.state.homeNest = { spotId: spot.id, stash: 40 };
+    p.pos = { ...spot.pos };
+    p.interactHeld = true; // 同上一个测试：避免这一按被 tickDigging 判成新按下沿而入洞
+    sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 30 });
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true });
+    expect(sim.state.homeNest!.stash).toBe(40); // 存粮完全未被动用
+    expect(sim.state.carcasses.find((c) => c.id === 999)!.meat).toBeLessThan(30); // 真实尸体先被吃
+  });
+
+  it("no stash eating when not near the home nest spot", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    const spot = sim.terrain.digSpots[0]!;
+    sim.state.homeNest = { spotId: spot.id, stash: 40 };
+    p.pos = { ...spot.pos };
+    p.pos.x += TUNING.interactRange + 5; // 离开巢穴的交互范围
+    p.needs.hunger = 20;
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true });
+    expect(sim.state.homeNest!.stash).toBe(40); // 未变化
   });
 });

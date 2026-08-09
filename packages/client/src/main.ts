@@ -122,6 +122,13 @@ function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
  * standing on the now-dug spot) even though pressing E there re-enters
  * instantly instead of running a fresh dig-progress accumulation. Flag for
  * Task 17 playtest if this reads as misleading in practice.
+ *
+ * M1 postfix N1（叼运/筑巢/储粮）additions: carrying/nearNest/stash/inOwnBurrow
+ * mirror the same "read-only re-derivation of what sim would do this tick"
+ * discipline as the five flags above — nearNest specifically re-scans
+ * terrain.digSpots for state.homeNest?.spotId (sim itself only stores the id,
+ * not a cached position) rather than reaching into digging.ts/eating.ts
+ * internals.
  */
 function computeHudContext(terrain: Terrain, state: GameState, player: Creature): HudContext {
   const nearDigSpot = terrain.digSpots.some((spot) => dist2d(player.pos, spot.pos) <= TUNING.interactRange);
@@ -130,7 +137,19 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
   const nearPrey = state.creatures.some(
     (c) => c.id !== player.id && c.activity !== "dead" && c.burrowId === null && dist2d(player.pos, c.pos) <= attackRange,
   );
-  return { nearWater: nearWater(player.pos, terrain), nearCarcass, nearDigSpot, nearPrey };
+  const homeNestSpot = state.homeNest ? terrain.digSpots.find((s) => s.id === state.homeNest!.spotId) : undefined;
+  const nearNest = homeNestSpot !== undefined && dist2d(player.pos, homeNestSpot.pos) <= TUNING.interactRange;
+  const inOwnBurrow = player.burrowId !== null && state.homeNest?.spotId === player.burrowId;
+  return {
+    nearWater: nearWater(player.pos, terrain),
+    nearCarcass,
+    nearDigSpot,
+    nearPrey,
+    carrying: player.carryingCarcassId !== null,
+    nearNest,
+    stash: state.homeNest?.stash ?? 0,
+    inOwnBurrow,
+  };
 }
 
 const views: CreatureViews = new Map();
@@ -267,6 +286,15 @@ if (import.meta.env.DEV) {
     // spring is gated by `!paused` — see that call site's comment; before that
     // fix this value kept drifting toward the sprint target every paused frame).
     getCameraFov: () => camera.fov,
+    // M1 postfix N1（叼运/筑巢/储粮）verification hooks: expose just enough
+    // read-only state for an external Playwright script to drive the whole
+    // pickup→carry→drop/deposit/nest-build/stash-eat loop without reaching
+    // into sim internals or re-deriving distance math the sim already owns.
+    getPlayerCarrying: () => getPlayer(sim.state).carryingCarcassId,
+    getPlayerBurrowId: () => getPlayer(sim.state).burrowId,
+    getPlayerHunger: () => getPlayer(sim.state).needs.hunger,
+    getHomeNest: () => sim.state.homeNest,
+    getDigSpots: () => sim.terrain.digSpots.map((s) => ({ id: s.id, x: s.pos.x, z: s.pos.z, dug: s.dug })),
   };
 }
 

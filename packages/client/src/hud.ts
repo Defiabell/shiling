@@ -16,6 +16,16 @@ export interface HudContext {
   nearCarcass: boolean;
   nearDigSpot: boolean;
   nearPrey: boolean;
+  /** M1 postfix N1（叼运/筑巢/储粮）：player.carryingCarcassId !== null。 */
+  carrying: boolean;
+  /** interactRange 内是否有玩家的巢穴（state.homeNest 存在且距离达标）——叼着时驱动
+   *  "存粮" vs "放下"，不叼着时驱动"储粮进食"提示是否可能出现。 */
+  nearNest: boolean;
+  /** state.homeNest?.stash ?? 0——储粮进食提示要显示的数值。 */
+  stash: number;
+  /** 玩家当前是否"身处"自己已建成的巢穴内（burrowId 命中 homeNest.spotId）——区分
+   *  "在洞里但还不是家"（提示筑巢）与"在自己家里"（提示出洞）。 */
+  inOwnBurrow: boolean;
 }
 
 export interface Hud {
@@ -361,7 +371,7 @@ function updateRing(handle: RingHandle, value: number): void {
 }
 
 /** Action word + keycap label for one context-prompt state. */
-interface ContextPrompt {
+export interface ContextPrompt {
   word: string;
   /**
    * 键位拆分（W2）：撕咬现在绑左键，不再是 E——其余四种提示（出洞/挖掘/进食/饮水）
@@ -387,12 +397,44 @@ interface ContextPrompt {
  * keyboard is now the primary attack input; input.ts ORs KeyJ into the same
  * PlayerInput.attack field left-click already drove, so this is purely a
  * display-string change, not a behavior change).
+ *
+ * M1 postfix N1（叼运/筑巢/储粮）extends this same single-pill priority chain
+ * with two new tiers, both inserted above their nearest sim-side counterpart:
+ *   - Burrowed tier now splits in two: "筑巢"（in a dug burrow that ISN'T yet
+ *     home — see ctx.inOwnBurrow) vs "出洞"（already home, or any burrow once
+ *     筑巢 no longer applies). Tapping E still exits either way (digging.ts's
+ *     rising-edge toggle is unchanged) — this just decides which single word
+ *     to advertise, mirroring "holding E accumulates progress while a fresh
+ *     press exits" from digging.ts's own doc comment.
+ *   - Carrying tier sits right below burrowed, above everything else: while
+ *     ctx.carrying is true, C是唯一相关的键——附近的挖点/猎物/尸体提示全部让位
+ *     （attack is sim-disabled while carrying anyway, digging is guarded off
+ *     entirely; see digging.ts/eating.ts's "叼运联动"/"叼运互斥" notes）. E 进食
+ *     叼着的尸体仍然完全可用（eating.ts 不需要特判），只是没有专门的第三个
+ *     pill 状态来同时展示 C 和 E 两个键——批次二的 UI 打磨再考虑要不要拆出来。
+ *   - 尸体本身（not carrying）现在优先展示"叼起"而不是"进食"——这批的主打机制，
+ *     E 进食同一具尸体依旧完全可用（HUD 只是没把它挑出来当第一提示）。
+ *   - 储粮进食 tier 挂在 nearWater 之前、nearCarcass 之后：只有 interactRange 内
+ *     确实没有物理尸体、且站在自己巢穴附近、stash>0 时才出现（镜像 eating.ts 的
+ *     stash fallback 守卫顺序——见该文件"叼运联动"一节）。
  */
-function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
-  if (player.burrowId !== null) return { word: "出洞", key: "E" };
+// exported for hud.test.ts — pure, DOM-free priority-chain logic worth pinning
+// down directly (code review 2026-08-09: this is exactly the class of function
+// that would have caught the stash-prompt accent-slice bug with one assertion).
+export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
+  if (player.burrowId !== null) {
+    return ctx.inOwnBurrow ? { word: "出洞", key: "E" } : { word: "筑巢", key: "E" };
+  }
+  if (ctx.carrying) return ctx.nearNest ? { word: "存粮", key: "C" } : { word: "放下", key: "C" };
   if (ctx.nearDigSpot) return { word: "挖掘", key: "E" };
   if (ctx.nearPrey) return { word: "撕咬", key: "J" };
-  if (ctx.nearCarcass) return { word: "进食", key: "E" };
+  if (ctx.nearCarcass) return { word: "叼起", key: "C" };
+  // 与真实尸体进食共用同一个两字词——不嵌入具体数值：update() 对任意 word 都无条件
+  // `word.slice(0,-1)`/`word.slice(-1)` 做"末字变色"处理（见下方 createHud 内的
+  // ContextPrompt 消费逻辑），这个约定隐含"word 恰好两个汉字"；嵌入变长数字（如
+  // `进食(87)`）会把结尾的括号／数字判成变色字符，撕裂词义。储粮量的展示留给
+  // 批次二的 UI 打磨（brief 本身也把这批的客户端接线定性为"minimal"）。
+  if (ctx.nearNest && ctx.stash > 0) return { word: "进食", key: "E" };
   if (ctx.nearWater) return { word: "饮水", key: "E" };
   return null;
 }

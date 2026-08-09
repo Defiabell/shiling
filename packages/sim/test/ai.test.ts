@@ -3,7 +3,7 @@ import { TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { dist2d } from "../src/vec.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
 describe("lingshu ai", () => {
   it("flees when player is near", () => {
