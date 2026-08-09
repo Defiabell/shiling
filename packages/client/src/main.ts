@@ -11,6 +11,7 @@ import { createParticles } from "./render/particles.js";
 import { createScreenFx } from "./render/screenFx.js";
 import { createKillMarker } from "./render/killMarker.js";
 import { buildScatter } from "./render/scatter.js";
+import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
@@ -81,6 +82,11 @@ const minimap = createMinimap(sim.terrain, sim.terrain.size);
 const particles = createParticles(scene, sim.terrain);
 const screenFx = createScreenFx(camera);
 const killMarker = createKillMarker(camera);
+// M1 postfix N3（程序化音效）：与 particles/screenFx/killMarker 同层的第四个事件消费者，
+// eager 创建（不等 started）——createAudio() 本身对"AudioContext 还没创建"保持安全
+// no-op（见 audio.ts 头部注释），真正的 AudioContext 创建/resume 延迟到下方
+// showTitle() 的 onEnter 回调（唯一的真实用户手势）才发生。
+const audio = createAudio();
 const eventDiffer = createSimEventDiffer();
 
 // ---- 顿帧 hitstop（Part 1，postfix-9 捕食特效强化）----
@@ -227,6 +233,10 @@ modelLibraryPromise.then(() => {
 let started = false;
 showTitle(modelLibraryPromise, () => {
   started = true;
+  // 音频解锁必须挂在这里（唯一的真实用户手势路径）——见 audio.ts 头部注释关于
+  // Safari 手势判定比 Chrome/Firefox 更严格的说明（title.ts 的 onEnter 是点击后
+  // 600ms 淡出 setTimeout 才触发的，unlock() 内部已经为此加了兜底重试）。
+  audio.unlock();
 });
 
 // Post-fix-6（owner feedback「trackpad 用户没有舒适的鼠标按键／不知道有冲刺」）：Esc
@@ -250,6 +260,18 @@ window.addEventListener("keydown", (e) => {
   if (!started || sim.state.playerDead) return;
   paused = !paused;
   pauseOverlay.setVisible(paused);
+});
+
+// M1 postfix N3：M 键切换静音。与 Esc 同一套"独立 edge-detect 监听器"模式，刻意不走
+// input.ts 的 GAME_KEYS/KeyState——那套机制是给 PlayerInput 里持续按住语义的字段用的
+// （W/A/S/D/Shift/E/J/C/方向键），静音是一次按下切换一次的离散开关，语义上与 Esc 暂停
+// 完全同构，所以复用同一处理方式而不是塞进 input.ts（也不需要 preventDefault：M 键
+// 没有任何浏览器默认行为）。不依赖 `started`——标题画面期间也允许切换（音频尚未解锁
+// 时 toggleMute() 仍会更新状态并持久化，只是没有实际声音可静）。
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "KeyM") return;
+  if (e.repeat) return;
+  audio.toggleMute();
 });
 
 // Post-fix-1 verification hook (Bug 1, A/D 左右相反): dev-only, tree-shaken
@@ -334,6 +356,14 @@ if (import.meta.env.DEV) {
     getPlayerHunger: () => getPlayer(sim.state).needs.hunger,
     getHomeNest: () => sim.state.homeNest,
     getDigSpots: () => sim.terrain.digSpots.map((s) => ({ id: s.id, x: s.pos.x, z: s.pos.z, dug: s.dug })),
+    // M1 postfix N3（程序化音效）验证钩子：音频是否真的在播只能靠人耳判断，但下面三个
+    // 探针能结构性地确认——AudioContext 是否已经在「入山」点击后创建（getAudioContextState）、
+    // M 键静音是否真的翻转了状态（getAudioMuted）、暂停/静音是否真的把 masterGain 数值
+    // duck 下去了（getAudioMasterGain，读的是 AudioParam 的实时 `.value`，需要在切换后
+    // 等 GAIN_RAMP_TIME_CONSTANT 那点平滑过渡时间再探测才会稳定）。
+    getAudioContextState: () => audio.getContextState(),
+    getAudioMuted: () => audio.isMuted(),
+    getAudioMasterGain: () => audio.getMasterGainValue(),
   };
 }
 
@@ -392,6 +422,12 @@ renderer.setAnimationLoop(() => {
       screenFx.handle(events, sim.state.playerId, nearPlayerKillIds);
       // 击杀浮字「＋肉」（Part 1）：同一套消费模式，第三个平级消费者。
       killMarker.handle(events, nearPlayerKillIds);
+      // 音效（postfix N3）：第四个平级消费者，同一份 events[]，只读不改。不复用
+      // nearPlayerKillIds（那个 Set 只含"致命"一击）——audio.ts 内部自己按命中位置
+      // 与玩家攻击距离的关系重新判定"是否玩家造成"（见 audio.ts 头部注释），因为它
+      // 需要覆盖"玩家造成但非致命"这个更宽的集合，且不想往这段已经过 code review
+      // 收紧的顿帧逻辑里再加一个新 Set。
+      audio.handle(events, sim.state, sim.state.playerId);
     }
     prevSnapshot = structuredClone({
       creatures: sim.state.creatures,
@@ -427,6 +463,23 @@ renderer.setAnimationLoop(() => {
   // 是 movement.ts 权威写入的结果（见该文件 moveCreature），比在渲染层重新判断
   // "moveX/moveZ 是否非零"更准（后者拿不到"贴墙被挡住"之类的宽高衰减细节）。
   const player = getPlayer(sim.state);
+  // 音效持续层（postfix N3）：与 particles/killMarker 一样每渲染帧无条件调用一次——
+  // audio.ts 内部自己按 ctx.started/paused 决定要不要真正推进心跳/风声/虫鸣/游泳环境
+  // 音（见该文件 update() 的门控注释），main.ts 这里不需要重复 `if (started)` 包一层。
+  // drinking 是 activity 轴而非 locomotion 轴（两者独立，见 @shiling/sim 的 Activity/
+  // Locomotion 类型），audio.ts 的 update() ctx 需要它来驱动"饮水 tick 循环"，故在这里
+  // 单独派生。maxHp 直接读 SPECIES.youshou（玩家物种恒定），与 main.ts 别处
+  // `SPECIES.youshou!.attackRange` 同一惯例。
+  audio.update(frameDt, {
+    playerHunger: player.needs.hunger,
+    playerThirst: player.needs.thirst,
+    playerHp: player.hp,
+    maxHp: SPECIES.youshou!.maxHp,
+    locomotion: player.locomotion,
+    drinking: player.activity === "drinking",
+    paused,
+    started,
+  });
   // Post-fix-6（code review 抓到的真实 bug）：screenFx.update() 必须同样按
   // `!paused` 冻结——它内部用真实 frameDt 推进震屏指数衰减 + 冲刺 FOV 弹簧，并
   // 直接写 camera.fov/调用 updateProjectionMatrix()，如果不冻结，暂停期间画面

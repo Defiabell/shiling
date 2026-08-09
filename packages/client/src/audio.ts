@@ -1,0 +1,714 @@
+import { dist2d, type GameState, type Locomotion, type Vec3 } from "@shiling/sim";
+import { SPECIES } from "@shiling/content";
+import type { SimEvent } from "./render/simEvents.js";
+
+/**
+ * 程序化 Web Audio 音效（M1 postfix N3）——游戏此前完全无声，这是补上的第一层声音。
+ * 不引入任何新依赖、不加载任何音频素材文件：所有声音都用 OscillatorNode/噪声
+ * AudioBuffer/BiquadFilterNode/WaveShaperNode/GainNode 包络实时合成，风格克制、
+ * 音量保守（brief 原话 "subtle/stylized, NOT harsh"）。
+ *
+ * **架构要点**：
+ * - `createAudio()` 是唯一入口，返回的 `unlock()/handle()/update()/toggleMute()/…`
+ *   全部对"AudioContext 还没创建"保持安全 no-op（`graph === null` 时直接早退）——
+ *   这让 main.ts 可以在模块顶层就无条件 eager 调用 `createAudio()`（同 particles.ts/
+ *   screenFx.ts 的既有模式），而不必等到玩家真正点「入山」。
+ * - `AudioContext` 真正的创建/`resume()` 延迟到 `unlock()`——浏览器的自动播放策略
+ *   要求这必须由一次真实的用户手势触发；本工程唯一的手势是标题画面「入山」按钮，
+ *   main.ts 在 `showTitle()` 的 `onEnter` 回调里调用 `unlock()`（见该调用点注释：
+ *   `onEnter` 本身是 title.ts 内部 600ms 淡出 `setTimeout` 之后才触发的，不是点击
+ *   事件的同一个调用栈——Safari 对"用户手势"的判定比 Chrome/Firefox 更严格，
+ *   `unlock()` 因此额外挂了一次性 `pointerdown`/`keydown` 兜底重试 `resume()`，
+ *   覆盖"第一次 resume 因为不在同一手势调用栈内被静默忽略"的情形）。
+ * - 三层 Gain 总线：`masterGain`（全局音量+静音/暂停 duck）→ `sfxGain`/`ambientGain`
+ *   （一次性音效 vs 持续环境层，各自独立总量，方便以后单独调）。
+ * - 两份预生成的 2 秒噪声 `AudioBuffer`（白噪声/棕噪声各一份，创建 context 时生成
+ *   一次，此后所有一次性音效通过新建 `AudioBufferSourceNode` 复用同一份 buffer 数据
+ *   ——buffer 本身与 source 节点解耦，可以被任意多个 source 同时/先后引用）。白噪声
+ *   用于"亮"、瞬态的声音（撕咬/水花）；棕噪声（泄漏积分白噪声，频谱更偏低频、更
+ *   "闷"）用于"土/风/水流"这类需要厚重感的声音（挖掘/环境风声/游泳/出入洞）。
+ * - 一次性音效播放完全靠 Web Audio 的"自动生命周期管理"：`OscillatorNode`/
+ *   `AudioBufferSourceNode` 显式 `.stop(t)` 之后，一旦本模块不再持有引用（每次调用
+ *   都是局部变量，函数返回后即失去引用），规范要求实现在证明"不会再产生声音"后
+ *   自动 GC 掉整条断开的子图——不需要手动 `.disconnect()`。
+ *
+ * **ctx 形状的刻意偏离**：架构草案给的 `update()` ctx 类型只有
+ * `{playerHunger, playerThirst, playerHp, maxHp, locomotion, paused, started}`，
+ * 但"drink：loop gated by activity, not events"这条要求本质上需要每帧知道玩家是否
+ * 正在饮水——而 `locomotion`（walk/swim/burrow）与"是否在饮水"是完全独立的两个轴
+ * （见 @shiling/sim 的 Activity 类型），草案没有暴露它。这里额外加了一个
+ * `drinking: boolean` 字段（main.ts 用 `player.activity === "drinking"` 派生），
+ * 是满足"活动持续期间循环，不是靠离散事件"这条行为要求的唯一办法，因此
+ * `handle()` 里刻意忽略 `"drink"` 这个 SimEvent（见下方注释），避免同一件事被
+ * 两套机制各触发一次。
+ *
+ * **"玩家造成的一击"判定**：`handle()` 只拿到 `(events, state, playerId)`，没有
+ * main.ts 渲染循环里已经算好的 `nearPlayerKillIds`（那是为顿帧/震屏/击杀浮字三个
+ * 消费者单独计算的，只包含"致命"一击）。本模块需要的是更宽的集合——"玩家造成的
+ * 任意一击，无论是否致命"（撕咬音效本身不分致命与否，只有额外的"深沉一击+下滑
+ * 音"和奖励和弦才叠加在致命分支上）。与其往 main.ts 那段已经写满大段注释、经过
+ * code review 收紧过的顿帧逻辑里再加一个新 Set，这里选择直接复用同一个"命中位置
+ * 是否落在玩家攻击距离内"的一行判定（`isPlayerCausedHit`，与 main.ts 的
+ * `PLAYER_HIT_PROXIMITY` 同一套几何、同一个 `SPECIES.youshou.attackRange`）——
+ * 单行不等式判定的重复成本远低于跨文件传递一个新 Set 的复杂度。
+ *
+ * **已知权衡（code review 2026-08-09 追问过）**：这个"距离玩家 attackRange 内"的
+ * 判据本质上是近似——main.ts 的同款判据在文档里已经承认过，潭狩猎杀苓鼠、或任意
+ * 生物饥饿归零致死，只要恰好发生在玩家 attackRange 内，也会被误判成"玩家造成"。
+ * 对震屏/顿帧/击杀浮字这三个既有消费者而言，误判的代价是纯视觉噪声；对本模块新增
+ * 的"奖励和弦"而言，误判意味着玩家会听到一声明确暗示"你干掉了它"的音效，而那次
+ * 击杀其实与玩家无关——听觉上的误导性比视觉上的更强。这里选择的取舍是：沿用与
+ * 既有三个消费者相同的判据、不额外收紧（收紧需要往命中事件里塞攻击者 id 之类的
+ * 新字段，牵动 simEvents.ts 的契约），把它当作这一批次接受的已知简化，留给以后
+ * 真的在实机 playtest 里被注意到"背景战斗也会响起奖励音"时再回来加攻击者归属。
+ */
+
+// ---------------------------------------------------------------------------
+// 总线音量
+// ---------------------------------------------------------------------------
+export const MASTER_BASE_GAIN = 0.5;
+export const PAUSE_DUCK_GAIN = 0.15; // 暂停时的目标——"duck 不是 mute"，面板期间仍隐约有声
+const SFX_BUS_GAIN = 0.85;
+const AMBIENT_BUS_GAIN = 0.6;
+const GAIN_RAMP_TIME_CONSTANT = 0.12; // 静音/暂停切换的平滑时间常数（秒），避免咔哒声
+
+const MUTE_STORAGE_KEY = "shiling-audio-muted";
+
+// ---------------------------------------------------------------------------
+// 噪声 buffer
+// ---------------------------------------------------------------------------
+const NOISE_BUFFER_SEC = 2;
+const BROWN_LEAK = 0.02; // 泄漏积分系数——越小越"闷"（低频占比越高）
+const BROWN_COMPENSATION = 3.5; // 补偿积分带来的整体幅度衰减，使输出幅度量级与白噪声接近
+
+// ---------------------------------------------------------------------------
+// hit（撕咬/受击）
+// ---------------------------------------------------------------------------
+const PLAYER_ATTACK_RANGE = SPECIES.youshou!.attackRange; // 与 main.ts 的 PLAYER_HIT_PROXIMITY 同源常量
+const BITE_BANDPASS_HZ = 1200;
+const BITE_Q = 3.5;
+const BITE_DURATION_SEC = 0.08;
+const BITE_GAIN = 0.32;
+const THUMP_FREQ_HZ = 90;
+const THUMP_DECAY_SEC = 0.12;
+const THUMP_GAIN = 0.34;
+const LETHAL_THUMP_FREQ_HZ = 52;
+const LETHAL_THUMP_DECAY_SEC = 0.22;
+const LETHAL_THUMP_GAIN = 0.4;
+const LETHAL_SWEEP_START_HZ = 320;
+const LETHAL_SWEEP_END_HZ = 60;
+const LETHAL_SWEEP_DURATION_SEC = 0.25;
+const LETHAL_SWEEP_GAIN = 0.2;
+// 奖励和弦：C 大调五声音阶（C D E G A）的 E5/A5——纯四度，明亮但不刺耳，"叮–叮"两声。
+const REWARD_CHIME_NOTES: readonly [number, number] = [659.25, 880.0];
+const REWARD_CHIME_NOTE_SEC = 0.14;
+const REWARD_CHIME_GAP_SEC = 0.12; // 第二声相对第一声的起始延迟（不是间隔）
+const REWARD_CHIME_GAIN = 0.16;
+
+const VICTIM_LOWPASS_HZ = 280;
+const VICTIM_DURATION_SEC = 0.16;
+const VICTIM_GAIN = 0.34;
+const VICTIM_THUMP_FREQ_HZ = 65;
+const VICTIM_THUMP_DECAY_SEC = 0.16;
+const VICTIM_THUMP_GAIN = 0.3;
+
+// ---------------------------------------------------------------------------
+// splash / digTick / carcassGone / burrowToggle
+// ---------------------------------------------------------------------------
+const SPLASH_START_HZ = 2000;
+const SPLASH_END_HZ = 400;
+const SPLASH_DURATION_SEC = 0.3;
+const SPLASH_GAIN = 0.26;
+
+const DIGTICK_LOWPASS_HZ = 550;
+const DIGTICK_DURATION_SEC = 0.1;
+const DIGTICK_GAIN = 0.22;
+
+const CARCASS_GONE_DURATION_SEC = 0.5;
+const CARCASS_GONE_ATTACK_SEC = 0.15;
+const CARCASS_GONE_FREQ1_START = 620;
+const CARCASS_GONE_FREQ1_END = 900;
+const CARCASS_GONE_FREQ2_START = 930;
+const CARCASS_GONE_FREQ2_END = 1350;
+const CARCASS_GONE_SECOND_DELAY_SEC = 0.05;
+const CARCASS_GONE_GAIN = 0.14;
+
+const BURROW_SWEEP_DURATION_SEC = 0.28;
+const BURROW_LOW_HZ = 220;
+const BURROW_HIGH_HZ = 1500;
+const BURROW_GAIN = 0.28;
+
+// ---------------------------------------------------------------------------
+// 持续层：环境风声 / 游泳 / 虫鸣 / 心跳 / 饮水 tick / 死亡淡出
+// ---------------------------------------------------------------------------
+const WIND_LOWPASS_HZ = 300;
+const WIND_BASE_GAIN = 0.05;
+const WIND_LFO_DEPTH = 0.02;
+const WIND_LFO_FREQ_HZ = 0.06; // 极慢的"呼吸"周期（约 17s），逐帧直接写值不会产生可闻阶梯
+
+const SWIM_LOWPASS_HZ = 550;
+const SWIM_TARGET_GAIN = 0.16;
+const SWIM_RAMP_TIME_CONSTANT = 0.2;
+
+export const CHIRP_MIN_SEC = 3;
+export const CHIRP_MAX_SEC = 9;
+const CHIRP_FREQ_MIN_HZ = 4000;
+const CHIRP_FREQ_MAX_HZ = 7000;
+const CHIRP_DURATION_SEC = 0.07;
+const CHIRP_GAIN = 0.07;
+
+export const HEARTBEAT_HP_RATIO_THRESHOLD = 0.3;
+const HEARTBEAT_MIN_SCALE = 0.35; // 刚跨过阈值时的最低强度——不是从 0 突然冒出来
+const HEARTBEAT_PERIOD_SEC = 1 / 1.2; // 1.2Hz
+const HEARTBEAT_PAIR_GAP_SEC = 0.09; // "咚-咚"两响的间隔
+const HEARTBEAT_FREQ_HZ = 55;
+const HEARTBEAT_DECAY_SEC = 0.11;
+const HEARTBEAT_BASE_GAIN = 0.22;
+
+const DRINK_TICK_RATE_HZ = 3;
+const DRINK_TICK_BANDPASS_HZ = 800;
+const DRINK_TICK_Q = 2;
+const DRINK_TICK_DURATION_SEC = 0.04;
+const DRINK_TICK_GAIN = 0.1;
+
+const DEATH_FADE_FREQ_HZ = 50;
+const DEATH_FADE_DURATION_SEC = 1.8;
+const DEATH_FADE_ATTACK_SEC = 0.05;
+const DEATH_FADE_GAIN = 0.3;
+
+// ---------------------------------------------------------------------------
+// 失真曲线（受击方是玩家自己时的"轻微失真"）——纯数据，模块加载时算一次即可复用。
+// ---------------------------------------------------------------------------
+const DISTORTION_CURVE_SAMPLES = 256;
+// 显式钉住 ArrayBuffer 泛型参数（TS 5.7+ TypedArray 变成泛型之后，裸 `Float32Array`
+// 会默认成更宽的 `Float32Array<ArrayBufferLike>`，与 lib.dom.d.ts 里
+// `WaveShaperNode.curve: Float32Array<ArrayBuffer> | null` 的声明不兼容）。
+const SOFT_CLIP_CURVE: Float32Array<ArrayBuffer> = (() => {
+  const curve = new Float32Array(DISTORTION_CURVE_SAMPLES);
+  for (let i = 0; i < DISTORTION_CURVE_SAMPLES; i++) {
+    const x = (i / (DISTORTION_CURVE_SAMPLES - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * 3);
+  }
+  return curve;
+})();
+
+// ---------------------------------------------------------------------------
+// 纯函数（可脱离真实 AudioContext 单测——见 test/audio.test.ts）
+// ---------------------------------------------------------------------------
+
+/** [-1,1] 均匀分布白噪声采样，注入 rng 便于测试determinism；生产环境默认 Math.random。 */
+export function generateWhiteNoiseSamples(length: number, rng: () => number = Math.random): Float32Array {
+  const data = new Float32Array(length);
+  for (let i = 0; i < length; i++) data[i] = rng() * 2 - 1;
+  return data;
+}
+
+/**
+ * 棕噪声：对白噪声做一次泄漏积分（leaky integrator），频谱能量向低频倾斜，
+ * 听感更"闷/厚"（土地摩擦、风、水流的质感）。泄漏系数 BROWN_LEAK 保证积分不会
+ * 无界随机游走；BROWN_COMPENSATION 补偿积分导致的整体幅度衰减，最后 clamp 到
+ * [-1,1] 防止个别样本溢出。
+ */
+export function generateBrownNoiseSamples(length: number, rng: () => number = Math.random): Float32Array {
+  const data = new Float32Array(length);
+  let last = 0;
+  for (let i = 0; i < length; i++) {
+    const white = rng() * 2 - 1;
+    last = (last + white * BROWN_LEAK) / (1 + BROWN_LEAK);
+    data[i] = Math.max(-1, Math.min(1, last * BROWN_COMPENSATION));
+  }
+  return data;
+}
+
+/** 静音优先于暂停：静音时无论是否暂停都是 0；否则暂停 duck 到 PAUSE_DUCK_GAIN，正常播放是 MASTER_BASE_GAIN。 */
+export function computeMasterTarget(muted: boolean, paused: boolean): number {
+  if (muted) return 0;
+  return paused ? PAUSE_DUCK_GAIN : MASTER_BASE_GAIN;
+}
+
+/**
+ * 心跳强度随 hp 下降线性增强：hpRatio 恰好在阈值上→HEARTBEAT_MIN_SCALE（刚跨过
+ * 阈值，不是从 0 突然冒出来）；hpRatio→0→1（满强度）。超出 [0, 阈值] 的输入会被
+ * clamp（调用方本就只在 hpRatio < 阈值 时才调用，这里的 clamp 是防御性的）。
+ */
+export function computeHeartbeatGainScale(hpRatio: number): number {
+  const clamped = Math.min(HEARTBEAT_HP_RATIO_THRESHOLD, Math.max(0, hpRatio));
+  const t = 1 - clamped / HEARTBEAT_HP_RATIO_THRESHOLD;
+  return HEARTBEAT_MIN_SCALE + (1 - HEARTBEAT_MIN_SCALE) * t;
+}
+
+/** 下一次虫鸣的等待秒数，均匀分布在 [CHIRP_MIN_SEC, CHIRP_MAX_SEC)。 */
+export function nextChirpDelaySec(rng: () => number = Math.random): number {
+  return CHIRP_MIN_SEC + rng() * (CHIRP_MAX_SEC - CHIRP_MIN_SEC);
+}
+
+/**
+ * "这一击是玩家造成的吗"——与 main.ts 的 PLAYER_HIT_PROXIMITY 同一几何判据：
+ * 命中位置落在玩家当前位置的 attackRange 内。找不到玩家（理论上不会发生，防御性）
+ * 时返回 false。
+ */
+export function isPlayerCausedHit(state: GameState, playerId: number, hitPos: Vec3, attackRange: number): boolean {
+  const player = state.creatures.find((c) => c.id === playerId);
+  if (!player) return false;
+  return dist2d(player.pos, hitPos) <= attackRange;
+}
+
+// ---------------------------------------------------------------------------
+// 播放辅助（需要真实 AudioContext，不做单测——同 screenFx.ts/particles.ts 的既有取舍）
+// ---------------------------------------------------------------------------
+
+interface ToneOptions {
+  type: OscillatorType;
+  freqStart: number;
+  freqEnd?: number;
+  durationSec: number;
+  peak: number;
+  attackSec?: number;
+  startDelaySec?: number;
+}
+
+/** 一个短促的振荡器音——freqEnd 存在且不同于 freqStart 时做指数扫频（用于"下滑音"/"上扬闪光"）。 */
+function playTone(ctx: AudioContext, destination: AudioNode, opts: ToneOptions): void {
+  const t0 = ctx.currentTime + (opts.startDelaySec ?? 0);
+  const osc = ctx.createOscillator();
+  osc.type = opts.type;
+  osc.frequency.setValueAtTime(opts.freqStart, t0);
+  if (opts.freqEnd !== undefined && opts.freqEnd !== opts.freqStart) {
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.freqEnd), t0 + opts.durationSec);
+  }
+  const gain = ctx.createGain();
+  const attack = opts.attackSec ?? 0.004;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(opts.peak, t0 + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + opts.durationSec);
+  osc.connect(gain).connect(destination);
+  osc.start(t0);
+  osc.stop(t0 + opts.durationSec + 0.02);
+}
+
+interface NoiseBurstOptions {
+  filterType: BiquadFilterType;
+  freqStart: number;
+  freqEnd?: number;
+  q?: number;
+  durationSec: number;
+  peak: number;
+  attackSec?: number;
+  /** 传入时在 filter 之后串一个 WaveShaperNode——用于"受击方是玩家自己"的轻微失真。 */
+  distortionCurve?: Float32Array<ArrayBuffer>;
+  rng?: () => number;
+}
+
+/**
+ * 一段经过滤波的噪声突发。`buffer` 是复用的共享 2 秒噪声数据；每次播放从随机偏移
+ * 起读一小段（而不是永远从 offset 0 开始）——同一份底层噪声样本被大量不同音效
+ * 反复复用，随机起点避免"连续多次同一动作听起来像同一段录音的复制"这种细微的
+ * 可闻重复感（对<0.5s 的突发几乎不花额外成本）。
+ */
+function playNoiseBurst(ctx: AudioContext, destination: AudioNode, buffer: AudioBuffer, opts: NoiseBurstOptions): void {
+  const t0 = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = opts.filterType;
+  filter.frequency.setValueAtTime(opts.freqStart, t0);
+  if (opts.freqEnd !== undefined && opts.freqEnd !== opts.freqStart) {
+    filter.frequency.exponentialRampToValueAtTime(Math.max(1, opts.freqEnd), t0 + opts.durationSec);
+  }
+  if (opts.q !== undefined) filter.Q.value = opts.q;
+
+  const gain = ctx.createGain();
+  const attack = opts.attackSec ?? 0.005;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(opts.peak, t0 + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + opts.durationSec);
+
+  src.connect(filter);
+  let tail: AudioNode = filter;
+  if (opts.distortionCurve) {
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = opts.distortionCurve;
+    tail.connect(shaper);
+    tail = shaper;
+  }
+  tail.connect(gain).connect(destination);
+
+  const rng = opts.rng ?? Math.random;
+  const maxOffset = Math.max(0, buffer.duration - opts.durationSec - 0.05);
+  const offset = rng() * maxOffset;
+  src.start(t0, offset);
+  src.stop(t0 + opts.durationSec + 0.02);
+}
+
+function makeNoiseBuffer(ctx: AudioContext, samples: Float32Array): AudioBuffer {
+  const buffer = ctx.createBuffer(1, samples.length, ctx.sampleRate);
+  buffer.getChannelData(0).set(samples);
+  return buffer;
+}
+
+// ---------------------------------------------------------------------------
+// 音频图
+// ---------------------------------------------------------------------------
+interface AudioGraph {
+  ctx: AudioContext;
+  masterGain: GainNode;
+  sfxGain: GainNode;
+  ambientGain: GainNode;
+  whiteBuffer: AudioBuffer;
+  brownBuffer: AudioBuffer;
+  /** 环境风声的独立 Gain——update() 里逐帧写 LFO 呼吸值。 */
+  windGain: GainNode;
+  /** 游泳环境音的独立 Gain——update() 里按 locomotion==="swim" 平滑 ramp。 */
+  swimGain: GainNode;
+}
+
+function buildGraph(ctx: AudioContext, muted: boolean): AudioGraph {
+  const masterGain = ctx.createGain();
+  // 初始值只看 muted，不看 paused——安全前提是 unlock()（这个函数唯一的调用点）
+  // 只会在 main.ts 的 `started` 从 false 翻到 true 的那一刻调用一次，而那一刻
+  // `paused` 恒为 false（Esc 的守卫要求先 started 才能暂停，见 main.ts 对应监听器）。
+  // 即便这里的初始值偶然不对，下一帧 update() 里的 applyMasterTarget() 也会立刻
+  // 纠正——只是留痕这条"目前恒成立"的前提，防止以后调用点一变而无声跟着错。
+  masterGain.gain.value = muted ? 0 : MASTER_BASE_GAIN;
+  masterGain.connect(ctx.destination);
+
+  const sfxGain = ctx.createGain();
+  sfxGain.gain.value = SFX_BUS_GAIN;
+  sfxGain.connect(masterGain);
+
+  const ambientGain = ctx.createGain();
+  ambientGain.gain.value = AMBIENT_BUS_GAIN;
+  ambientGain.connect(masterGain);
+
+  const bufferLength = Math.floor(ctx.sampleRate * NOISE_BUFFER_SEC);
+  const whiteBuffer = makeNoiseBuffer(ctx, generateWhiteNoiseSamples(bufferLength));
+  const brownBuffer = makeNoiseBuffer(ctx, generateBrownNoiseSamples(bufferLength));
+
+  // 环境风声——永久存活的循环源，音量完全交给 update() 里的 windGain 逐帧驱动。
+  const windSrc = ctx.createBufferSource();
+  windSrc.buffer = brownBuffer;
+  windSrc.loop = true;
+  const windFilter = ctx.createBiquadFilter();
+  windFilter.type = "lowpass";
+  windFilter.frequency.value = WIND_LOWPASS_HZ;
+  const windGain = ctx.createGain();
+  windGain.gain.value = WIND_BASE_GAIN;
+  windSrc.connect(windFilter).connect(windGain).connect(ambientGain);
+  windSrc.start();
+  // 已知简化：2 秒 buffer 循环播放的首尾拼接点未做交叉淡入淡出——lowpass 300Hz
+  // 已经把瞬态能量削得很低，加上 brief 要求"extremely subtle"，实测量级下拼接点
+  // 不构成可闻的咔嗒声，故未额外实现循环缝合（若以后风声调大音量需要重新评估）。
+
+  // 游泳环境音——同样永久存活，音量常态为 0，只在 locomotion==="swim" 时被 ramp 上去。
+  const swimSrc = ctx.createBufferSource();
+  swimSrc.buffer = brownBuffer;
+  swimSrc.loop = true;
+  const swimFilter = ctx.createBiquadFilter();
+  swimFilter.type = "lowpass";
+  swimFilter.frequency.value = SWIM_LOWPASS_HZ;
+  const swimGain = ctx.createGain();
+  swimGain.gain.value = 0;
+  swimSrc.connect(swimFilter).connect(swimGain).connect(ambientGain);
+  swimSrc.start();
+
+  return { ctx, masterGain, sfxGain, ambientGain, whiteBuffer, brownBuffer, windGain, swimGain };
+}
+
+// ---------------------------------------------------------------------------
+// 一次性音效
+// ---------------------------------------------------------------------------
+
+function playAttackHit(g: AudioGraph, lethal: boolean): void {
+  playNoiseBurst(g.ctx, g.sfxGain, g.whiteBuffer, {
+    filterType: "bandpass", freqStart: BITE_BANDPASS_HZ, q: BITE_Q, durationSec: BITE_DURATION_SEC, peak: BITE_GAIN,
+  });
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: THUMP_FREQ_HZ, durationSec: THUMP_DECAY_SEC, peak: THUMP_GAIN });
+  if (!lethal) return;
+  // 致命一击额外叠三层："更深一声闷响"+"下滑音"（爽感，与主循环的顿帧同一时刻发生）
+  // +"奖励和弦"（呼应已有的「＋肉」浮字视觉，见 killMarker.ts）。
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: LETHAL_THUMP_FREQ_HZ, durationSec: LETHAL_THUMP_DECAY_SEC, peak: LETHAL_THUMP_GAIN });
+  playTone(g.ctx, g.sfxGain, {
+    type: "sine", freqStart: LETHAL_SWEEP_START_HZ, freqEnd: LETHAL_SWEEP_END_HZ,
+    durationSec: LETHAL_SWEEP_DURATION_SEC, peak: LETHAL_SWEEP_GAIN,
+  });
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: REWARD_CHIME_NOTES[0], durationSec: REWARD_CHIME_NOTE_SEC, peak: REWARD_CHIME_GAIN });
+  playTone(g.ctx, g.sfxGain, {
+    type: "sine", freqStart: REWARD_CHIME_NOTES[1], durationSec: REWARD_CHIME_NOTE_SEC,
+    peak: REWARD_CHIME_GAIN, startDelaySec: REWARD_CHIME_GAP_SEC,
+  });
+}
+
+function playVictimHit(g: AudioGraph): void {
+  // 与 playAttackHit 刻意不同的音色：低通(280Hz)而非带通(1200Hz)、棕噪声而非白噪声、
+  // 额外叠一层轻微失真（WaveShaper）——"更闷、更沉、带一点破音"，读作"我被打了"而
+  // 不是"我打中了"。
+  playNoiseBurst(g.ctx, g.sfxGain, g.brownBuffer, {
+    filterType: "lowpass", freqStart: VICTIM_LOWPASS_HZ, durationSec: VICTIM_DURATION_SEC,
+    peak: VICTIM_GAIN, distortionCurve: SOFT_CLIP_CURVE,
+  });
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: VICTIM_THUMP_FREQ_HZ, durationSec: VICTIM_THUMP_DECAY_SEC, peak: VICTIM_THUMP_GAIN });
+}
+
+function playSplash(g: AudioGraph): void {
+  playNoiseBurst(g.ctx, g.sfxGain, g.whiteBuffer, {
+    filterType: "lowpass", freqStart: SPLASH_START_HZ, freqEnd: SPLASH_END_HZ,
+    durationSec: SPLASH_DURATION_SEC, peak: SPLASH_GAIN, attackSec: 0.01,
+  });
+}
+
+function playDigTick(g: AudioGraph): void {
+  playNoiseBurst(g.ctx, g.sfxGain, g.brownBuffer, {
+    filterType: "lowpass", freqStart: DIGTICK_LOWPASS_HZ, durationSec: DIGTICK_DURATION_SEC,
+    peak: DIGTICK_GAIN, attackSec: 0.002,
+  });
+}
+
+function playCarcassGone(g: AudioGraph): void {
+  playTone(g.ctx, g.sfxGain, {
+    type: "sine", freqStart: CARCASS_GONE_FREQ1_START, freqEnd: CARCASS_GONE_FREQ1_END,
+    durationSec: CARCASS_GONE_DURATION_SEC, peak: CARCASS_GONE_GAIN, attackSec: CARCASS_GONE_ATTACK_SEC,
+  });
+  playTone(g.ctx, g.sfxGain, {
+    type: "sine", freqStart: CARCASS_GONE_FREQ2_START, freqEnd: CARCASS_GONE_FREQ2_END,
+    durationSec: CARCASS_GONE_DURATION_SEC, peak: CARCASS_GONE_GAIN, attackSec: CARCASS_GONE_ATTACK_SEC,
+    startDelaySec: CARCASS_GONE_SECOND_DELAY_SEC,
+  });
+}
+
+function playBurrowToggle(g: AudioGraph, entered: boolean): void {
+  const [freqStart, freqEnd] = entered ? [BURROW_HIGH_HZ, BURROW_LOW_HZ] : [BURROW_LOW_HZ, BURROW_HIGH_HZ];
+  playNoiseBurst(g.ctx, g.sfxGain, g.brownBuffer, {
+    filterType: "lowpass", freqStart, freqEnd, durationSec: BURROW_SWEEP_DURATION_SEC, peak: BURROW_GAIN, attackSec: 0.02,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 公开类型
+// ---------------------------------------------------------------------------
+
+export interface AudioUpdateContext {
+  playerHunger: number;
+  playerThirst: number;
+  playerHp: number;
+  maxHp: number;
+  locomotion: Locomotion;
+  /** 见文件头"ctx 形状的刻意偏离"——驱动饮水 tick 循环，架构草案的字段列表没有它。 */
+  drinking: boolean;
+  paused: boolean;
+  started: boolean;
+}
+
+export interface AudioController {
+  /**
+   * 必须在真实用户手势的处理路径里调用（本工程是标题「入山」按钮的 onEnter 回调）。
+   * 幂等：AudioContext 只会被创建一次，重复调用只会尝试 resume()。
+   */
+  unlock(): void;
+  handle(events: SimEvent[], state: GameState, playerId: number): void;
+  update(frameDt: number, ctx: AudioUpdateContext): void;
+  /** M 键——切换静音并持久化到 localStorage，返回切换后的状态。 */
+  toggleMute(): boolean;
+  /** 静音开关的当前值（不需要 AudioContext 已创建）。 */
+  isMuted(): boolean;
+  /** Dev/Playwright 探针：masterGain 的实时数值（静音/暂停 duck 生效后的结果）。unlock() 之前返回 0。 */
+  getMasterGainValue(): number;
+  /** Dev/Playwright 探针：AudioContext.state，unlock() 之前返回 "none"。 */
+  getContextState(): string;
+}
+
+function readMutedFromStorage(): boolean {
+  try {
+    return localStorage.getItem(MUTE_STORAGE_KEY) === "1";
+  } catch {
+    return false; // 隐私模式/无 localStorage 环境下静默回退到"未静音"
+  }
+}
+
+export function createAudio(): AudioController {
+  let muted = readMutedFromStorage();
+  let graph: AudioGraph | null = null;
+
+  // update() 每帧都会先落这个值，即使 graph 还不存在——保证 unlock() 之后第一次
+  // applyMasterTarget() 用到的 lastPaused 已经是最新的，不依赖调用顺序假设。
+  let lastPaused = false;
+
+  let windPhaseSec = 0;
+  let chirpTimer = nextChirpDelaySec();
+  let heartbeatPhaseSec = 0;
+  let drinkTickTimer = 0;
+  let deathFadePlayed = false;
+
+  function applyMasterTarget(g: AudioGraph): void {
+    const target = computeMasterTarget(muted, lastPaused);
+    g.masterGain.gain.setTargetAtTime(target, g.ctx.currentTime, GAIN_RAMP_TIME_CONSTANT);
+  }
+
+  function unlock(): void {
+    if (!graph) {
+      // 防御性 try/catch（同 modelLibrary.ts 的 per-species 加载失败 console.warn
+      // 惯例）：极少数不支持 Web Audio 的环境下，`new AudioContext()` 本身就会抛——
+      // graph 保持 null，之后所有 handle()/update() 调用继续安全 no-op，游戏本体
+      // 不受影响，只是从此静音，而不是卡在标题画面或抛出未捕获异常。
+      try {
+        const ctx = new AudioContext();
+        graph = buildGraph(ctx, muted);
+      } catch (err) {
+        console.warn("[audio] Web Audio 初始化失败，本次会话将保持静音：", err);
+        return;
+      }
+    }
+    const g = graph;
+    if (g.ctx.state !== "running") {
+      void g.ctx.resume();
+      // Safari 对"这次 resume() 是否真的在用户手势内"判定更严格——onEnter 是
+      // title.ts 600ms 淡出 setTimeout 之后才触发的，未必总能算数。挂一次性兜底：
+      // 玩家接下来的第一次点击/按键（大概率是移动/攻击）再补一次 resume()。
+      const retryResume = (): void => { void g.ctx.resume(); };
+      window.addEventListener("pointerdown", retryResume, { once: true });
+      window.addEventListener("keydown", retryResume, { once: true });
+    }
+  }
+
+  function handle(events: SimEvent[], state: GameState, playerId: number): void {
+    if (!graph) return;
+    const g = graph;
+    for (const e of events) {
+      switch (e.kind) {
+        case "hit":
+          if (e.id === playerId) playVictimHit(g);
+          else if (isPlayerCausedHit(state, playerId, e.pos, PLAYER_ATTACK_RANGE)) playAttackHit(g, e.lethal);
+          break;
+        case "splash":
+          playSplash(g);
+          break;
+        case "digTick":
+          playDigTick(g);
+          break;
+        case "carcassGone":
+          playCarcassGone(g);
+          break;
+        case "burrowToggle":
+          playBurrowToggle(g, e.entered);
+          break;
+        case "drink":
+          // 刻意忽略：饮水音由 update() 里的 ctx.drinking 门控循环驱动，不吃这个边沿
+          // 事件（见文件头"ctx 形状的刻意偏离"）。
+          break;
+        case "death":
+          // 刻意忽略：玩家自己的死亡淡出由 update() 里 hp<=0 的边沿检测触发（那里才
+          // 拿到逐帧的 hp，能干净地做"只播一次"），非玩家死亡在这版调色板里没有
+          // 单独的声音（已经由对应的 lethal hit 一并覆盖）。
+          break;
+        default: {
+          // 穷尽性守卫，同 particles.ts 的 handle() 同一套写法——SimEvent 以后新增
+          // 分支时这里会编译不通过，强制来改这个文件而不是静默漏处理。
+          const _exhaustive: never = e;
+          void _exhaustive;
+        }
+      }
+    }
+  }
+
+  function update(frameDt: number, uctx: AudioUpdateContext): void {
+    lastPaused = uctx.paused;
+    if (!graph) return;
+    const g = graph;
+    applyMasterTarget(g);
+    if (!uctx.started) return;
+
+    // ---- 死亡边沿 + 心跳（互斥：死亡时心跳停摆，只留一声低沉淡出） ----
+    const dead = uctx.playerHp <= 0;
+    if (dead) {
+      if (!deathFadePlayed) {
+        deathFadePlayed = true;
+        playTone(g.ctx, g.sfxGain, {
+          type: "sine", freqStart: DEATH_FADE_FREQ_HZ, durationSec: DEATH_FADE_DURATION_SEC,
+          peak: DEATH_FADE_GAIN, attackSec: DEATH_FADE_ATTACK_SEC,
+        });
+      }
+      heartbeatPhaseSec = 0;
+    } else {
+      const hpRatio = uctx.maxHp > 0 ? uctx.playerHp / uctx.maxHp : 1;
+      if (hpRatio < HEARTBEAT_HP_RATIO_THRESHOLD) {
+        heartbeatPhaseSec += frameDt;
+        const scale = computeHeartbeatGainScale(hpRatio);
+        // while（非 if）：万一某一帧 frameDt 异常大（掉帧恢复），不会漏掉本该发生的
+        // 多次心跳节拍——同 simEvents.ts digTick 节流累加器的同一套写法。
+        while (heartbeatPhaseSec >= HEARTBEAT_PERIOD_SEC) {
+          heartbeatPhaseSec -= HEARTBEAT_PERIOD_SEC;
+          const peak = HEARTBEAT_BASE_GAIN * scale;
+          playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: HEARTBEAT_FREQ_HZ, durationSec: HEARTBEAT_DECAY_SEC, peak });
+          playTone(g.ctx, g.sfxGain, {
+            type: "sine", freqStart: HEARTBEAT_FREQ_HZ, durationSec: HEARTBEAT_DECAY_SEC, peak,
+            startDelaySec: HEARTBEAT_PAIR_GAP_SEC,
+          });
+        }
+      } else {
+        heartbeatPhaseSec = 0; // hp 回升到阈值以上——重新进入低血量时从一次完整的双响开始，不残留半截相位
+      }
+      // 心跳与环境风声一样不受 `paused` 门控（见下方虫鸣的门控注释对比）——暂停时
+      // hp 本就冻结不变，心跳继续以同一强度轻声跳动，呼应"duck 不是 mute，面板期间
+      // 仍是活的"这条 brief 设计意图。
+    }
+
+    // ---- 游泳环境音：平滑跟随 locomotion，进出水面不产生咔哒声 ----
+    g.swimGain.gain.setTargetAtTime(
+      uctx.locomotion === "swim" ? SWIM_TARGET_GAIN : 0,
+      g.ctx.currentTime,
+      SWIM_RAMP_TIME_CONSTANT,
+    );
+
+    // ---- 环境风声呼吸：极慢 LFO，逐帧直接写值（周期~17s，60fps 阶梯量化听不出来） ----
+    windPhaseSec += frameDt;
+    g.windGain.gain.value = WIND_BASE_GAIN + Math.sin(windPhaseSec * WIND_LFO_FREQ_HZ * Math.PI * 2) * WIND_LFO_DEPTH;
+
+    // ---- 虫鸣：只在 !paused 时推进倒计时——暂停="世界冻结"，不该冒出新的离散事件
+    // （与心跳/风声的选择不同：这两个是持续存在的氛围底噪，虫鸣是主动触发的新事件，
+    // brief 原文明确写了 "only when !paused && started" 挂在这一条上）。
+    if (!uctx.paused) {
+      chirpTimer -= frameDt;
+      if (chirpTimer <= 0) {
+        chirpTimer = nextChirpDelaySec();
+        const freq = CHIRP_FREQ_MIN_HZ + Math.random() * (CHIRP_FREQ_MAX_HZ - CHIRP_FREQ_MIN_HZ);
+        playTone(g.ctx, g.ambientGain, { type: "sine", freqStart: freq, durationSec: CHIRP_DURATION_SEC, peak: CHIRP_GAIN, attackSec: 0.01 });
+      }
+    }
+
+    // ---- 饮水 tick：活动持续期间循环触发，不是靠 "drink" 这个边沿事件 ----
+    if (uctx.drinking && !uctx.paused) {
+      drinkTickTimer += frameDt;
+      const interval = 1 / DRINK_TICK_RATE_HZ;
+      while (drinkTickTimer >= interval) {
+        drinkTickTimer -= interval;
+        playNoiseBurst(g.ctx, g.sfxGain, g.whiteBuffer, {
+          filterType: "bandpass", freqStart: DRINK_TICK_BANDPASS_HZ, q: DRINK_TICK_Q,
+          durationSec: DRINK_TICK_DURATION_SEC, peak: DRINK_TICK_GAIN, attackSec: 0.002,
+        });
+      }
+    } else {
+      drinkTickTimer = 0;
+    }
+  }
+
+  function toggleMute(): boolean {
+    muted = !muted;
+    try {
+      localStorage.setItem(MUTE_STORAGE_KEY, muted ? "1" : "0");
+    } catch {
+      /* 隐私模式等环境下写入失败——静音状态仍在本次会话内生效，只是不跨会话持久化 */
+    }
+    if (graph) applyMasterTarget(graph);
+    return muted;
+  }
+
+  return {
+    unlock,
+    handle,
+    update,
+    toggleMute,
+    isMuted: () => muted,
+    getMasterGainValue: () => (graph ? graph.masterGain.gain.value : 0),
+    getContextState: () => (graph ? graph.ctx.state : "none"),
+  };
+}

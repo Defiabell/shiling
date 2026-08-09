@@ -44,6 +44,7 @@ const TEXT_DIM = "#c8d2dc";
  * 操作说明 list 文案，逐行对应 brief 给定文本，标点全角，不做任何拆分/重排。
  * M1 postfix N1（叼运/筑巢/储粮）：E 的互动列表补上"筑巢"，新增 C 一行——与
  * title.ts 的入山提示行同步更新，两处都是"控制说明"的既有惯例，不留其一遗漏。
+ * M1 postfix N3（程序化音效）：新增 M 静音一行，同一套惯例。
  */
 const OPERATIONS = [
   "W A S D　移动",
@@ -53,6 +54,7 @@ const OPERATIONS = [
   "C　叼起／放下——存粮或就地放下猎物",
   "←→　转动视角　↑↓　俯仰",
   "Esc　暂停",
+  "M　静音",
 ];
 
 function ensureStyleInjected(): void {
