@@ -51,6 +51,14 @@ const SKIN = {
   lingshuRadius: 2,
   tanshouColor: "#e0452b",
   tanshouRadius: 3,
+  // M1 B4（新物种）：溪鱼淡青（水生小猎物）、穴獾棕褐（地面猎物）——与既有两色区分度
+  // 足够，不复用任何已有色值。遁地隐匿期间（hiddenTicks>0）本批仍原样绘制这个点
+  // （"淡出的点"是 B5 要做的细节，见 plan「keep on minimap as fading dot — client B5
+  // detail」），不在这里加任何透明度判定。
+  xiyuColor: "#a8e0e8",
+  xiyuRadius: 2,
+  xuehuanColor: "#b08858",
+  xuehuanRadius: 3,
   carcassColor: "#5f6862",
   carcassRadius: 2,
   digSpotColor: "#5a4a38",
@@ -281,6 +289,16 @@ function drawOverlay(ctx: CanvasRenderingContext2D, terrain: Terrain, worldSize:
       ctx.beginPath();
       ctx.arc(m.x, m.y, SKIN.tanshouRadius, 0, Math.PI * 2);
       ctx.fillStyle = SKIN.tanshouColor;
+      ctx.fill();
+    } else if (c.species === "xiyu") {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, SKIN.xiyuRadius, 0, Math.PI * 2);
+      ctx.fillStyle = SKIN.xiyuColor;
+      ctx.fill();
+    } else if (c.species === "xuehuan") {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, SKIN.xuehuanRadius, 0, Math.PI * 2);
+      ctx.fillStyle = SKIN.xuehuanColor;
       ctx.fill();
     }
   }

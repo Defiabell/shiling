@@ -66,7 +66,7 @@ describe("trigger condition matrix (isDormancyEligible / V edge)", () => {
     expect(sim.state.dormancy).toBeNull();
   });
 
-  it("eligible and triggers exactly on the V rising edge when all three conditions hold", () => {
+  it("eligible and triggers exactly on the V rising edge when all four conditions hold", () => {
     const sim = createSim(1);
     const p = getPlayer(sim.state);
     sim.state.homeNest = { spotId: 5, stash: TUNING.dormancyStashCost };
@@ -78,6 +78,33 @@ describe("trigger condition matrix (isDormancyEligible / V edge)", () => {
     expect(sim.state.dormancy).toBeNull();
     sim.step({ ...idle, dormant: true }); // 边沿
     expect(sim.state.dormancy).toEqual({ ticksLeft: FULL_TICKS });
+  });
+
+  // Part 0（B3 controller ruling，B4 落地）：蛰伏前必须饮足——thirst 39 不触发、40 触发。
+  it("not eligible when thirst is one below dormancyThirstMin (39)", () => {
+    const sim = createSim(1);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 5, stash: TUNING.dormancyStashCost };
+    p.burrowId = 5;
+    p.needs.hunger = 100;
+    p.needs.thirst = TUNING.dormancyThirstMin - 1; // 39
+    sim.state.essence.zu = TUNING.essenceThreshold;
+    expect(isDormancyEligible(sim.state)).toBe(false);
+    sim.step({ ...idle, dormant: true });
+    expect(sim.state.dormancy).toBeNull();
+  });
+
+  it("eligible right at dormancyThirstMin (40)", () => {
+    const sim = createSim(1);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 5, stash: TUNING.dormancyStashCost };
+    p.burrowId = 5;
+    p.needs.hunger = 100;
+    p.needs.thirst = TUNING.dormancyThirstMin; // 40，边界——`<` 严格判定，恰好等于阈值应放行
+    sim.state.essence.zu = TUNING.essenceThreshold;
+    expect(isDormancyEligible(sim.state)).toBe(true);
+    sim.step({ ...idle, dormant: true });
+    expect(sim.state.dormancy).not.toBeNull();
   });
 
   it("holding V through a completed cycle does not immediately start a second one; release+press does", () => {

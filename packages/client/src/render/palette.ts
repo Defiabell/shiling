@@ -18,4 +18,7 @@ export const PALETTE = {
   cinnabar: 0xc23b22, lampWarm: 0xe8b45f, // UI 朱砂/灯火
   scatterGrass: 0x5f7355, scatterRock: 0x6e6f6a, scatterWood: 0x4a3f35, // 地表点缀（Patch 3c）
   scatterSwampReed: 0x5c6b3e, // W2 地貌分层：沼泽芦苇——比 scatterGrass 更黄绿、更暗
+  // M1 B4（新物种，程序化 fallback 模型用——见 creatureModels.ts buildXiyuModel/buildXuehuanModel）：
+  xiyuBody: 0x3f8f8a, xiyuFin: 0xbfe8e0, // 溪鱼：银青鳞身、浅青尾鳍（teal，plan 原话"银青"配色）
+  xuehuanBody: 0x6b4a30, xuehuanClaw: 0x2e2018, // 穴獾：土褐皮毛、深褐爪（earth，plan 原话"earth-brown"）
 } as const;

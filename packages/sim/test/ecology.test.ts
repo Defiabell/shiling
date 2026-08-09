@@ -29,4 +29,34 @@ describe("headless ecology", () => {
     for (let i = 0; i < TUNING.tickHz * 60; i++) { a.step(idle); b.step(idle); }
     expect(JSON.stringify(a.state)).toBe(JSON.stringify(b.state));
   });
+
+  // M1 B4：扩展不变量——溪鱼(xiyu)/穴獾(xuehuan) 加入后，10 sim-分钟内四个野生物种
+  // （lingshu/tanshou/xiyu/xuehuan）均不应灭绝。8 seeds（2026 + 1..7）逐一验证，console.log
+  // 打印每个 seed 的最终种群数供批次报告引用（M1 B4 report 消费，见 plan 里的
+  // "report survivals; retune spawn counts if needed"）。
+  it("extended invariant: xiyu and xuehuan (and the existing two species) do not go extinct across 8 seeds", () => {
+    const seeds = [2026, 1, 2, 3, 4, 5, 6, 7];
+    for (const seed of seeds) {
+      const sim = createSim(seed);
+      const p = getPlayer(sim.state);
+      p.pos.x = -900; p.pos.z = -900; // 玩家旁观
+      p.needs.hunger = 100; p.needs.thirst = 100;
+      for (let i = 0; i < TUNING.tickHz * 600; i++) {
+        p.needs.hunger = 100; p.needs.thirst = 100;
+        sim.step(idle);
+      }
+      const counts: Record<string, number> = {};
+      for (const c of sim.state.creatures) counts[c.species] = (counts[c.species] ?? 0) + 1;
+      console.log(`[ecology 8-seed] seed=${seed}`, JSON.stringify(counts));
+      for (const c of sim.state.creatures) {
+        expect(Number.isFinite(c.pos.x)).toBe(true);
+        expect(Number.isFinite(c.pos.y)).toBe(true);
+        expect(Number.isFinite(c.pos.z)).toBe(true);
+      }
+      expect(counts.lingshu ?? 0).toBeGreaterThan(0);
+      expect(counts.xiyu ?? 0).toBeGreaterThan(0);
+      expect(counts.xuehuan ?? 0).toBeGreaterThan(0);
+      expect(counts.tanshou ?? 0).toBeGreaterThan(0);
+    }
+  });
 });

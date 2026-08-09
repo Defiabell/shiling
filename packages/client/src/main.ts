@@ -326,6 +326,9 @@ if (import.meta.env.DEV) {
         hp: c.hp,
         aiState: c.aiState,
         activity: c.activity,
+        // M1 B4：穴獾遁地隐匿倒数——外部 Playwright 脚本用它验证 channel→隐匿→重现整个
+        // 循环（0=可见/未隐匿，>0=隐匿中，与 creatureView.ts 的可见性判定同一字段）。
+        hiddenTicks: c.hiddenTicks,
       })),
     // Postfix 7 verification hook: killCreature moves a dead non-player
     // creature out of state.creatures and into state.carcasses (see

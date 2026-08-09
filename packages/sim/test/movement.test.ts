@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, DT, getPlayer } from "../src/sim.js";
-import { moveCreature } from "../src/movement.js";
+import { moveCreature, isTerrainBlocked } from "../src/movement.js";
 import { getModifiers } from "../src/organs.js";
 import { SPECIES, TUNING } from "@shiling/content";
 import type { Creature } from "../src/state.js";
@@ -163,6 +163,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       aiDirX: 0, aiDirZ: 1, aiTimer: 0,
       fleeTime: 0, fleeRecoverTime: 0,
       carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
+      hiddenTicks: 0,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边
@@ -172,5 +173,105 @@ describe("moveCreature shore block (non-swimmer)", () => {
     expect(c.pos.z).toBeCloseTo(wz, 9);
     expect(c.locomotion).toBe("walk");
     expect(c.pos.y).toBeCloseTo(startY, 9);
+  });
+});
+
+// M1 B4：水生锁定（SpeciesDef.aquatic=true，溪鱼 xiyu）——isTerrainBlocked 双向挡行的镜像半边。
+describe("isTerrainBlocked (M1 B4 aquatic mirror)", () => {
+  it("blocks an aquatic species stepping onto land, allows it in water; leaves non-aquatic species unaffected", () => {
+    const sim = createSim(3);
+    let landPt = { x: 0, z: 0 }, waterPt = { x: 0, z: 0 }, foundLand = false, foundWater = false;
+    for (let x = -200; x <= 200 && !(foundLand && foundWater); x += 4) {
+      for (let z = -200; z <= 200 && !(foundLand && foundWater); z += 4) {
+        if (!foundLand && !sim.terrain.isWater(x, z)) { landPt = { x, z }; foundLand = true; }
+        if (!foundWater && sim.terrain.isWater(x, z)) { waterPt = { x, z }; foundWater = true; }
+      }
+    }
+    expect(foundLand && foundWater).toBe(true);
+
+    const fishDef = SPECIES.xiyu!;
+    expect(fishDef.aquatic).toBe(true);
+    expect(isTerrainBlocked(fishDef, sim.terrain, landPt.x, landPt.z)).toBe(true); // 陆地是墙
+    expect(isTerrainBlocked(fishDef, sim.terrain, waterPt.x, waterPt.z)).toBe(false); // 水域正常通行
+
+    // 回归断言：既有的两类物种不受这条新分支影响。
+    const landOnlyDef = SPECIES.lingshu!; // canSwim=false, aquatic=false
+    expect(isTerrainBlocked(landOnlyDef, sim.terrain, waterPt.x, waterPt.z)).toBe(true); // 既有挡水行为不变
+    expect(isTerrainBlocked(landOnlyDef, sim.terrain, landPt.x, landPt.z)).toBe(false);
+    const amphibiousDef = SPECIES.tanshou!; // canSwim=true, aquatic=false：两边都不挡
+    expect(isTerrainBlocked(amphibiousDef, sim.terrain, waterPt.x, waterPt.z)).toBe(false);
+    expect(isTerrainBlocked(amphibiousDef, sim.terrain, landPt.x, landPt.z)).toBe(false);
+  });
+});
+
+describe("moveCreature aquatic lock (fish can't beach, land creature unaffected)", () => {
+  it("a water-locked creature (xiyu) attempting to swim onto land stays in water, falls back to idle", () => {
+    const sim = createSim(3);
+    const def = SPECIES.xiyu!;
+    // 镜像上面 "moveCreature shore block (non-swimmer)" 的有界扫描，方向反过来找"水→陆"边界
+    // （水点 landX-1步 处仍是水，landX 处已经是陆——沿 +x 方向游一步应正好撞墙）。
+    const step = def.swimSpeed * DT;
+    const half = sim.terrain.size / 2;
+    let waterX = 0, wz = 0, found = false;
+    outer: for (let z = -half; z <= half && !found; z += 10) {
+      let prevWater = sim.terrain.isWater(-half, z);
+      for (let x = -half + step; x <= half && !found; x += step) {
+        const nowWaterHere = sim.terrain.isWater(x, z);
+        if (prevWater && !nowWaterHere) { waterX = x - step; wz = z; found = true; break outer; }
+        prevWater = nowWaterHere;
+      }
+    }
+    expect(found).toBe(true);
+
+    const c: Creature = {
+      id: 998, species: "xiyu",
+      pos: { x: waterX, y: sim.terrain.waterLevel, z: wz },
+      yaw: 0, hp: def.maxHp,
+      needs: { hunger: 80, thirst: 80, fatigue: 100 },
+      locomotion: "swim", activity: "moving", // 故意预设为 moving，验证挡墙后会回落 idle
+      aiState: "wander", targetId: null, attackCooldown: 0,
+      feedingCarcassId: null, burrowId: null, satiatedTimer: 0,
+      digProgress: 0, interactHeld: false,
+      aiDirX: 1, aiDirZ: 0, aiTimer: 0,
+      fleeTime: 0, fleeRecoverTime: 0,
+      carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
+      hiddenTicks: 0,
+    };
+
+    moveCreature(c, 1, 0, false, sim.terrain); // 朝陆地方向游一步，应被挡在水边
+
+    expect(c.activity).toBe("idle");
+    expect(c.pos.x).toBeCloseTo(waterX, 9);
+    expect(c.pos.z).toBeCloseTo(wz, 9);
+    expect(c.locomotion).toBe("swim"); // 仍然是"泡在水里"，不是"站上了岸"
+    expect(c.pos.y).toBeCloseTo(sim.terrain.waterLevel, 9);
+  });
+
+  it("a non-aquatic amphibious creature (tanshou) is unaffected by the aquatic guard — free to swim onto land", () => {
+    const sim = createSim(3);
+    const def = SPECIES.tanshou!;
+    expect(def.aquatic).toBe(false);
+    let wx = 0, wz = 0, found = false;
+    for (let x = -110; x <= 110 && !found; x += 3)
+      for (let z = -110; z <= 110 && !found; z += 3)
+        if (sim.terrain.isWater(x, z)) { wx = x; wz = z; found = true; }
+    expect(found).toBe(true);
+
+    const c: Creature = {
+      id: 997, species: "tanshou",
+      pos: { x: wx, y: sim.terrain.waterLevel, z: wz },
+      yaw: 0, hp: def.maxHp,
+      needs: { hunger: 80, thirst: 80, fatigue: 100 },
+      locomotion: "swim", activity: "idle",
+      aiState: "patrol", targetId: null, attackCooldown: 0,
+      feedingCarcassId: null, burrowId: null, satiatedTimer: 0,
+      digProgress: 0, interactHeld: false,
+      aiDirX: 1, aiDirZ: 0, aiTimer: 0,
+      fleeTime: 0, fleeRecoverTime: 0,
+      carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
+      hiddenTicks: 0,
+    };
+    moveCreature(c, 1, 0, false, sim.terrain); // 两栖物种：不该被新分支挡住，无论朝哪个方向都能移动
+    expect(c.activity).toBe("moving");
   });
 });

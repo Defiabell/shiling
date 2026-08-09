@@ -64,4 +64,13 @@ export const TUNING = {
   // 由储粮供给的加速代谢倍率。全部节奏参数集中在这里，sim/src/dormancy.ts 只读不改字面量。
   rollOccupiedSlotPenalty: 0.3, // 候选器官所在槽已被占用时的权重折扣（鼓励换槽而非刷同槽）
   dormancyHungerDecayMult: 1.5, // 蛰伏期间饥饿衰减倍率（相对 hungerDecayPerSec 的基础 1x）
+  // Part 0（B3 controller ruling，B4 批次一并落地）：蛰伏触发新增第四条件——thirst 必须
+  // 先饮足到这个地板值。蛰伏 45 秒期间口渴不受任何补偿（feedFromStash 只补饥饿，见
+  // dormancy.ts 头部关于这个已知设计缺口的讨论），这个地板防止玩家在自己巢穴里蛰伏
+  // 睡到渴死——寓意"蛰伏前必须饮足"，不是修复口渴衰减本身。
+  dormancyThirstMin: 40,
+  // M1 B4（新物种——溪鱼/穴獾）：穴獾遁地逃脱节奏，见 sim/src/ai.ts 的 tickBurrowEvader。
+  xuehuanChannelSec: 1.2, // 「遁地」channel 时长——期间原地不动、activity="digging"，可被击杀打断（正常死亡，非特殊打断逻辑）
+  xuehuanHiddenSec: 4, // 隐匿倒数——期间从渲染与目标选择中排除（Creature.hiddenTicks）
+  xuehuanReappearDist: 8, // 隐匿结束后重现的距离（米）——固定半径、随机角度，见 ai.ts 的 randomLandPosNear
 } as const;

@@ -21,6 +21,13 @@ export interface SpeciesDef {
   essenceType: EssenceType;
   /** 每单位 meat 吃到嘴里换算的精气量（M1 B1）；现有三物种统一 0.5 占位，无特殊平衡诉求。 */
   essenceYieldPerMeat: number;
+  /**
+   * 水生锁定（M1 B4，溪鱼 xiyu 专属，其余物种恒 false）：与 canSwim=false 的挡水守卫互为
+   * 镜像——canSwim=false 是"旱鸭子不能下水"，aquatic=true 是反过来"离不开水"（陆地对它
+   * 是墙）。sim/src/movement.ts 的 isTerrainBlocked 是唯一的判定入口，spawnCreature 也据此
+   * 选择 randomWaterPos 而非 randomLandPos 作为出生点采样源（见 sim.ts）。
+   */
+  aquatic: boolean;
 }
 
 export const SPECIES: Record<string, SpeciesDef> = {
@@ -33,7 +40,7 @@ export const SPECIES: Record<string, SpeciesDef> = {
     // M1 B1：youshou 是玩家物种，正常玩法里不会被吃（没有"吃玩家鲜尸获得精气"这个
     // 场景），essenceType/essenceYieldPerMeat 纯占位——给个和其它物种一致的默认值
     // （zu/0.5），只是为了让 SpeciesDef 字段全物种齐整，不代表任何平衡设计意图。
-    essenceType: "zu", essenceYieldPerMeat: 0.5,
+    essenceType: "zu", essenceYieldPerMeat: 0.5, aquatic: false,
   },
   lingshu: {
     id: "lingshu", name: "苓鼠", diet: "herbivore",
@@ -50,13 +57,36 @@ export const SPECIES: Record<string, SpeciesDef> = {
     maxHp: 25, walkSpeed: 3.8, swimSpeed: 0, canSwim: false, canDig: false,
     meat: 30, senseRadius: 10, attackDamage: 0, attackRange: 0, fleeDistance: 18,
     // M1 B1：苓鼠是地面食草兽，喂"足"精——名字本身就是"善走"的志怪意象来源。
-    essenceType: "zu", essenceYieldPerMeat: 0.5,
+    essenceType: "zu", essenceYieldPerMeat: 0.5, aquatic: false,
   },
   tanshou: {
     id: "tanshou", name: "潭狩", diet: "carnivore",
     maxHp: 120, walkSpeed: 5.2, swimSpeed: 4.5, canSwim: true, canDig: false,
     meat: 80, senseRadius: 22, attackDamage: 18, attackRange: 2.2, fleeDistance: 0,
     // M1 B1：潭狩凶猛掠食者，喂"猛"精。
-    essenceType: "meng", essenceYieldPerMeat: 0.5,
+    essenceType: "meng", essenceYieldPerMeat: 0.5, aquatic: false,
+  },
+  // M1 B4（新物种）：溪鱼 xiyu——水生猎物，essence lin（鳞）。水生锁定
+  // （aquatic=true，见 SpeciesDef.aquatic 字段注释）：walkSpeed=0 是刻意的，不是遗漏——
+  // 陆地对它是墙（moveCreature/isTerrainBlocked 的镜像挡水守卫），从来不会真正用到
+  // walkSpeed 这个数值，写 0 只是让"离开水就完全无法移动"这件事在数据层面也读得出来。
+  // 无攻击手段（attackDamage/attackRange=0，与苓鼠同一惯例）：被潭狩（会游泳）与玩家
+  // 捕食，见 ai.ts tickFleeingHerbivore（复用苓鼠机器，水生锁定由地形判定本身处理，
+  // 不需要机器内部感知"我是不是鱼"）。
+  xiyu: {
+    id: "xiyu", name: "溪鱼", diet: "herbivore",
+    maxHp: 10, walkSpeed: 0, swimSpeed: 3.2, canSwim: true, canDig: false,
+    meat: 15, senseRadius: 8, attackDamage: 0, attackRange: 0, fleeDistance: 14,
+    essenceType: "lin", essenceYieldPerMeat: 0.5, aquatic: true,
+  },
+  // M1 B4（新物种）：穴獾 xuehuan——地面猎物，essence xue（穴）。不与苓鼠共用"flee"
+  // 逃跑策略——受惊后走 ai.ts 专属的 tickBurrowEvader（遁地 channel→隐匿→重现），
+  // fleeDistance 字段仍按 plan 数值写全（SpeciesDef 要求全字段齐整），但 tickBurrowEvader
+  // 不消费它——威胁判定只看 senseRadius，逃脱手段是钻地不是拉开距离。
+  xuehuan: {
+    id: "xuehuan", name: "穴獾", diet: "herbivore",
+    maxHp: 30, walkSpeed: 3.2, swimSpeed: 0, canSwim: false, canDig: true,
+    meat: 35, senseRadius: 12, attackDamage: 0, attackRange: 0, fleeDistance: 20,
+    essenceType: "xue", essenceYieldPerMeat: 0.5, aquatic: false,
   },
 };

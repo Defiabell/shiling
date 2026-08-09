@@ -39,6 +39,8 @@ interface CreatureConfig {
   nameCn: string;
   prompt: string;
   negativePrompt?: string;
+  /** Per-creature override of TARGET_POLYCOUNT (M1 B4: fish can go lower than the ~15-20k default). */
+  targetPolycount?: number;
 }
 
 const NEGATIVE_BASE =
@@ -80,6 +82,34 @@ const CREATURES: CreatureConfig[] = [
       "painterly stylized non-photorealistic look, game-ready 3D asset",
     negativePrompt: `${NEGATIVE_BASE}, cute, friendly, bright colors, cartoonish, happy expression`,
   },
+  // M1 B4 — two new species (溪鱼/穴獾). Prompts kept style-consistent with the three
+  // above ("painterly stylized non-photorealistic" + "game-ready 3D asset" boilerplate,
+  // same NEGATIVE_BASE). targetPolycount overrides the shared 20k default per the plan's
+  // "decimate to ~15k tris (fish can be lower ~8k)" guidance.
+  {
+    id: "xiyu",
+    nameCn: "溪鱼（水生猎物）",
+    prompt:
+      "A stylized hand-painted fantasy game creature: a small river fish, " +
+      "streamlined torpedo-shaped body, silver-teal iridescent scales, " +
+      "translucent flowing fins and tail, large round eyes, swimming pose, " +
+      "clean readable silhouette, painterly stylized non-photorealistic look, " +
+      "game-ready 3D asset",
+    negativePrompt: `${NEGATIVE_BASE}, legs, fur, land animal, whiskers, mammal, dry scales`,
+    targetPolycount: 8_000,
+  },
+  {
+    id: "xuehuan",
+    nameCn: "穴獾（遁地猎物）",
+    prompt:
+      "A stylized hand-painted fantasy game creature: a stocky burrowing badger-like " +
+      "beast, four short strong legs, standing on the ground, broad flat head, " +
+      "short powerful digging claws, earth-brown fur with darker facial stripes, " +
+      "compact muscular body built for digging, clean readable silhouette, " +
+      "painterly stylized non-photorealistic look, game-ready 3D asset",
+    negativePrompt: `${NEGATIVE_BASE}, long thin body, feline, snake-like, reptile, scales`,
+    targetPolycount: 15_000,
+  },
 ];
 
 interface CreatureResult {
@@ -106,7 +136,7 @@ async function generateOne(cfg: CreatureConfig): Promise<CreatureResult> {
     // unset let the first batch through at raw diffusion-mesh density
     // (300k-920k triangles, 11-28MB GLBs) instead of the intended ~20k.
     shouldRemesh: true,
-    targetPolycount: TARGET_POLYCOUNT,
+    targetPolycount: cfg.targetPolycount ?? TARGET_POLYCOUNT,
   });
   console.log(`[${cfg.id}] preview task id: ${previewTaskId}`);
 
@@ -173,12 +203,32 @@ async function generateOne(cfg: CreatureConfig): Promise<CreatureResult> {
   };
 }
 
+// Budget discipline (M1 B4, code review 2026-08-10): CLI args filter which creatures to
+// (re)generate, mirroring optimize-glb.ts's `process.argv.slice(2)` convention. Bare
+// invocation is a hard error rather than "default to everyone" — a habitual bare
+// `pnpm generate` (the exact scenario this guard exists for) would otherwise silently
+// re-spend credits regenerating every already-delivered creature in CREATURES every time
+// a new species gets appended to the array, which is precisely the accident this file's
+// budget-discipline header comment warns about. `--all` is the explicit, unambiguous way
+// to actually mean "regenerate everyone."
+const requestedIds = process.argv.slice(2);
+if (requestedIds.length === 0) {
+  console.error(
+    `Refusing to run with no arguments — this would regenerate all ${CREATURES.length} creatures ` +
+      "and re-spend credits on ones already delivered.\n" +
+      `Pass specific ids to (re)generate, e.g.: node src/generate-creatures.ts xiyu xuehuan\n` +
+      "Or pass --all to deliberately regenerate every creature in CREATURES."
+  );
+  process.exit(1);
+}
+const CREATURES_TO_RUN = requestedIds.includes("--all") ? CREATURES : CREATURES.filter((c) => requestedIds.includes(c.id));
+
 async function main() {
   const balanceBefore = await getBalance();
   console.log(`Meshy credit balance before: ${balanceBefore}`);
 
   const results: CreatureResult[] = [];
-  for (const cfg of CREATURES) {
+  for (const cfg of CREATURES_TO_RUN) {
     try {
       results.push(await generateOne(cfg));
     } catch (err) {

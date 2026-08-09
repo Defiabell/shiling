@@ -184,13 +184,17 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
   }
 }
 
-/** attackRange 内最近的、活着的非玩家生物（无则 null）——攻击目标判定的唯一实现。 */
+/**
+ * attackRange 内最近的、活着的非玩家生物（无则 null）——攻击目标判定的唯一实现。
+ * hiddenTicks>0 排除（M1 B4）：遁地隐匿中的穴獾摸不到、打不着——见 Creature.hiddenTicks
+ * 字段注释与 ai.ts 的 tickBurrowEvader。
+ */
 function findAttackTarget(state: GameState, player: Creature): Creature | null {
   const atk = SPECIES.youshou!;
   let target: Creature | null = null;
   let targetDist = Infinity;
   for (const c of state.creatures) {
-    if (c.id === player.id || c.activity === "dead" || c.burrowId !== null) continue;
+    if (c.id === player.id || c.activity === "dead" || c.burrowId !== null || c.hiddenTicks > 0) continue;
     const d = dist2d(player.pos, c.pos);
     if (d <= atk.attackRange && d < targetDist) { target = c; targetDist = d; }
   }

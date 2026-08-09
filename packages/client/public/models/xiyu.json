@@ -1,0 +1,31 @@
+{
+  "id": "xiyu",
+  "nameCn": "溪鱼（水生猎物）",
+  "generatedAt": "2026-08-09T19:42:21.937Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k"
+  },
+  "prompt": "A stylized hand-painted fantasy game creature: a small river fish, streamlined torpedo-shaped body, silver-teal iridescent scales, translucent flowing fins and tail, large round eyes, swimming pose, clean readable silhouette, painterly stylized non-photorealistic look, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic fur texture, blurry, low detail, extra limbs, missing legs, distorted anatomy, humanoid, bipedal, two legs, text, watermark, logo, multiple creatures, human, legs, fur, land animal, whiskers, mammal, dry scales",
+  "tasks": {
+    "previewTaskId": "019fe80a-492f-7559-9207-4c33fcb0b73a",
+    "refineTaskId": "019fe80b-1842-758e-a287-599169948c2f"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 553928,
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T03:46:00.000Z",
+    "params": { "compress": false, "textureCompress": "auto", "textureSize": 1024, "simplify": false },
+    "glbBytesBeforeOptimize": 4190360,
+    "glbBytesAfterOptimize": 553928,
+    "reason": "M1 B4: generate-creatures.ts already requests should_remesh+target_polycount correctly at generation time, so triangle count was already on target (~8200, matching the ~8k fish budget) — this pass only shrinks the 2k texture to 1024 (matching the other three models' final asset weight), no geometry simplification applied."
+  },
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fe80b-1842-758e-a287-599169948c2f/output/preview.png?Expires=4939833600&Signature=WHcAoSV~DxCET-BQekRA74B4ywSgp-5yXiTvc1e~F1ku0q00D1Rv9lln02L21nqfTif4MdoTkV95DaPrMofcRW0OoxRf8cDf91lY2aD4oObtxYcVkgVCQ-btN7qwTBzFX05at9xRqLcWCVRMXKZfCKSP6tLHBGV8ZNfVhsPCaRgMNzmN-btACUaPzQJC2s3gIpfcuFw2YNONmxTSCbftLNO5IwfSUZ7Mhb58vcksA0Mg-6ozrEJiPToTI2vxUXifdDDcVgw87LXUHV~XuyVS7JCkqdcRjlllfqy2PX7tvn4vuVTLbQK0Co4u--NtIy2WIhOucKdjwJAYDA4jGV4Mew__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applied: Meshy's rigging API is documented as biped-only; this creature is a quadruped. See meshy-pipeline-report.md."
+}

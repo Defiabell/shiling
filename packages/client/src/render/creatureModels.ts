@@ -199,6 +199,15 @@ export function bodyFootprintLength(species: string): number {
       return CAPSULE_BODY.youshou.length + 2 * CAPSULE_BODY.youshou.radius;
     case "tanshou":
       return CAPSULE_BODY.tanshou.length + 2 * CAPSULE_BODY.tanshou.radius;
+    case "xiyu":
+      // M1 B4：plan 原话"鱼 ≈0.7"——XIYU_BODY 的 radius/scale.z 就是照这个目标反推的
+      // （0.15 × 2 × 2.333 ≈ 0.7），后续调整体型时同步改那两个常量，不要在这里另开一个
+      // 手写的重复数字。
+      return 2 * XIYU_BODY.radius * XIYU_BODY.scale[2];
+    case "xuehuan":
+      // M1 B4：plan 原话"獾 ≈1.1"——XUEHUAN_BODY.length 就是这个目标本身（box 几何体
+      // 天生沿 Z 轴的边长，不需要像胶囊/球那样再乘 2×radius 换算）。
+      return XUEHUAN_BODY.length;
     default:
       // lingshu + defensive fallback, mirrors carcassShape's own default branch.
       return 2 * LINGSHU_BODY.radius * LINGSHU_BODY.scale[2];
@@ -477,6 +486,105 @@ function buildTanshouModel(): CreatureModel {
   };
 }
 
+/**
+ * 溪鱼 xiyu 的拉长椭球体形——SphereGeometry 沿 Z 轴（前进方向）拉长、Y 轴压扁，与
+ * lingshuBodyGeometry 同一"球体 scale 出椭球"手法，不需要像胶囊那样额外 rotation.x
+ * （球体本身各向同性，scale 直接作用在世界轴上，不存在"原生长轴在哪个方向"的问题）。
+ * radius/scale.z 是照 plan 原话"鱼 ≈0.7"反推的常量——见 bodyFootprintLength 的引用注释。
+ */
+const XIYU_BODY = { radius: 0.15, scale: [1, 0.7, 2.333] as const };
+
+function xiyuBodyGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.SphereGeometry(XIYU_BODY.radius, 14, 10);
+  geometry.scale(...XIYU_BODY.scale);
+  return geometry;
+}
+
+/**
+ * 溪鱼 xiyu 程序化 fallback：拉长椭球身 + 尾鳍片（GLB 到位前后都能玩，见 modelLibrary.ts
+ * 头部注释）。尾鳍用极薄 BoxGeometry 而不是零厚度的 PlaneGeometry——同 earPuckGeometry
+ * 头部注释指出的坑：单面薄片的描边克隆与本体完全重合，会 z-fight 而不是形成一圈轮廓线，
+ * BoxGeometry 给一点真实厚度就能规避（读起来仍然是"一片鱼鳍"，只是不是数学意义上的零厚度平面）。
+ */
+function buildXiyuModel(): CreatureModel {
+  const group = new THREE.Group();
+  const BODY_Y = XIYU_BODY.radius * XIYU_BODY.scale[1]; // 沿用统一约定：group 原点在"脚下"（水生生物这里读作"腹部贴水面高度"）
+
+  const body = makeMesh(xiyuBodyGeometry(), PALETTE.xiyuBody);
+  body.position.set(0, BODY_Y, 0);
+  attach(group, body);
+
+  const halfLength = XIYU_BODY.radius * XIYU_BODY.scale[2];
+  const headMount = makeMount(group, 0, BODY_Y, halfLength * 0.85);
+  const head = makeMesh(new THREE.SphereGeometry(XIYU_BODY.radius * 0.55, 10, 8), PALETTE.xiyuBody);
+  attach(headMount, head);
+
+  const tailMount = makeMount(group, 0, BODY_Y, -halfLength);
+  const tailFin = makeMesh(new THREE.BoxGeometry(0.02, 0.22, 0.26), PALETTE.xiyuFin);
+  tailFin.position.set(0, 0, -0.1);
+  attach(tailMount, tailFin);
+
+  group.add(buildGroundShadow(shadowRadiusFor("xiyu")));
+
+  const parts = { head: headMount, tail: tailMount, body };
+  return {
+    group,
+    mounts: { head: headMount, tail: tailMount },
+    parts,
+    animate: createLivingAnimate(group, parts),
+    dispose: () => disposeTree(group),
+  };
+}
+
+/**
+ * 穴獾 xuehuan 的矮胖箱体形——plan 原话"squat box"，length 是照"獾 ≈1.1"反推的常量，
+ * 见 bodyFootprintLength 的引用注释。
+ */
+const XUEHUAN_BODY = { width: 0.55, height: 0.42, length: 1.1 };
+
+function xuehuanBodyGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(XUEHUAN_BODY.width, XUEHUAN_BODY.height, XUEHUAN_BODY.length);
+}
+
+/**
+ * 穴獾 xuehuan 程序化 fallback：矮胖箱身 + 前爪掘爪锥×2（plan 原话"squat box + claw
+ * cones"）。刻意不建 tail 挂点——真实獾类尾巴本就短到几乎看不出来，"矮胖"的读法里
+ * 没有尾巴反而更贴切；createLivingAnimate 对 `parts.tail` 是可选链读取（tail?:），
+ * 缺省时优雅 no-op，不需要专门传一个空占位对象。
+ */
+function buildXuehuanModel(): CreatureModel {
+  const group = new THREE.Group();
+  const BODY_Y = XUEHUAN_BODY.height / 2;
+
+  const body = makeMesh(xuehuanBodyGeometry(), PALETTE.xuehuanBody);
+  body.position.set(0, BODY_Y, 0);
+  attach(group, body);
+
+  const headMount = makeMount(group, 0, BODY_Y + 0.02, XUEHUAN_BODY.length / 2 + 0.15);
+  const head = makeMesh(new THREE.BoxGeometry(0.4, 0.32, 0.32), PALETTE.xuehuanBody);
+  attach(headMount, head);
+
+  // 前爪掘爪：两个朝前下方的爪锥，颜色更深（xuehuanClaw）读出"爪"与"皮毛"的材质区分
+  // ——同 tanshou 背棘那三枚 spike 用独立 PALETTE 色的既有惯例。
+  for (const x of [-0.16, 0.16]) {
+    const claw = makeMesh(new THREE.ConeGeometry(0.07, 0.22, 8), PALETTE.xuehuanClaw);
+    claw.position.set(x, BODY_Y - 0.14, XUEHUAN_BODY.length / 2 + 0.05);
+    claw.rotation.x = Math.PI / 2.3; // 朝前下方，挖地姿态
+    attach(group, claw);
+  }
+
+  group.add(buildGroundShadow(shadowRadiusFor("xuehuan")));
+
+  const parts = { head: headMount, body };
+  return {
+    group,
+    mounts: { head: headMount },
+    parts,
+    animate: createLivingAnimate(group, parts),
+    dispose: () => disposeTree(group),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Meshy GLB swap (Postfix 7) — module-level library injection
 // ---------------------------------------------------------------------------
@@ -578,6 +686,10 @@ export function buildCreatureModel(species: string): CreatureModel {
       return buildYoushouModel();
     case "tanshou":
       return buildTanshouModel();
+    case "xiyu": // M1 B4
+      return buildXiyuModel();
+    case "xuehuan": // M1 B4
+      return buildXuehuanModel();
     default:
       // Defensive fallback, mirrors the previous graybox-mesh convention: M0
       // content only ever spawns lingshu/tanshou NPCs alongside the youshou
@@ -594,13 +706,17 @@ interface CarcassShape {
   makeGeometry(): THREE.BufferGeometry;
 }
 
-/** Reuses each species' living-body silhouette proportions (CAPSULE_BODY/LINGSHU_BODY above), in their native (un-rotated) orientation. */
+/** Reuses each species' living-body silhouette proportions (CAPSULE_BODY/LINGSHU_BODY/XIYU_BODY/XUEHUAN_BODY above), in their native (un-rotated) orientation. */
 function carcassShape(species: string): CarcassShape {
   switch (species) {
     case "youshou":
       return { makeGeometry: () => capsuleBodyGeometry(CAPSULE_BODY.youshou) };
     case "tanshou":
       return { makeGeometry: () => capsuleBodyGeometry(CAPSULE_BODY.tanshou) };
+    case "xiyu": // M1 B4
+      return { makeGeometry: () => xiyuBodyGeometry() };
+    case "xuehuan": // M1 B4
+      return { makeGeometry: () => xuehuanBodyGeometry() };
     default:
       // lingshu + defensive fallback for any unforeseen species.
       return { makeGeometry: () => lingshuBodyGeometry() };

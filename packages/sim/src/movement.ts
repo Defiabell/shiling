@@ -1,9 +1,24 @@
-import { SPECIES, TUNING } from "@shiling/content";
+import { SPECIES, TUNING, type SpeciesDef } from "@shiling/content";
 import { norm2d } from "./vec.js";
 import { DT } from "./sim.js";
 import { getModifiers } from "./organs.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
+
+/**
+ * 地形挡行判定，双向（M1 B4，溪鱼 xiyu 引入水生锁定后新增）：
+ *   - 旱鸭子（canSwim=false）踏入水域被挡——既有的挡水守卫，M0 起就有。
+ *   - 水生锁定（aquatic=true）踏上陆地被挡——上一条的镜像，SpeciesDef.aquatic 字段的
+ *     唯一判定入口（见该字段注释）。
+ * 导出供 ai.ts 的逃跑/追击方向探测复用（原来那两处各自手写了一份只覆盖前一条的判定，
+ * 现在统一走这一个函数，双向逻辑不会在两处漂移）。
+ */
+export function isTerrainBlocked(def: SpeciesDef, terrain: Terrain, x: number, z: number): boolean {
+  const water = terrain.isWater(x, z);
+  if (!def.canSwim && water) return true;
+  if (def.aquatic && !water) return true;
+  return false;
+}
 
 /**
  * 通用运动学移动：走/游自动切换、贴地、边界 clamp。也供 AI 使用。
@@ -37,9 +52,9 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
   speed *= speedScale;
   const tx = Math.max(-half, Math.min(half, c.pos.x + nx * speed * DT));
   const tz = Math.max(-half, Math.min(half, c.pos.z + nz * speed * DT));
-  if (!def.canSwim && terrain.isWater(tx, tz)) {
-    // 旱鸭子挡在水边：位置不变，但仍要按当前（未位移）位置同步 locomotion/pos.y，
-    // 并把 activity 从 "moving" 回落 "idle"（不动就不该停留在 moving 状态）。
+  if (isTerrainBlocked(def, terrain, tx, tz)) {
+    // 挡在岸边（双向，见 isTerrainBlocked）：位置不变，但仍要按当前（未位移）位置同步
+    // locomotion/pos.y，并把 activity 从 "moving" 回落 "idle"（不动就不该停留在 moving 状态）。
     if (c.activity === "moving") c.activity = "idle";
     c.locomotion = inWater ? "swim" : "walk";
     c.pos.y = inWater ? terrain.waterLevel : terrain.heightAt(c.pos.x, c.pos.z);

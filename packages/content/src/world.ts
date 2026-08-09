@@ -14,10 +14,16 @@ export interface WorldParams {
 // （lingshu 12→26、tanshou 2→4——四则不是简单按 4x 面积等比例放大，见 ecology 冒烟测试后
 // 的调优记录：世界面积×4 但种群只放大约 2~2.2x，密度反而下降，靠 senseRadius/aiRepathSec
 // 不变的前提下这组数字经过重跑 ecology.test.ts 验证不会灭绝/断粮）。
+// M1 B4（新物种——溪鱼/穴獾）：xiyu 10、xuehuan 8——8-seed ecology 重跑验证过这组密度
+// 不会让两个新物种灭绝（见 ecology.test.ts），也未观察到 tanshou 因为多了一种可猎物种
+// 而对 lingshu 的捕食压力发生显著转移（tanshou 现在也会游泳猎鱼，但 lingshu 种群规模
+// 稳定在既有区间，未重新调过 lingshu/tanshou 的既有密度）。
 export const QINGQIU_GRAYBOX: WorldParams = {
   size: 480, cell: 2, waterLevel: -1.5, hillAmp: 9, digSpotCount: 24,
   spawns: [
     { species: "lingshu", count: 26 },
     { species: "tanshou", count: 4 },
+    { species: "xiyu", count: 10 },
+    { species: "xuehuan", count: 8 },
   ],
 };

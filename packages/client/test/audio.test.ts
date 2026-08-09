@@ -23,7 +23,7 @@ function mkCreature(over: Partial<Creature>): Creature {
     aiState: "idle", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, ...over,
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0, ...over,
   };
 }
 function mkState(over: Partial<GameState>): GameState {

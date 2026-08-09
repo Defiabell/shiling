@@ -13,7 +13,7 @@
 // hasn't wired up any decoder for compressed geometry/KTX2 yet, and this
 // pipeline should not force that dependency on it.
 //
-// Usage: node src/optimize-glb.ts [id...]   (defaults to all three creatures)
+// Usage: node src/optimize-glb.ts [id...]   (defaults to all creatures in TARGETS below)
 
 import { execFileSync } from "node:child_process";
 import { existsSync, renameSync, statSync, readFileSync, writeFileSync } from "node:fs";
@@ -29,14 +29,28 @@ interface OptimizeConfig {
   // Target fraction of vertices to keep (meshoptimizer edge-collapse).
   // Chosen per-creature to land near ~20k triangles from this batch's raw
   // (un-remeshed) output. Re-tune if you re-run this against different
-  // source geometry.
+  // source geometry. Ignored when `simplify` is false.
   simplifyRatio: number;
+  /**
+   * M1 B4 (xiyu/xuehuan): these two were generated with should_remesh+
+   * target_polycount already correct at generation time (the root-cause fix
+   * this file's header comment describes), so there is no oversized geometry
+   * left to decimate — only the texture (2k, same as the original batch
+   * before it too got downsized) needs shrinking. `simplify: false` skips
+   * the meshoptimizer edge-collapse step entirely instead of passing a
+   * ratio of 1 (untested whether gltf-transform's simplifier is a true
+   * no-op at ratio=1 or still perturbs vertices near-imperceptibly; `false`
+   * is the unambiguous "don't touch geometry" request).
+   */
+  simplify: boolean;
 }
 
 const TARGETS: OptimizeConfig[] = [
-  { id: "youshou", simplifyRatio: 0.05 },
-  { id: "lingshu", simplifyRatio: 0.022 },
-  { id: "tanshou", simplifyRatio: 0.066 },
+  { id: "youshou", simplifyRatio: 0.05, simplify: true },
+  { id: "lingshu", simplifyRatio: 0.022, simplify: true },
+  { id: "tanshou", simplifyRatio: 0.066, simplify: true },
+  { id: "xiyu", simplifyRatio: 1, simplify: false },
+  { id: "xuehuan", simplifyRatio: 1, simplify: false },
 ];
 
 function optimizeOne(cfg: OptimizeConfig): void {
@@ -48,27 +62,22 @@ function optimizeOne(cfg: OptimizeConfig): void {
   const tmp = join(MODELS_DIR, `${cfg.id}.opt.glb`);
   const before = statSync(src).size;
 
-  execFileSync(
-    CLI,
-    [
-      "optimize",
-      src,
-      tmp,
-      "--compress",
-      "false",
-      "--texture-compress",
-      "auto",
-      "--texture-size",
-      "1024",
-      "--simplify",
-      "true",
-      "--simplify-ratio",
-      String(cfg.simplifyRatio),
-      "--simplify-error",
-      "0.01",
-    ],
-    { stdio: "inherit" }
-  );
+  const args = [
+    "optimize",
+    src,
+    tmp,
+    "--compress",
+    "false",
+    "--texture-compress",
+    "auto",
+    "--texture-size",
+    "1024",
+    "--simplify",
+    String(cfg.simplify),
+  ];
+  if (cfg.simplify) args.push("--simplify-ratio", String(cfg.simplifyRatio), "--simplify-error", "0.01");
+
+  execFileSync(CLI, args, { stdio: "inherit" });
 
   const after = statSync(tmp).size;
   renameSync(tmp, src);
@@ -84,15 +93,19 @@ function optimizeOne(cfg: OptimizeConfig): void {
         compress: false,
         textureCompress: "auto",
         textureSize: 1024,
-        simplifyRatio: cfg.simplifyRatio,
-        simplifyError: 0.01,
+        simplify: cfg.simplify,
+        ...(cfg.simplify ? { simplifyRatio: cfg.simplifyRatio, simplifyError: 0.01 } : {}),
       },
       glbBytesBeforeOptimize: before,
       glbBytesAfterOptimize: after,
-      reason:
-        "Raw Meshy refine output was 300k-920k triangles (should_remesh was not " +
-        "set on the preview request), producing 11-28MB GLBs. Decimated locally " +
-        "with meshoptimizer instead of re-spending credits on a redo.",
+      reason: cfg.simplify
+        ? "Raw Meshy refine output was 300k-920k triangles (should_remesh was not " +
+          "set on the preview request), producing 11-28MB GLBs. Decimated locally " +
+          "with meshoptimizer instead of re-spending credits on a redo."
+        : "M1 B4: generate-creatures.ts already requests should_remesh+target_polycount " +
+          "correctly at generation time, so triangle count was already on target — this " +
+          "pass only shrinks the 2k texture to 1024 (matching the other three models' " +
+          "final asset weight), no geometry simplification applied.",
     };
     writeFileSync(metaPath, JSON.stringify(meta, null, 2));
   }

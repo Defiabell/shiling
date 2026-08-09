@@ -70,6 +70,15 @@ export interface Creature {
    * 判定"是否要触发"。
    */
   dormantHeld: boolean;
+  /**
+   * 遁地隐匿倒数（M1 B4，穴獾 xuehuan 专属，见 sim/src/ai.ts 的 tickBurrowEvader）：0=未
+   * 隐匿；>0 时该生物已经"消失"——从渲染（client creatureView.ts 的可见性判定）与目标
+   * 选择（ai.ts 的 nearestPrey/nearestThreat、eating.ts 的 findAttackTarget）中一并排除，
+   * 但仍留在 state.creatures 里正常参与需求衰减/存活判定（不是被移除，只是"看不见摸不着"）。
+   * 每 tick -1，归零时在附近随机陆地点重现。非穴獾物种恒为 0，不参与任何逻辑——与
+   * fleeTime 对非苓鼠物种恒为 0 同一惯例（见上方 fleeTime 字段注释）。
+   */
+  hiddenTicks: number;
 }
 
 export interface Carcass {

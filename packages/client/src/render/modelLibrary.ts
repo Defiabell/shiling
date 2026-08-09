@@ -66,6 +66,14 @@ const MODEL_CONFIG: Record<string, SpeciesConfig> = {
   youshou: { file: "youshou.glb", rotationYDeg: 0 },
   lingshu: { file: "lingshu.glb", rotationYDeg: 0 },
   tanshou: { file: "tanshou.glb", rotationYDeg: 57 },
+  // M1 B4 — verified with the same empirical method tanshou's 57° was found with (see
+  // this interface's doc comment above), not assumed just because these are fresh
+  // generations from the same pipeline: a standalone rotation-probe scene (raw GLB, no
+  // baked transform, four cardinal camera positions ±X/±Z) confirmed both models'
+  // faces/eyes read front-on from the +Z camera and their tails/hindquarters from -Z —
+  // i.e. both happen to already export facing +Z natively, unlike tanshou.
+  xiyu: { file: "xiyu.glb", rotationYDeg: 0 },
+  xuehuan: { file: "xuehuan.glb", rotationYDeg: 0 },
 };
 
 /** First Mesh found anywhere in the GLTF scene graph — every current asset is a single mesh/single material (see pipeline report), but this stays robust to a future re-export with a deeper node hierarchy. */

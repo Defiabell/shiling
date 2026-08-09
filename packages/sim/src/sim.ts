@@ -39,6 +39,21 @@ export function randomLandPos(rng: Rng, terrain: Terrain, params: WorldParams): 
   throw new Error("randomLandPos: no land position found after max attempts; check WorldParams");
 }
 
+/**
+ * randomLandPos 的镜像（M1 B4，水生锁定物种——溪鱼 xiyu——的出生点采样）：rejection-sample
+ * 直到落在水域（isWater 为真）。y 直接取 terrain.waterLevel——与 moveCreature/movement.ts
+ * 的贴水面惯例一致（游泳生物的 pos.y 从不读 heightAt，见 movement.ts 的 nowWater 分支）。
+ */
+export function randomWaterPos(rng: Rng, terrain: Terrain, params: WorldParams): Vec3 {
+  const half = params.size / 2;
+  for (let attempt = 0; attempt < MAX_REJECTION_ATTEMPTS; attempt++) {
+    const x = rng.range(-half, half);
+    const z = rng.range(-half, half);
+    if (terrain.isWater(x, z)) return v3(x, terrain.waterLevel, z);
+  }
+  throw new Error("randomWaterPos: no water position found after max attempts; check WorldParams");
+}
+
 const terrainFactory = createTerrain;
 
 /** 生成一只生物并加入 state.creatures，供 createSim 内部与测试使用。 */
@@ -51,7 +66,11 @@ export function spawnCreature(
 ): Creature {
   const def = SPECIES[species];
   if (!def) throw new Error(`unknown species: ${species}`);
-  const pos = randomLandPos(rng, terrain, params);
+  // M1 B4：水生锁定物种（aquatic=true，目前仅溪鱼 xiyu）出生点必须落在水域本身——
+  // randomLandPos 会采到陆地点，而 aquatic 生物的 moveCreature 挡水守卫（见
+  // movement.ts 的 isTerrainBlocked）会把它钉死在陆地上永远下不了水，这不是"生成即被卡死"
+  // 的边缘情形，是每一次出生都会发生。
+  const pos = def.aquatic ? randomWaterPos(rng, terrain, params) : randomLandPos(rng, terrain, params);
   // 初始朝向复用 yaw 的随机模式，另起一次采样给 aiDir（游走的初始方向）。
   const initAiAngle = rng.range(0, Math.PI * 2);
   const c: Creature = {
@@ -61,10 +80,12 @@ export function spawnCreature(
     yaw: rng.range(0, Math.PI * 2),
     hp: def.maxHp,
     needs: { hunger: 80, thirst: 80, fatigue: 100 },
-    locomotion: "walk",
+    locomotion: def.aquatic ? "swim" : "walk",
     activity: "idle",
-    // 苓鼠 wander/graze/flee、潭狩 patrol/hunt/feed 已接线（Task 9/10）；玩家留 "idle" 待 Task 11。
-    aiState: species === "lingshu" ? "wander" : species === "tanshou" ? "patrol" : "idle",
+    // 苓鼠/溪鱼/穴獾三个食草物种共用 "wander" 起始态（各自的机器——tickFleeingHerbivore/
+    // tickBurrowEvader——都从 wander 开始）；潭狩 patrol/hunt/feed；玩家留 "idle"
+    // （Task 11 起接了专属的进食/攻击响应，"idle" 只是 AI 派发意义上的"不属于任何 NPC 机器"）。
+    aiState: species === "tanshou" ? "patrol" : species === "youshou" ? "idle" : "wander",
     targetId: null,
     attackCooldown: 0,
     feedingCarcassId: null,
@@ -81,6 +102,7 @@ export function spawnCreature(
     carryHeld: false,
     nestProgress: 0,
     dormantHeld: false,
+    hiddenTicks: 0, // M1 B4：仅穴獾的 tickBurrowEvader 会写非零值，其余物种恒 0
   };
   state.creatures.push(c);
   return c;

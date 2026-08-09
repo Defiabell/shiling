@@ -120,10 +120,14 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
     view.currYaw = c.yaw;
     view.activity = c.activity;
     view.locomotion = c.locomotion;
-    // Hidden while burrowed (underground, out of view) or once dead: a dead
-    // player's creature entry lingers (see key comment above) but the
-    // carcass model at the same spot is the one that should be visible.
-    view.mesh.visible = c.burrowId === null && c.activity !== "dead";
+    // Hidden while burrowed (underground, out of view), once dead (a dead
+    // player's creature entry lingers — see key comment above, but the
+    // carcass model at the same spot is the one that should be visible), or
+    // — M1 B4 — while mid-vanish (xuehuan's hiddenTicks>0, see
+    // Creature.hiddenTicks doc comment in @shiling/sim: same "gone from the
+    // world" semantics as burrowId, just a separate field since it isn't
+    // tied to a fixed Terrain.digSpots location).
+    view.mesh.visible = c.burrowId === null && c.activity !== "dead" && c.hiddenTicks === 0;
   }
 
   // Part 2（postfix-9）：只有玩家能叼运，且一次只能叼一具——一次性查一遍即可，不必

@@ -11,6 +11,19 @@ describe("createSim", () => {
     expect(species.filter((s) => s === "lingshu")).toHaveLength(26);
     expect(species.filter((s) => s === "tanshou")).toHaveLength(4);
     expect(species.filter((s) => s === "youshou")).toHaveLength(1);
+    // M1 B4：新物种 spawn 数——xiyu 10, xuehuan 8（见 content/world.ts QINGQIU_GRAYBOX.spawns）。
+    expect(species.filter((s) => s === "xiyu")).toHaveLength(10);
+    expect(species.filter((s) => s === "xuehuan")).toHaveLength(8);
+  });
+  // M1 B4：水生锁定物种必须出生在水里，否则 moveCreature 的挡水守卫会把它永远钉在陆地上。
+  it("spawns aquatic species (xiyu) in water, never on land", () => {
+    const sim = createSim(1);
+    const fish = sim.state.creatures.filter((c) => c.species === "xiyu");
+    expect(fish).toHaveLength(10);
+    for (const f of fish) {
+      expect(sim.terrain.isWater(f.pos.x, f.pos.z)).toBe(true);
+      expect(f.locomotion).toBe("swim");
+    }
   });
   it("advances ticks", () => {
     const sim = createSim(1);

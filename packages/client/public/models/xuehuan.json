@@ -1,0 +1,31 @@
+{
+  "id": "xuehuan",
+  "nameCn": "穴獾（遁地猎物）",
+  "generatedAt": "2026-08-09T19:45:06.141Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k"
+  },
+  "prompt": "A stylized hand-painted fantasy game creature: a stocky burrowing badger-like beast, four short strong legs, standing on the ground, broad flat head, short powerful digging claws, earth-brown fur with darker facial stripes, compact muscular body built for digging, clean readable silhouette, painterly stylized non-photorealistic look, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic fur texture, blurry, low detail, extra limbs, missing legs, distorted anatomy, humanoid, bipedal, two legs, text, watermark, logo, multiple creatures, human, long thin body, feline, snake-like, reptile, scales",
+  "tasks": {
+    "previewTaskId": "019fe80c-39b0-75ad-aa60-c81dea08583f",
+    "refineTaskId": "019fe80d-6a1c-762c-8201-2b3dd3a15f62"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 881896,
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T03:46:00.000Z",
+    "params": { "compress": false, "textureCompress": "auto", "textureSize": 1024, "simplify": false },
+    "glbBytesBeforeOptimize": 4018028,
+    "glbBytesAfterOptimize": 881896,
+    "reason": "M1 B4: generate-creatures.ts already requests should_remesh+target_polycount correctly at generation time, so triangle count was already on target (~15633, matching the ~15k badger budget) — this pass only shrinks the 2k texture to 1024 (matching the other three models' final asset weight), no geometry simplification applied."
+  },
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fe80d-6a1c-762c-8201-2b3dd3a15f62/output/preview.png?Expires=4939833600&Signature=S-fdIWYdWEbEp2VPbj90Th1mvIwOEkW5Vok1G6tNRYcNOPGopfg~Xf2g87ItkIDpK3lKTlan6b~DT6Hp7Jn3hVSy6yRWC~LbMyYqtJXMtW6T3IARmksJDhFJCLbLI6H4E~-YYk1XihnBHeVu7H7nWVFQw9Ttdsyv9sgALZTmH6NvqBfP0uhMaYOk1loEq6~jjeRSNI~ECvAGynDC6VnLuBqiMQ1xpPp3mQkD1omwps1jz~6drffjmHoNnFzcSLyX6IiETPDVpuh0Pd9nJXQKbqKA-torriTMfCip3LIXvMfLLjhNuWtRFzBX8xE8WvGnkVu5CcwBit3gcZk~-VvFkg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applied: Meshy's rigging API is documented as biped-only; this creature is a quadruped. See meshy-pipeline-report.md."
+}

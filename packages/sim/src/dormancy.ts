@@ -17,7 +17,11 @@ import type { Creature, GameState, PlayerInput } from "./state.js";
  *
  * 触发（V 边沿，镜像 carryHeld/interactHeld 的边沿检测惯例，见 Creature.dormantHeld）：
  * 在自己家巢洞内（p.burrowId === state.homeNest.spotId）＋任一精气 ≥ essenceThreshold(60)
- * ＋stash ≥ dormancyStashCost(20)，三者缺一不可——见 isDormancyEligible 的三条早退。
+ * ＋stash ≥ dormancyStashCost(20)＋thirst ≥ dormancyThirstMin(40)，四者缺一不可——见
+ * isDormancyEligible 的四条早退。第四条（Part 0，B3 controller ruling，B4 批次落地）：
+ * 蛰伏期间口渴不受任何补偿（feedFromStash 只买回饥饿的额外衰减，从未提过口渴——见下方
+ * "已知设计缺口"段落），45 秒里 thirst 从 0 归零会正常渴死，这个地板逼玩家蛰伏前先饮足，
+ * 防止在自己巢穴里睡死。
  *
  * 进行中（state.dormancy = { ticksLeft }）：玩家专属输入系统整体锁死——movement/digging/
  * eating/carrying 各自在自己文件顶部加一行 `if (state.dormancy !== null) return;`（"least
@@ -39,12 +43,17 @@ import type { Creature, GameState, PlayerInput } from "./state.js";
  *
  * 完成：ticksLeft 归零触发 rollOrgan（见该函数文档）。
  *
- * 已知设计缺口（code review 2026-08-10 提出，刻意未在本批修复——plan/brief 的措辞只提到
- * 用 stash 补偿"饥饿"衰减，从未提过口渴）：蛰伏中口渴仍按 tickNeeds 的正常速率无补偿地
- * 衰减，且没有任何手段中途取消蛰伏（V 在 state.dormancy!==null 期间不再被读作触发信号，
- * 见 tickDormancy）——如果玩家带着偏低的口渴值入睡，45 秒里可能真的渴死（needs.ts 的
- * starve 分支对玩家一视同仁）。这是产品决策而非 bug（"蛰伏有风险"也可能是刻意的玩法张力），
- * 留给后续批次/owner 判断是否要加门槛或补偿，本批不擅自扩大 B3 的既定范围。
+ * 已知设计缺口（code review 2026-08-10 提出；controller ruling 后 M1 B4 落地"入睡门槛"这
+ * 一半，"睡眠中补偿"这一半仍刻意未做）：蛰伏中口渴仍按 tickNeeds 的正常速率无补偿地
+ * 衰减（feedFromStash 只买回饥饿的额外衰减，从未涉及口渴），且没有任何手段中途取消蛰伏
+ * （V 在 state.dormancy!==null 期间不再被读作触发信号，见 tickDormancy）。B4 新增的第四
+ * 触发条件（thirst ≥ TUNING.dormancyThirstMin(40)）在当前数值下已经算好账、足以杜绝渴死：
+ * 45 秒蛰伏的口渴总衰减上限 = thirstDecayPerSec(0.5) × dormancySec(45) = 22.5，40 起点
+ * 减到底也还剩 17.5，正数——只要这三个 TUNING 数字不改，"蛰伏睡到渴死"这条路径已经被
+ * 这个地板彻底堵死，不是"留有余量、大概率不会"的概率性缓解。这条数学关系没有写成代码
+ * 断言（TUNING 是纯数据表，不适合在这里嵌入跨字段的运行时校验），未来若单独调大
+ * thirstDecayPerSec 或 dormancySec 而忘了重新核这笔账，才会让这条缺口重新打开——留给
+ * 后续批次/owner 判断是否要加真正的睡眠期口渴补偿，让它不依赖这三个数字的偶然组合。
  */
 
 /** 任一精气达到开奖门槛。 */
@@ -61,15 +70,18 @@ function dominantEssenceType(essence: Record<EssenceType, number>): EssenceType 
 }
 
 /**
- * 触发条件的纯判定（不含 V 边沿本身）：在自己家巢洞内＋任一精气达标＋stash 达标。导出
- * 给 client 的 HUD 用（main.ts 的 computeHudContext 消费，决定「V 蛰伏」提示是否显示），
- * 避免在 client 侧重复一份精气/stash 阈值判断——sim 是这条判据唯一的权威来源。
+ * 触发条件的纯判定（不含 V 边沿本身）：在自己家巢洞内＋任一精气达标＋stash 达标＋thirst
+ * 达标（第四条，M1 B4 Part 0——见文件头"已知设计缺口"段落的数学论证）。导出给 client 的
+ * HUD 用（main.ts 的 computeHudContext 消费，决定「V 蛰伏」提示是否显示），避免在 client
+ * 侧重复一份精气/stash/thirst 阈值判断——sim 是这条判据唯一的权威来源，HUD 提示的资格
+ * 同步因此是自动的（同一个函数，不是两处各写一份需要手动保持一致的逻辑）。
  */
 export function isDormancyEligible(state: GameState): boolean {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.burrowId === null) return false;
   if (state.homeNest === null || p.burrowId !== state.homeNest.spotId) return false;
   if (!anyEssenceReady(state.essence)) return false;
+  if (p.needs.thirst < TUNING.dormancyThirstMin) return false;
   return state.homeNest.stash >= TUNING.dormancyStashCost;
 }
 

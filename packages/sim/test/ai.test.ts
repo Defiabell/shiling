@@ -110,3 +110,144 @@ describe("lingshu ai", () => {
     expect(shu.aiState).not.toBe("flee"); // 满淬炼苔纹皮：有效半径缩到裸半径以下，midDist 未被惊动
   });
 });
+
+// M1 B4：溪鱼 xiyu 复用 tickFleeingHerbivore（species-generic，见 ai.ts 头部注释）——本节
+// 只补一条水生锁定专属的行为断言（"苓鼠行为不变"这条 regression 由上面整块既有测试原样
+// 跑通即证明，不需要为它专门再写一份）。
+describe("xiyu (溪鱼) aquatic AI", () => {
+  it("flees when a threat (player) approaches, but never leaves the water (aquatic lock holds under AI control too)", () => {
+    const sim = createSim(21);
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species === "youshou" || c.species === "xiyu");
+    const p = getPlayer(sim.state);
+    const fish = sim.state.creatures.find((c) => c.species === "xiyu")!;
+    expect(sim.terrain.isWater(fish.pos.x, fish.pos.z)).toBe(true);
+    p.pos = { ...fish.pos }; p.pos.x += 3; // 进入 senseRadius(8)
+
+    let sawFlee = false;
+    for (let i = 0; i < TUNING.tickHz * 3; i++) {
+      sim.step(idle);
+      // 每一步都必须仍在水里——doFlee/doWander 交给 moveCreature 的地形挡行判定
+      // （isTerrainBlocked 的水生镜像）是唯一的强制手段，AI 本身不知道"我是不是鱼"。
+      expect(sim.terrain.isWater(fish.pos.x, fish.pos.z)).toBe(true);
+      if (fish.aiState === "flee") sawFlee = true;
+    }
+    expect(sawFlee).toBe(true);
+  });
+});
+
+// M1 B4：穴獾 xuehuan 专属的 tickBurrowEvader（遁地 channel→隐匿→重现）。
+describe("xuehuan (穴獾) burrow-evasion AI", () => {
+  const CHANNEL_TICKS = Math.round(TUNING.xuehuanChannelSec * TUNING.tickHz);
+  const HIDDEN_TICKS = Math.round(TUNING.xuehuanHiddenSec * TUNING.tickHz);
+
+  /** 隔离到玩家+穴獾，排除其它物种的 AI/rng 消费干扰。 */
+  function isolateToBadger(sim: ReturnType<typeof createSim>) {
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species === "youshou" || c.species === "xuehuan");
+  }
+
+  it("channels for xuehuanChannelSec once a threat enters senseRadius, then transitions into hiding", () => {
+    const sim = createSim(21);
+    isolateToBadger(sim);
+    const p = getPlayer(sim.state);
+    const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+    p.pos = { ...badger.pos }; p.pos.x += 5; // 进入 senseRadius(12)
+
+    sim.step(idle);
+    expect(badger.aiState).toBe("channel");
+    expect(badger.activity).toBe("digging");
+    expect(badger.hiddenTicks).toBe(0);
+
+    for (let i = 1; i < CHANNEL_TICKS; i++) {
+      sim.step(idle);
+      expect(badger.aiState).toBe("channel"); // channel 未提前完成
+      expect(badger.hiddenTicks).toBe(0);
+    }
+    sim.step(idle); // 最后一 tick：channel 完成，转入隐匿
+    expect(badger.hiddenTicks).toBeGreaterThan(0);
+    expect(badger.activity).toBe("idle");
+  });
+
+  it("stays hidden for xuehuanHiddenSec, then reappears ~8m from the vanish point and resumes wandering (deterministic)", () => {
+    function runCycle(seed: number) {
+      const sim = createSim(seed);
+      isolateToBadger(sim);
+      const p = getPlayer(sim.state);
+      const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+      p.pos = { ...badger.pos }; p.pos.x += 5;
+      const vanishPos = { ...badger.pos };
+
+      // CHANNEL_TICKS+1：触发 tick 本身不消耗 aiTimer（只是设定 1.2s 起点），随后
+      // 需要 CHANNEL_TICKS 次 -= DT 才能把它降到 <=0——与上面那条 channel 测试用的
+      // 是同一个 +1 换算，不是两处各自拍的魔法数字。
+      for (let i = 0; i < CHANNEL_TICKS + 1; i++) sim.step(idle);
+      expect(badger.hiddenTicks).toBeGreaterThan(0);
+
+      for (let i = 0; i < HIDDEN_TICKS - 1; i++) {
+        sim.step(idle);
+        expect(badger.hiddenTicks).toBeGreaterThan(0); // 隐匿期间不提前重现
+      }
+      sim.step(idle); // 倒数最后一 tick：重现
+      return { badger, vanishPos };
+    }
+
+    const a = runCycle(21);
+    expect(a.badger.hiddenTicks).toBe(0);
+    expect(a.badger.aiState).toBe("wander");
+    expect(a.badger.activity).toBe("idle");
+    expect(a.badger.locomotion).toBe("walk");
+    expect(dist2d(a.vanishPos, a.badger.pos)).toBeCloseTo(TUNING.xuehuanReappearDist, 3);
+
+    // 确定性：同 seed、同输入序列，重现到完全一致的位置——同 seed 同 roll 同一套纪律。
+    const b = runCycle(21);
+    expect(b.badger.pos).toEqual(a.badger.pos);
+  });
+
+  it("dying mid-channel (killed by the player) follows the normal death path — channel provides no special protection", () => {
+    const sim = createSim(21);
+    isolateToBadger(sim);
+    const p = getPlayer(sim.state);
+    const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+    const atk = SPECIES.youshou!;
+    p.pos = { ...badger.pos }; p.pos.x += atk.attackRange - 0.1; // 攻击距离内，同时也在 senseRadius(12) 内
+    expect(SPECIES.xuehuan!.maxHp).toBe(atk.attackDamage * 2); // 两下打死，两下都落在 channel(24 tick) 窗口内
+
+    // 第 1 tick：命中（cooldown 起始为 0）+ 感知到威胁转入 channel（tickEating 排在 tickAi 之前）。
+    sim.step({ ...idle, attack: true });
+    expect(badger.hp).toBeCloseTo(SPECIES.xuehuan!.maxHp - atk.attackDamage, 6);
+    expect(badger.aiState).toBe("channel");
+
+    // 冷却 attackCooldownSec=1.0s=20 tick，第 21 次 step 时冷却正好耗尽，第二刀落地——
+    // 仍在 channel 窗口（CHANNEL_TICKS=24）内，验证"打断 channel 唯一手段是打死它"。
+    for (let i = 0; i < 20; i++) sim.step({ ...idle, attack: true });
+
+    expect(badger.hp).toBeLessThanOrEqual(0);
+    expect(badger.activity).toBe("dead");
+    expect(badger.hiddenTicks).toBe(0); // 从未进入隐匿——正常死亡，不是遁地
+    expect(sim.state.creatures.some((c) => c.id === badger.id)).toBe(false); // killCreature 已将其移出 creatures[]
+    expect(sim.state.carcasses.some((c) => c.id === badger.id)).toBe(true); // 留下一具正常尸体
+  });
+
+  it("a hidden xuehuan is excluded from the player's attack scan (findAttackTarget)", () => {
+    const sim = createSim(21);
+    isolateToBadger(sim);
+    const p = getPlayer(sim.state);
+    const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+    p.pos = { ...badger.pos }; p.pos.x += 0.1; // 贴脸距离，正常情况下必中
+    badger.hiddenTicks = 40; // 手动构造"隐匿中"
+    const hpBefore = badger.hp;
+    sim.step({ ...idle, attack: true });
+    expect(badger.hp).toBe(hpBefore); // 摸不到——隐匿排除了它作为攻击目标
+  });
+
+  it("a hidden xuehuan is excluded from tanshou's prey scan (nearestPrey)", () => {
+    const sim = createSim(21);
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species === "tanshou" || c.species === "xuehuan");
+    const tan = sim.state.creatures.find((c) => c.species === "tanshou")!;
+    const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+    tan.pos = { ...badger.pos }; tan.pos.x += 3; // 进入潭狩 senseRadius(22)
+    badger.hiddenTicks = 40; // 手动构造"隐匿中"
+    sim.step(idle);
+    expect(tan.aiState).toBe("patrol"); // 未被选为目标——隐匿期间对捕食者也不可见
+    expect(tan.targetId).toBeNull();
+  });
+});
