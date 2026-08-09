@@ -3,7 +3,7 @@ import { SPECIES, TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { gainEssence } from "../src/essence.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("gainEssence (unit)", () => {
   it("adds meatEaten * essenceYieldPerMeat to the victim species' essence type", () => {

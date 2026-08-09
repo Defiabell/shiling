@@ -23,7 +23,7 @@ function mkCreature(over: Partial<Creature>): Creature {
     aiState: "idle", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0, ...over,
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, ...over,
   };
 }
 function mkState(over: Partial<GameState>): GameState {
@@ -33,6 +33,8 @@ function mkState(over: Partial<GameState>): GameState {
     // M1 B2：organs/hitsTaken/organsPrevCounters 是新增的 GameState 字段，client 侧
     // 目前没有任何消费（B5 才会读 organs 做可视化），这里只补齐类型契约的最小占位值。
     organs: {}, hitsTaken: 0, organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 },
+    // M1 B3：dormancy/lastEvolution 同理——client 侧目前无消费，占位值即可。
+    dormancy: null, lastEvolution: null,
     ...over,
   };
 }

@@ -62,6 +62,14 @@ export interface Creature {
    * 挂在洞穴场景而非挖点场景，故另开一个字段而不是复用 digProgress。
    */
   nestProgress: number;
+  /**
+   * V 键（蛰伏蜕变，M1 B3，玩家专属，见 sim/src/dormancy.ts）边沿检测——镜像
+   * carryHeld/interactHeld 的写法：记录上一 tick 的 input.dormant，保证一次按键只
+   * 尝试触发一次蛰伏，长按不会在同一次按住里反复重试。蛰伏进行中（state.dormancy
+   * !==null）本字段仍照常同步，只是 tickDormancy 那时走的是另一条分支，不再拿它
+   * 判定"是否要触发"。
+   */
+  dormantHeld: boolean;
 }
 
 export interface Carcass {
@@ -92,6 +100,13 @@ export interface PlayerInput {
    * 完全独立的第三个"情境交互"字段。
    */
   carry: boolean;
+  /**
+   * V 键（蛰伏蜕变，M1 B3）：在自己家巢洞内、精气与储粮都达标时的边沿触发键——
+   * sim 侧只用它做边沿检测本身（见 Creature.dormantHeld），与 carry/interact 完全
+   * 独立的第四个"情境交互"字段。蛰伏进行中这一字段不再触发第二次（tickDormancy 的
+   * `state.dormancy !== null` 分支根本不读它做判定），持续按住不会有任何副作用。
+   */
+  dormant: boolean;
 }
 
 export interface GameState {
@@ -156,4 +171,19 @@ export interface GameState {
    * 每次 tickTemper 跑完都会把当前值写回，供下一 tick 比较。createSim 里全 0 初始化。
    */
   organsPrevCounters: { digCount: number; kills: number; hitsTaken: number };
+  /**
+   * 蛰伏蜕变进行中（M1 B3，见 sim/src/dormancy.ts）：null=未在蛰伏。ticksLeft 由
+   * tryTriggerDormancy 设为 Math.round(TUNING.dormancySec*TUNING.tickHz)，之后
+   * tickActiveDormancy 每 tick -1，归零触发 rollOrgan 并清回 null；储粮耗尽（燃料耗尽）
+   * 时同样清回 null（中断，不开奖，精气保留——见 dormancy.ts 头部设计理由）。玩家专属
+   * 全局字段（同 essence/organs 一样不挂在 Creature 上）——蛰伏是"这个人"的状态，不是
+   * 某个生物实例的属性。
+   */
+  dormancy: null | { ticksLeft: number };
+  /**
+   * 最近一次开奖结果（M1 B3，client B5 的蜕变揭示卡消费）：null=从未开奖过。写入后不
+   * 清除（"读后不清除，按 tick 判新"——plan 原话），下一次 rollOrgan 直接整体覆盖，不
+   * 追加历史。replacedId 是被替换掉的旧器官 id（该槽此前为空则为 null）。
+   */
+  lastEvolution: { organId: string; slot: OrganSlot; replacedId: string | null; tick: number } | null;
 }

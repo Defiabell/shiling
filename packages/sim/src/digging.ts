@@ -70,6 +70,9 @@ function buildHomeNest(state: GameState, p: Creature, terrain: Terrain): void {
 export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
+  // 蛰伏中（M1 B3）：玩家专属输入系统整体锁死，见 dormancy.ts 头部注释——包括出洞，
+  // 蛰伏进行中按 E 不会有任何效果。
+  if (state.dormancy !== null) return;
   if (p.carryingCarcassId !== null) return;
 
   const moving = input.moveX !== 0 || input.moveZ !== 0;

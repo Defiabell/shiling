@@ -3,7 +3,7 @@ import { ORGANS, ORGAN_LIST, SPECIES, TUNING } from "@shiling/content";
 import { createSim, DT, getPlayer } from "../src/sim.js";
 import { getModifiers, tickTemper } from "../src/organs.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("ORGANS content data", () => {
   it("has exactly 12 rollable organs in ORGAN_LIST, excluding the innate shenzhong", () => {

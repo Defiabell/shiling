@@ -56,6 +56,9 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
 export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
+  // 蛰伏中（M1 B3）：玩家专属输入系统整体锁死，见 dormancy.ts 头部注释——本系统只做
+  // 早退，state.dormancy 本身的推进/清空完全由 tickDormancy（排在本系统之前）负责。
+  if (state.dormancy !== null) return;
   // organ modifier（M1 B2）：walkSpeedMult/swimSpeedMult 按玩家"当前"是否在水里二选一
   // ——探测口径与 moveCreature 内部的 `terrain.isWater(c.pos...)` 完全一致（同一 tick、
   // 同一起始位置），跟冲刺乘数不同，这两个是"地形二选一"而不是"都乘一遍"。

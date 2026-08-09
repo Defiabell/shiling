@@ -3,7 +3,7 @@ import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { getModifiers } from "../src/organs.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("player hunting & eating", () => {
   function isolate(sim: ReturnType<typeof createSim>) {
@@ -64,7 +64,7 @@ describe("player hunting & eating", () => {
     const p = getPlayer(sim.state);
     sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 2 });
     sim.step({ ...idle, interact: true });
-    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false });
+    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false });
     expect(p.activity).not.toBe("eating");
     for (let i = 0; i < TUNING.tickHz * 2; i++) sim.step({ ...idle, interact: true });
     expect(sim.state.carcasses.some((c) => c.id === 999)).toBe(false); // 2 肉早被吃光

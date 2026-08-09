@@ -3,7 +3,7 @@ import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { getModifiers } from "../src/organs.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("tanshou ai", () => {
   it("hunts and damages the player", () => {

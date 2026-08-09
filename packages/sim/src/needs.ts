@@ -13,7 +13,18 @@ export function killCreature(state: GameState, c: Creature): void {
   c.activity = "dead"; c.hp = 0;
   const def = SPECIES[c.species]!;
   state.carcasses.push({ id: c.id, species: c.species, pos: { ...c.pos }, meat: def.meat });
-  if (c.id === state.playerId) { state.playerDead = true; return; }
+  if (c.id === state.playerId) {
+    state.playerDead = true;
+    // M1 B3 防御性收口（code review 2026-08-10）：玩家若恰好蛰伏中死亡（例如口渴归零，
+    // 蛰伏期间没有饮水手段——见 dormancy.ts 头部对这一已知设计缺口的说明），tickDormancy
+    // 的 `p.activity === "dead"` 早退会让它此后永远不再触碰 state.dormancy，字段会卡在
+    // 死前那一刻的 ticksLeft 上一直不清零。今天这个卡住的字段没有任何可见副作用
+    // （hud.ts 一旦 dead 就整体不再读它；唯一的复活路径是 location.reload() 整页刷新，
+    // 清空全部 JS 状态）——但显式清空成本几乎为零，且比"依赖死亡永远是终局"这条隐含假设
+    // 更稳，为 M1 之后可能出现的复活/转世机制预先兜底。
+    state.dormancy = null;
+    return;
+  }
   state.creatures = state.creatures.filter((x) => x.id !== c.id);
 }
 

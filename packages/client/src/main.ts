@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
+import { createSim, DT, dist2d, getPlayer, isDormancyEligible, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
@@ -169,6 +169,14 @@ function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
  * terrain.digSpots for state.homeNest?.spotId (sim itself only stores the id,
  * not a cached position) rather than reaching into digging.ts/eating.ts
  * internals.
+ *
+ * M1 B3（蛰伏蜕变）additions: dormant is a direct read of state.dormancy!==null
+ * (nothing to re-derive — sim owns this flag outright). dormancyEligible is the
+ * one exception to "HUD re-derives its own read-only copy of sim's judgment
+ * calls" — the trigger condition (in own nest + essence + stash thresholds) is
+ * exactly sim's own tryTriggerDormancy predicate, so this calls @shiling/sim's
+ * exported `isDormancyEligible(state)` directly rather than duplicating
+ * TUNING.essenceThreshold/dormancyStashCost comparisons here.
  */
 function computeHudContext(terrain: Terrain, state: GameState, player: Creature): HudContext {
   const nearDigSpot = terrain.digSpots.some((spot) => dist2d(player.pos, spot.pos) <= TUNING.interactRange);
@@ -194,6 +202,8 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     stash: state.homeNest?.stash ?? 0,
     inOwnBurrow,
     nestBuildPct,
+    dormant: state.dormancy !== null,
+    dormancyEligible: isDormancyEligible(state),
   };
 }
 
@@ -364,6 +374,33 @@ if (import.meta.env.DEV) {
     getAudioContextState: () => audio.getContextState(),
     getAudioMuted: () => audio.isMuted(),
     getAudioMasterGain: () => audio.getMasterGainValue(),
+    // M1 B3（蛰伏蜕变）verification hooks: expose just enough read-only state for
+    // an external Playwright script to drive the whole essence→dormancy→organ-roll
+    // loop and assert on it, without reaching into sim internals.
+    getEssence: () => ({ ...sim.state.essence }),
+    // 与 getEssence/getOrgans 同一惯例：浅拷贝而非直接返回内部引用，避免调用方（外部
+    // Playwright 脚本）意外拿到一份会随后续 sim.step() 悄悄突变的对象。
+    getDormancy: () => (sim.state.dormancy ? { ...sim.state.dormancy } : null),
+    getLastEvolution: () => (sim.state.lastEvolution ? { ...sim.state.lastEvolution } : null),
+    getOrgans: () => ({ ...sim.state.organs }),
+    getBehaviorStats: () => ({ ...sim.state.behaviorStats }),
+    // Verification-only shortcut (mirrors warpTo's rationale above): reaching the
+    // V-eligible state legitimately requires hunting + nest-building + 45 real
+    // seconds of dormancy, which is impractical to drive through a real Playwright
+    // browser session end-to-end. This lets an external script instantly place the
+    // player in their own (freshly marked-dug) nest with a given essence/stash so it
+    // can verify the HUD's V-prompt/status-line rendering and the real dormancy tick
+    // loop without re-deriving sim internals from outside.
+    debugForceNestAndEssence: (stash: number, essence: Partial<Record<string, number>>) => {
+      const spot = sim.terrain.digSpots[0]!;
+      spot.dug = true;
+      const player = getPlayer(sim.state);
+      player.burrowId = spot.id;
+      player.locomotion = "burrow";
+      player.pos = { ...spot.pos };
+      sim.state.homeNest = { spotId: spot.id, stash };
+      Object.assign(sim.state.essence, essence);
+    },
   };
 }
 

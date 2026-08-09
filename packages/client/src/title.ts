@@ -207,7 +207,8 @@ export function showTitle(modelsReady: Promise<unknown>, onEnter: () => void): v
   // M1 postfix N1（叼运/筑巢/储粮）：补上 C——与 pause.ts 的完整操作列表同步更新，
   // 不留其一遗漏（这里仍是一句精简提示，不逐字复述 pause 面板的完整说明）。
   // M1 postfix N3（程序化音效）：追加 M 静音——同一套"两处都要同步更新"的惯例。
-  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　C 叼运　Esc 暂停　M 静音";
+  // M1 B3（蛰伏蜕变）：追加 V 蛰伏——同一套惯例，插在 C 之后。
+  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　C 叼运　V 蛰伏　Esc 暂停　M 静音";
 
   overlay.append(main, sub, button, hint);
   document.body.appendChild(overlay);

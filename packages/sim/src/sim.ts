@@ -10,6 +10,7 @@ import { tickAi } from "./ai.js";
 import { tickNeeds } from "./needs.js";
 import { tickCarrying } from "./carrying.js";
 import { tickTemper } from "./organs.js";
+import { tickDormancy } from "./dormancy.js";
 
 export const DT = 1 / TUNING.tickHz;
 
@@ -79,6 +80,7 @@ export function spawnCreature(
     carryingCarcassId: null,
     carryHeld: false,
     nestProgress: 0,
+    dormantHeld: false,
   };
   state.creatures.push(c);
   return c;
@@ -98,6 +100,8 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
     organs: { innate: { organId: "shenzhong", temper: 50 } },
     hitsTaken: 0, // M1 B2：全 0 初始化，见 state.ts 字段注释
     organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 }, // M1 B2：全 0 初始化
+    dormancy: null, // M1 B3：未在蛰伏
+    lastEvolution: null, // M1 B3：从未开奖过
   };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
@@ -114,6 +118,13 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       // 放在 tick 递增之后、其它系统之前——纯粹是"每 tick 必然发生一次"的全局状态更新，
       // 不依赖也不影响任何后续系统的执行顺序。
       state.timeOfDay = (state.timeOfDay + DT / TUNING.dayLengthSec) % 1;
+      // 蛰伏（M1 B3）排在系统链最前面：它要在本 tick 决定 state.dormancy 是否为真，
+      // 好让紧接着的 movePlayer/tickDigging/tickEating/tickCarrying（玩家专属输入系统）
+      // 能各自在自己文件顶部读到这一 tick 最新的 dormancy 状态并整体早退——"least
+      // invasive wiring"：本文件不需要在这四个调用点外面包一层 if，四个系统各自守卫
+      // 自己（见 dormancy.ts 头部注释）。tickTemper/tickAi/tickNeeds 刻意不受影响
+      // （理由同样见 dormancy.ts 头注）。
+      tickDormancy(state, input, rng);
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
       tickDigging(state, terrain, input); // (Task 8; 筑巢分支：M1 postfix N1)

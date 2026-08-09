@@ -60,4 +60,8 @@ export const TUNING = {
   temperGainDigComplete: 8,  // limbs 系（digSpeedMult）器官：挖洞完成时的一次性增量
   temperGainHitTaken: 3,     // back 系（damageTakenMult）器官：玩家被直接命中时的一次性增量
   temperGainPassivePerSec: 0.05, // sense/prey 系（senseRadiusAdd/preyNoticeMult）被动缓慢增长速率
+  // M1 B3（蛰伏蜕变——见上面同一份计划文档的 B3 一节）：五因子开奖的槽位惩罚，与蛰伏期间
+  // 由储粮供给的加速代谢倍率。全部节奏参数集中在这里，sim/src/dormancy.ts 只读不改字面量。
+  rollOccupiedSlotPenalty: 0.3, // 候选器官所在槽已被占用时的权重折扣（鼓励换槽而非刷同槽）
+  dormancyHungerDecayMult: 1.5, // 蛰伏期间饥饿衰减倍率（相对 hungerDecayPerSec 的基础 1x）
 } as const;

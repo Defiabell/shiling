@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TUNING } from "@shiling/content";
 import { createSim, DT } from "../src/sim.js";
 
-const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const IDLE = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("createSim", () => {
   it("spawns player and world creatures", () => {

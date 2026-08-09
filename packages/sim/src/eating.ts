@@ -76,6 +76,10 @@ import type { Terrain } from "./terrain.js";
 export function tickEating(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
+  // 蛰伏中（M1 B3）：玩家专属输入系统整体锁死，见 dormancy.ts 头部注释——本系统的家巢
+  // 自动进食分支（下面的 burrow 分支）在蛰伏期间整体让位给 dormancy.ts 自己的
+  // feedFromStash（衰减倍率不同，1x vs 1.5x，两条路径绝不能同时跑，否则会重复扣 stash）。
+  if (state.dormancy !== null) return;
 
   if (p.burrowId !== null) {
     // 自动进食：只认"人在自己家"这一个条件（p.burrowId === state.homeNest.spotId），

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("headless ecology", () => {
   it("runs 10 sim-minutes without collapse or NaN", () => {

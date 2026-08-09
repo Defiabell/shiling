@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 function placeAtSpot(sim: ReturnType<typeof createSim>) {
   const p = getPlayer(sim.state);
@@ -31,7 +31,7 @@ describe("digging", () => {
     const sim = createSim(11);
     const { p, spot } = placeAtSpot(sim);
     sim.step({ ...idle, interact: true });
-    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false });
+    sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false });
     expect(p.activity).not.toBe("digging");
     expect(spot.dug).toBe(false);
     expect(sim.state.behaviorStats.digCount).toBe(0); // 被打断，没有真正完成，不计数

@@ -92,6 +92,9 @@ function dropCarried(state: GameState, terrain: Terrain, p: Creature): void {
 export function tickCarrying(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
+  // 蛰伏中（M1 B3）：玩家专属输入系统整体锁死，见 dormancy.ts 头部注释——蛰伏前提本就
+  // 要求"在自己家巢洞内"，理论上不可能叼着东西触发，这里仍显式早退防御将来变化。
+  if (state.dormancy !== null) return;
 
   // 兜底：叼着的尸体这一 tick 若已经被吃空移除（见上方 tick 顺序一节），清空引用，
   // 不让下面的"跟随"逻辑对着一个不存在的 id 空跑。

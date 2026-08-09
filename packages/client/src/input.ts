@@ -20,6 +20,8 @@ const GAME_KEYS = new Set([
   "ArrowDown",
   // M1 postfix N1（叼运/筑巢/储粮）：C 键叼起/放下附近的尸体，PlayerInput.carry。
   "KeyC",
+  // M1 B3（蛰伏蜕变）：V 键——在自己家巢洞内、精气与储粮达标时触发蜕变，PlayerInput.dormant。
+  "KeyV",
 ]);
 
 interface KeyState {
@@ -35,6 +37,7 @@ interface KeyState {
   arrowUp: boolean;
   arrowDown: boolean;
   c: boolean;
+  v: boolean;
 }
 
 /**
@@ -182,6 +185,7 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
     arrowUp: false,
     arrowDown: false,
     c: false,
+    v: false,
   };
   let dragging = false; // 右键拖拽中
   let attackHeld = false; // 左键按住
@@ -216,6 +220,9 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         break;
       case "KeyC":
         keys.c = pressed;
+        break;
+      case "KeyV":
+        keys.v = pressed;
         break;
       case "ArrowLeft":
         keys.arrowLeft = pressed;
@@ -305,7 +312,9 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         // 东西（digging.ts 的 carryingCarcassId!==null 早退守卫 + carrying.ts 的
         // burrowId!==null 拾起守卫，两者互斥），这里 carry:false 只是与 attack:false
         // 同一套防御性收口，不依赖 sim 侧的隐含前提。
-        return { moveX: 0, moveZ: 0, sprint: false, interact, attack: false, carry: false };
+        // M1 B3（蛰伏蜕变）：dormant 不在这个早退分支里被清零——洞中恰恰是唯一能触发
+        // 蛰伏的地方，V 必须在这里也能读到真实按键状态。
+        return { moveX: 0, moveZ: 0, sprint: false, interact, attack: false, carry: false, dormant: keys.v };
       }
       const fwd = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
       const strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
@@ -318,6 +327,7 @@ export function createInput(canvas: HTMLCanvasElement, isPlayerBurrowed: () => b
         // Post-fix-6：J OR 左键，两者完全等价（见文件头注释）。
         attack: attackHeld || keys.j,
         carry: keys.c,
+        dormant: keys.v,
       };
     },
     camDelta() {

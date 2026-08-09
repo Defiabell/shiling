@@ -3,7 +3,7 @@ import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { getModifiers } from "../src/organs.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 function isolate(sim: ReturnType<typeof createSim>) {
   // 清掉潭狩避免干扰（同 eating.test.ts 的手法）。

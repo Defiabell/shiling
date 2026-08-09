@@ -35,6 +35,18 @@ export interface HudContext {
    * digging.ts 的筑巢分支），不会有"正在筑巢但传进来的百分比恰好是 0"这种歧义。
    */
   nestBuildPct: number;
+  /**
+   * M1 B3（蛰伏蜕变）：state.dormancy!==null——玩家正处于蛰伏中（见 sim/src/dormancy.ts）。
+   * 蛰伏中锁死所有其它情境提示（out-burrow/筑巢等都不再显示，见 contextPrompt），状态行
+   * 改显示「蛰伏中……」（见 statusLabel）。
+   */
+  dormant: boolean;
+  /**
+   * M1 B3：触发条件——在自己家巢内 ＋ 任一精气达标 ＋ stash 达标——是否满足（不含 V 边沿
+   * 本身，纯粹是"这一刻按下 V 会不会真的触发"的只读复述）。main.ts 直接调用 sim 导出的
+   * `isDormancyEligible(state)` 算出，不在 client 侧重复精气/stash 阈值判断。
+   */
+  dormancyEligible: boolean;
 }
 
 export interface Hud {
@@ -479,12 +491,23 @@ export interface ContextPrompt {
  * 的洞里就自动吃"，不需要任何提示（HUD 改用 Part 2 新增的"储粮 N"状态行展示，见
  * statusLabel）。ctx.nearNest/ctx.stash 两个字段仍然保留在 HudContext 上——叼着时
  * 的"存粮"/"放下"判断（上面那一档）依旧要用到它们，只是不再喂给这个已删除的提示词。
+ *
+ * M1 B3（蛰伏蜕变）在"burrowed"这一档内部再插一层优先级，仍然整体排在最前面（蛰伏的
+ * 前提本就是"在自己家巢洞内"，与其它三档天然互斥）：
+ *   - ctx.dormant 为真（已经在蛰伏中）：整段返回 null——蛰伏期间所有输入系统都已锁死
+ *     （见 dormancy.ts），此刻按任何键都没有效果，不应该显示"出洞"这种实际按不动的
+ *     假提示；唯一还在更新的可见信息是 statusLabel 的「蛰伏中……」状态行。
+ *   - 未在蛰伏但 ctx.dormancyEligible 为真（在自己家、精气与储粮都达标）：显示「V 蛰伏」，
+ *     取代原本会显示的「出洞」——这一档只可能出现在 ctx.inOwnBurrow 为真时（未成家的
+ *     洞穴不满足 isDormancyEligible 的前提），所以不需要再叠一层 inOwnBurrow 判断。
  */
 // exported for hud.test.ts — pure, DOM-free priority-chain logic worth pinning
 // down directly (code review 2026-08-09: this is exactly the class of function
 // that would have caught the stash-prompt accent-slice bug with one assertion).
 export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt | null {
   if (player.burrowId !== null) {
+    if (ctx.dormant) return null;
+    if (ctx.dormancyEligible) return { word: "蛰伏", key: "V" };
     return ctx.inOwnBurrow ? { word: "出洞", key: "E" } : { word: "筑巢", key: "E" };
   }
   if (ctx.carrying) return ctx.nearNest ? { word: "存粮", key: "C" } : { word: "放下", key: "C" };
@@ -513,11 +536,16 @@ export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt 
  * string when it actually differs from the last one written, so flooring
  * here is what makes that comparison naturally throttle to "once per whole
  * unit consumed" instead of firing every single tick's fractional decrement.
+ *
+ * M1 B3：ctx.dormant 优先于其它任何 burrowed 分支——蛰伏中不再显示储粮数字（stash 仍在
+ * 变化，但玩家此刻是"睡着"的，不是"清醒地看着粮仓余量"，展示上统一收敛成一句「蛰伏
+ * 中……」），也不需要区分 inOwnBurrow（蛰伏的前提本就是在自己家）。
  */
 // exported for hud.test.ts — same "pure, DOM-free, worth pinning down directly"
 // rationale as contextPrompt above.
 export function statusLabel(player: Creature, ctx: HudContext): string {
   if (player.burrowId !== null) {
+    if (ctx.dormant) return "蛰伏中……";
     if (ctx.inOwnBurrow) return `巢中休息——储粮 ${Math.floor(ctx.stash)}`;
     return "洞中休息";
   }

@@ -4,7 +4,7 @@ import { createSim, getPlayer, spawnCreature } from "../src/sim.js";
 import { createRng } from "../src/rng.js";
 import { killCreature } from "../src/needs.js";
 
-const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
+const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 describe("tickNeeds", () => {
   it("hunger and thirst decay over time", () => {

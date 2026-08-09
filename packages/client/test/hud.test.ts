@@ -10,7 +10,7 @@ function mkPlayer(over: Partial<Creature> = {}): Creature {
     aiState: "idle", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0,
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
     ...over,
   };
 }
@@ -18,6 +18,7 @@ function mkPlayer(over: Partial<Creature> = {}): Creature {
 const baseCtx: HudContext = {
   nearWater: false, nearCarcass: false, nearDigSpot: false, nearPrey: false,
   carrying: false, nearNest: false, stash: 0, inOwnBurrow: false, nestBuildPct: 0,
+  dormant: false, dormancyEligible: false,
 };
 
 describe("contextPrompt", () => {
@@ -68,6 +69,26 @@ describe("contextPrompt", () => {
   it("falls through to 饮水 when nothing else applies", () => {
     expect(contextPrompt({ ...baseCtx, nearWater: true }, mkPlayer())).toEqual({ word: "饮水", key: "E" });
   });
+
+  // M1 B3（蛰伏蜕变）：见 hud.ts contextPrompt 头部注释新增的这一小节。
+  it("burrowed at home and eligible shows 蛰伏 (V), taking priority over 出洞", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(contextPrompt({ ...baseCtx, inOwnBurrow: true, dormancyEligible: true }, p)).toEqual({
+      word: "蛰伏", key: "V",
+    });
+  });
+
+  it("burrowed at home but NOT eligible falls back to 出洞 (unchanged pre-B3 behavior)", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(contextPrompt({ ...baseCtx, inOwnBurrow: true, dormancyEligible: false }, p)).toEqual({
+      word: "出洞", key: "E",
+    });
+  });
+
+  it("already dormant shows no prompt at all, even though still eligible/burrowed", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(contextPrompt({ ...baseCtx, inOwnBurrow: true, dormancyEligible: true, dormant: true }, p)).toBeNull();
+  });
 });
 
 // postfix-9 Part 2：巢中休息状态行——burrowed-at-home 展示的是 stash 数量，取代泛用的
@@ -106,5 +127,12 @@ describe("statusLabel", () => {
 
   it("idle on land shows nothing", () => {
     expect(statusLabel(mkPlayer(), baseCtx)).toBe("");
+  });
+
+  // M1 B3（蛰伏蜕变）：dormant 优先于 stash 行，且不需要 inOwnBurrow 单独判断——见
+  // hud.ts statusLabel 头部注释新增的这一小节。
+  it("dormant shows 蛰伏中……, taking priority over the stash line", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(statusLabel(p, { ...baseCtx, inOwnBurrow: true, stash: 87.9, dormant: true })).toBe("蛰伏中……");
   });
 });
