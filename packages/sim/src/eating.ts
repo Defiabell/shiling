@@ -3,6 +3,7 @@ import { DT } from "./sim.js";
 import { dist2d } from "./vec.js";
 import { killCreature } from "./needs.js";
 import { gainEssence } from "./essence.js";
+import { getModifiers } from "./organs.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import type { Terrain } from "./terrain.js";
 
@@ -91,7 +92,11 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
     // 分成两条不重叠的收益，逼玩家不能只窝在家里囤粮过日子，仍要出门捕猎才能推进
     // 进化系统。
     if (state.homeNest && p.burrowId === state.homeNest.spotId && state.homeNest.stash > 0 && p.needs.hunger < TUNING.homeNestAutoEatHungerCap) {
-      const eaten = Math.min(state.homeNest.stash, TUNING.eatMeatPerSec * DT);
+      // organ modifier（M1 B2）：eatSpeedMult（滤颚）也加速嚼储粮——同一副颚，无论吃的
+      // 是鲜尸还是存粮都吃得快；decay-compensation 那项（+hungerDecayPerSec*DT）保持
+      // 不变，只有 eaten 本身随吃得更快而变大，公式结构与洞外分支同源。
+      const eatRate = TUNING.eatMeatPerSec * getModifiers(state).eatSpeedMult;
+      const eaten = Math.min(state.homeNest.stash, eatRate * DT);
       state.homeNest.stash -= eaten;
       p.needs.hunger = Math.min(100, p.needs.hunger + eaten * TUNING.hungerPerMeat + TUNING.hungerDecayPerSec * DT);
     }
@@ -112,7 +117,8 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
     const target = findAttackTarget(state, p);
     if (target) {
       if (p.attackCooldown <= 0) {
-        target.hp -= atk.attackDamage;
+        // organ modifier（M1 B2）：attackDamageAdd（裂颌/掘爪）加在玩家自己的撕咬伤害上。
+        target.hp -= atk.attackDamage + getModifiers(state).attackDamageAdd;
         p.attackCooldown = TUNING.attackCooldownSec;
         p.activity = "attacking";
         if (target.hp <= 0) {
@@ -155,7 +161,10 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
   const carcass = state.carcasses[carcassIdx]!;
   p.activity = "eating";
   p.feedingCarcassId = carcass.id;
-  const eaten = Math.min(carcass.meat, TUNING.eatMeatPerSec * DT);
+  // organ modifier（M1 B2）：eatSpeedMult（滤颚）加速吃鲜尸——decay-compensation
+  // 那项（下方 +hungerDecayPerSec*DT）不受影响，只有 eaten 本身随吃得更快而变大。
+  const eatRate = TUNING.eatMeatPerSec * getModifiers(state).eatSpeedMult;
+  const eaten = Math.min(carcass.meat, eatRate * DT);
   carcass.meat -= eaten;
   // 精气（M1 B1，essence.ts）：只有这条"洞外吃真实尸体"分支调用——巢中吃 stash 的
   // burrow 分支（本文件顶部）刻意不调用，见 essence.ts 头注的设计权衡。

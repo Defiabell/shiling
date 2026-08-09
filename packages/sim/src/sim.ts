@@ -9,6 +9,7 @@ import { tickEating } from "./eating.js";
 import { tickAi } from "./ai.js";
 import { tickNeeds } from "./needs.js";
 import { tickCarrying } from "./carrying.js";
+import { tickTemper } from "./organs.js";
 
 export const DT = 1 / TUNING.tickHz;
 
@@ -91,6 +92,12 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
     timeOfDay: 0.3, // M1 B1：spawn 初值=上午（[0,1) 环绕，0=黎明）
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 }, // M1 B1：玩家精气，全 0 初始化
     behaviorStats: { swimSec: 0, digCount: 0, sprintSec: 0, kills: 0 }, // M1 B1：全 0 初始化
+    // M1 B2：本命「神种」出生即装，占 innate 槽且不可替换；六个可替换槽初始留空
+    // （键不存在，不是空对象占位）。temper 初值 50——数据模型定的固定出生值，不是
+    // 从任何公式推出来的。
+    organs: { innate: { organId: "shenzhong", temper: 50 } },
+    hitsTaken: 0, // M1 B2：全 0 初始化，见 state.ts 字段注释
+    organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 }, // M1 B2：全 0 初始化
   };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
@@ -117,6 +124,16 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       // carryingCarcassId（见 carrying.ts 头注）。放在 tickAi 之前只是顺着"玩家专属
       // 系统分组在一起，NPC 系统统一殿后"的既有习惯，无强依赖。
       tickCarrying(state, terrain, input);
+      // 器官用进（M1 B2）：必须排在 tickDigging/tickEating/tickCarrying 之后——它要 diff
+      // 的 digCount/kills 计数器（分别在 tickDigging/tickEating 里递增）和 p.activity===
+      // "eating"（tickEating 设置）都要是"本 tick 的最终值"才能被正确判定为"这一 tick
+      // 新发生了一次"，不能排在它们前面（会读到上一 tick 的残留值，一律漏判）。必须排在
+      // tickAi 之前——tickAi 会跑苓鼠的 preyNoticeMult 判定/潭狩的 damageTakenMult 判定，
+      // 这两处都要读"本 tick 生效的 temper 缩放后的 modifiers"，理应用同一批 temper 值，
+      // 不应该在同一 tick 内先旧后新地被 tickTemper 抽走一次地基。tanshou 造成的
+      // hitsTaken 增量因此要等到下一 tick 才被本函数 diff 出来（见 organs.ts 头注），
+      // 一 tick=50ms 的延迟不影响体感。
+      tickTemper(state, input);
       tickAi(state, terrain, rng); // (Task 9)
       tickNeeds(state, terrain, input); // (Task 7)
     },

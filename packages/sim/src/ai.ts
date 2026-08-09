@@ -2,6 +2,7 @@ import { SPECIES, TUNING, type SpeciesDef } from "@shiling/content";
 import { DT } from "./sim.js";
 import { moveCreature } from "./movement.js";
 import { killCreature } from "./needs.js";
+import { getModifiers } from "./organs.js";
 import { dist2d, norm2d } from "./vec.js";
 import type { Rng } from "./rng.js";
 import type { Creature, GameState } from "./state.js";
@@ -154,9 +155,19 @@ function resolveHunt(c: Creature, state: GameState, terrain: Terrain, def: Speci
   if (d <= def.attackRange) {
     moveCreature(c, 0, 0, false, terrain); // 站桩攻击：同步 locomotion/pos.y，不位移
     if (c.attackCooldown <= 0) {
-      target.hp -= def.attackDamage;
+      // organ modifier（M1 B2）：damageTakenMult（鳞甲/棘背）只在受害者是玩家时生效——
+      // getModifiers(state) 本身就是"玩家的聚合效果"（organs 是玩家专属的全局字段，见
+      // state.ts），target 若是别的 NPC（潭狩也会猎苓鼠），它没有 organs，不该被这个
+      // 乘数影响，所以显式判 isPlayer 才应用。
+      const isPlayerTarget = target.id === state.playerId;
+      const dmg = isPlayerTarget ? def.attackDamage * getModifiers(state).damageTakenMult : def.attackDamage;
+      target.hp -= dmg;
       c.attackCooldown = TUNING.attackCooldownSec;
       c.activity = "attacking"; // 供渲染层识别攻击帧
+      // hitsTaken（M1 B2，organs.ts 的 tickTemper 消费）：只在真正命中玩家时 +1——
+      // 与"饥饿归零掉血"（needs.ts）是两种不同的伤害语义，只有这里的"挨打"才该磨砺
+      // 护体器官的淬炼度，见 state.ts 的字段注释。
+      if (isPlayerTarget) state.hitsTaken += 1;
       if (target.hp <= 0) {
         // killCreature 会重建 state.creatures（filter 掉非玩家的 target）；
         // tickAi 的 for-of 仍在遍历旧数组引用，不受影响（旧数组里 target 对象本身
@@ -233,10 +244,18 @@ function tickLingshu(c: Creature, state: GameState, terrain: Terrain, rng: Rng):
   const senseRadius = c.aiState === "graze" ? def.senseRadius * TUNING.grazeDistractionFactor : def.senseRadius;
   const found = nearestThreat(c, state);
   const threatDist = found?.dist ?? Infinity;
+  // organ modifier（M1 B2）：preyNoticeMult（苔纹皮潜行）只在最近威胁恰好是玩家时收缩
+  // 感知半径。这个守卫不是防御性摆设——潭狩同样 diet==="carnivore"，会被 isCarnivoreThreat
+  // 判成威胁（这正是潭狩猎苓鼠这条核心捕食链的一部分，见 ai.test.ts 里那些测试为什么要先
+  // 把潭狩隔离掉再测玩家惊动苓鼠），nearestThreat 完全可能选中潭狩而不是玩家。organs 只
+  // 反映玩家的装备（见 state.ts），潭狩没有 organs，所以必须显式判"最近威胁是不是玩家"
+  // 才能应用这个乘数，否则会把玩家的器官加成错误地套在"苓鼠躲潭狩"这条无关的判定上。
+  const isPlayerThreat = found !== null && found.threat.id === state.playerId;
+  const effectiveSenseRadius = isPlayerThreat ? senseRadius * getModifiers(state).preyNoticeMult : senseRadius;
 
   // 威胁判定优先于饥饿状态机：任一状态下进入 senseRadius 都立即转 flee；
   // 已在 flee 中的则要等威胁拉开到 fleeDistance 之外才解除。
-  if (threatDist <= senseRadius) {
+  if (threatDist <= effectiveSenseRadius) {
     c.aiState = "flee";
   } else if (c.aiState === "flee" && threatDist > def.fleeDistance) {
     c.aiState = "wander";

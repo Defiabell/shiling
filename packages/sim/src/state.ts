@@ -1,4 +1,4 @@
-import type { EssenceType } from "@shiling/content";
+import type { EssenceType, OrganSlot } from "@shiling/content";
 import type { Vec3 } from "./vec.js";
 
 export type Locomotion = "walk" | "swim" | "burrow";
@@ -129,4 +129,31 @@ export interface GameState {
    * eating.ts），每处都标了 "consumed by B3 roll" 注释。
    */
   behaviorStats: { swimSec: number; digCount: number; sprintSec: number; kills: number };
+  /**
+   * 玩家已装备的器官（M1 B2）：六个可替换槽（OrganSlot）＋一个不可替换的本命槽
+   * ("innate")，Partial 因为可替换槽在开奖（B3）之前是空的。createSim 里只预装
+   * innate: { organId: "shenzhong", temper: 50 }，其余槽初始不存在（不是空对象占位，
+   * 是键根本不存在——sim/src/organs.ts 的 getModifiers/tickTemper 都用
+   * `state.organs[slot]` 判空，undefined 与"槽存在但没装"是同一件事）。
+   * 只有玩家有 organs（这是玩家专属的全局字段，不挂在任何 Creature 上，同 essence/
+   * behaviorStats 的存储方式一致）——NPC 从不读写这个字段。
+   */
+  organs: Partial<Record<OrganSlot | "innate", { organId: string; temper: number }>>;
+  /**
+   * 玩家被直接命中的次数（M1 B2，sim/src/organs.ts 的 tickTemper 内部消费，不是跨批
+   * 共享的数据模型字段）：目前唯一递增点是 ai.ts 的 tanshou resolveHunt 对玩家造成
+   * 伤害那一行。饥渴归零掉血（needs.ts 的 starve 分支）刻意不计入——"挨打"和"饿死"是
+   * 两种不同的伤害语义，只有前者才该磨砺 damageTakenMult 类护体器官（棘背/鳞甲）的
+   * 淬炼度。不放进 behaviorStats（那 4 个字段是 B1 定的跨批契约，B3 的开奖权重会读，
+   * 不应该为 B2 内部实现细节扩充它的形状）。
+   */
+  hitsTaken: number;
+  /**
+   * organs.ts 内部快照（M1 B2，非跨批共享接口）：tickTemper 用来判定"这一 tick 是否
+   * 新触发了一次离散事件"（挖洞完成/击杀/被咬中）的边沿检测基准——镜像 carryHeld/
+   * interactHeld 的边沿检测惯例，只是这里对比的是累计计数器而不是按键布尔量（这三个
+   * 计数器只增不减，直接比较"当前值 > 上次记录值"即可判定"这一 tick 新发生了一次"）。
+   * 每次 tickTemper 跑完都会把当前值写回，供下一 tick 比较。createSim 里全 0 初始化。
+   */
+  organsPrevCounters: { digCount: number; kills: number; hitsTaken: number };
 }

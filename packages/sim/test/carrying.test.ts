@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
+import { getModifiers } from "../src/organs.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
@@ -63,9 +64,12 @@ describe("carrying", () => {
     sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 30 });
     sim.step({ ...idle, carry: true }); // 叼起（本 tick movePlayer 先跑，carryingCarcassId 尚未生效）
     const start = { ...p.pos };
+    // M1 B2：本命「神种」自带 walkSpeedMult，与 carrySpeedMult 乘法叠加——机械更新
+    // 预期值把这个乘数也算进去（见 movement.test.ts 同款注释）。
+    const organMult = getModifiers(sim.state).walkSpeedMult;
     sim.step({ ...idle, moveX: 0, moveZ: 1 });
     const moved = Math.hypot(p.pos.x - start.x, p.pos.z - start.z);
-    const expected = SPECIES.youshou!.walkSpeed * TUNING.carrySpeedMult * (1 / TUNING.tickHz);
+    const expected = SPECIES.youshou!.walkSpeed * TUNING.carrySpeedMult * organMult * (1 / TUNING.tickHz);
     expect(moved).toBeCloseTo(expected, 3);
   });
 

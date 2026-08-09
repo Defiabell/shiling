@@ -50,4 +50,14 @@ export const TUNING = {
   essenceThreshold: 60,    // consumed by B3：蛰伏触发条件之一——任一精气达到此值
   dormancyStashCost: 20,   // consumed by B3：蛰伏触发/维持消耗的 stash 量
   dormancySec: 45,         // consumed by B3：蛰伏持续时长（秒）
+  // M1 B2（器官系统——见上面 B1 同一份计划文档的 B2 一节）：temper（淬炼度）缩放公式与
+  // 用进增长速率。全部节奏参数集中在这里，sim/src/organs.ts 的 getModifiers/tickTemper
+  // 只读不改字面量。
+  temperScaleBase: 0.6,    // effective = 1+(v-1)*(temperScaleBase+temperScaleSpan*t/100)（乘子）
+  temperScaleSpan: 0.4,    // 或 v*(temperScaleBase+temperScaleSpan*t/100)（加数），t=temper(0..100)
+  temperGainPerSecUse: 0.35, // 持续使用类效果（swim/sprint/eat）每秒 temper 增量
+  temperGainKill: 6,         // jaw 系（attackDamageAdd）器官：玩家亲手击杀时的一次性增量
+  temperGainDigComplete: 8,  // limbs 系（digSpeedMult）器官：挖洞完成时的一次性增量
+  temperGainHitTaken: 3,     // back 系（damageTakenMult）器官：玩家被直接命中时的一次性增量
+  temperGainPassivePerSec: 0.05, // sense/prey 系（senseRadiusAdd/preyNoticeMult）被动缓慢增长速率
 } as const;

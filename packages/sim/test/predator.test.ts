@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
+import { getModifiers } from "../src/organs.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
@@ -77,5 +78,35 @@ describe("tanshou ai", () => {
 
     const states = [t1.aiState, t2.aiState].sort();
     expect(states).toEqual(["feed", "patrol"]); // 得手的一方进食，另一方安全恢复回 patrol
+  });
+
+  // M1 B2：器官接入——装鳞甲挨咬掉血少。单 tick 精确断言，避免 temper 用进（挨打+3/tick）
+  // 在多 tick 观察窗口里悄悄把 mult 拉高造成断言漂移——满淬炼(100)本身也已顶格不会再涨。
+  it("organ modifier: damageTakenMult reduces the hit taken from tanshou when wearing full-temper linjia (装鳞甲挨咬掉血少)", () => {
+    function setupOneHit(sim: ReturnType<typeof createSim>) {
+      const p = getPlayer(sim.state);
+      const t = sim.state.creatures.find((c) => c.species === "tanshou")!;
+      sim.state.creatures = sim.state.creatures.filter((c) => c.id === p.id || c.id === t.id); // 隔离
+      t.pos = { ...p.pos }; t.pos.x += SPECIES.tanshou!.attackRange - 0.1; // 进入攻击范围
+      t.attackCooldown = 0; // 保证第一 tick 立即出手
+      return p;
+    }
+
+    const baseline = createSim(31);
+    const pBaseline = setupOneHit(baseline);
+    const hp0Baseline = pBaseline.hp;
+    baseline.step(idle);
+    const lossBaseline = hp0Baseline - pBaseline.hp;
+    expect(lossBaseline).toBeCloseTo(SPECIES.tanshou!.attackDamage, 6);
+
+    const sim = createSim(31);
+    sim.state.organs.back = { organId: "linjia", temper: 100 }; // 满淬炼 damageTakenMult 恰好 0.7
+    const mods = getModifiers(sim.state);
+    const p = setupOneHit(sim);
+    const hp0 = p.hp;
+    sim.step(idle);
+    const loss = hp0 - p.hp;
+    expect(loss).toBeCloseTo(SPECIES.tanshou!.attackDamage * mods.damageTakenMult, 6);
+    expect(loss).toBeLessThan(lossBaseline);
   });
 });

@@ -1,6 +1,7 @@
 import { TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
 import { dist2d } from "./vec.js";
+import { getModifiers } from "./organs.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import type { DigSpot, Terrain } from "./terrain.js";
 
@@ -110,7 +111,9 @@ export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInp
   if (!spot.dug) {
     if (input.interact) {
       p.activity = "digging";
-      p.digProgress += DT;
+      // organ modifier（M1 B2）：digSpeedMult（掘爪）等价于把 digDurationSec 除以这个
+      // 倍率——累积速度乘 mult 比每次都重算"剩余时长"更简单，效果等价。
+      p.digProgress += DT * getModifiers(state).digSpeedMult;
       if (p.digProgress >= TUNING.digDurationSec) {
         spot.dug = true;
         // behaviorStats.digCount（M1 B1，consumed by B3 roll）：挖点完成的瞬间计一次——

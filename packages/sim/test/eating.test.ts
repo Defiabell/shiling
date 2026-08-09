@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TUNING, SPECIES } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
+import { getModifiers } from "../src/organs.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
 
@@ -99,6 +100,39 @@ describe("player hunting & eating", () => {
     for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step(idle);
     const netPerSec = (shu.needs.hunger - 30) / secs;
     expect(netPerSec).toBeCloseTo(TUNING.grazeHungerPerSec - TUNING.hungerDecayPerSec, 1); // ≈0.45/s
+  });
+});
+
+// M1 B2：器官接入——装裂颌咬得疼、装滤颚吃得快。
+describe("organ modifiers: jaw (装裂颌咬得疼 / 装滤颚吃得快)", () => {
+  function isolate(sim: ReturnType<typeof createSim>) {
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou");
+  }
+
+  it("liehe adds attackDamageAdd to the player's own bite damage", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    sim.state.organs.jaw = { organId: "liehe", temper: 100 }; // 满淬炼 attackDamageAdd 恰好 +6
+    const p = getPlayer(sim.state);
+    const shu = sim.state.creatures.find((c) => c.species === "lingshu")!;
+    shu.pos = { ...p.pos }; shu.pos.x += 1;
+    sim.step({ ...idle, attack: true });
+    expect(shu.hp).toBeCloseTo(SPECIES.lingshu!.maxHp - (SPECIES.youshou!.attackDamage + 6), 6);
+  });
+
+  it("lve speeds up eating a fresh carcass via eatSpeedMult", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    sim.state.organs.jaw = { organId: "lve", temper: 100 }; // 满淬炼 eatSpeedMult 恰好 1.5
+    const p = getPlayer(sim.state);
+    sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 1000 });
+    const secs = 3;
+    const mods = getModifiers(sim.state);
+    for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step({ ...idle, interact: true });
+    const eaten = TUNING.eatMeatPerSec * mods.eatSpeedMult * secs;
+    expect(sim.state.carcasses[0]!.meat).toBeCloseTo(1000 - eaten, 0);
+    // 对照：默认（无 jaw 器官）同样吃 3 秒吃得更少——上面 eatMeatPerSec*secs 的裸速度。
+    expect(eaten).toBeGreaterThan(TUNING.eatMeatPerSec * secs);
   });
 });
 

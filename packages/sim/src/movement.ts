@@ -1,6 +1,7 @@
 import { SPECIES, TUNING } from "@shiling/content";
 import { norm2d } from "./vec.js";
 import { DT } from "./sim.js";
+import { getModifiers } from "./organs.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 
@@ -55,9 +56,16 @@ export function moveCreature(c: Creature, dirX: number, dirZ: number, sprint: bo
 export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
   if (!p || p.activity === "dead") return;
+  // organ modifier（M1 B2）：walkSpeedMult/swimSpeedMult 按玩家"当前"是否在水里二选一
+  // ——探测口径与 moveCreature 内部的 `terrain.isWater(c.pos...)` 完全一致（同一 tick、
+  // 同一起始位置），跟冲刺乘数不同，这两个是"地形二选一"而不是"都乘一遍"。
+  const mods = getModifiers(state);
+  const inWaterNow = terrain.isWater(p.pos.x, p.pos.z);
+  const organSpeedMult = inWaterNow ? mods.swimSpeedMult : mods.walkSpeedMult;
   // 叼着尸体减速（M1 postfix N1，carrying.ts）：走同一个 speedScale 出口，与冲刺乘数
-  // 可叠加（冲刺+叼运 = sprintMultiplier×carrySpeedMult），brief 未要求互斥。
-  const speedScale = p.carryingCarcassId !== null ? TUNING.carrySpeedMult : 1;
+  // 可叠加（冲刺+叼运 = sprintMultiplier×carrySpeedMult），brief 未要求互斥；现在再叠上
+  // 器官乘数，三者都是乘法组合，顺序无关。
+  const speedScale = (p.carryingCarcassId !== null ? TUNING.carrySpeedMult : 1) * organSpeedMult;
   moveCreature(p, input.moveX, input.moveZ, input.sprint, terrain, speedScale);
   // behaviorStats.swimSec（M1 B1，consumed by B3 roll）：看 locomotion 本身而不是"是否在
   // 移动"——moveCreature 的零输入/挡水分支同样会同步 locomotion，站在水里不动也算"泡着"。
@@ -68,7 +76,8 @@ export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInpu
   // ——client 端会屏蔽洞中的移动/冲刺输入，但 sim 是权威层，这里不加守卫就是一个 sim 级漏洞
   // （被客户端输入屏蔽掩盖，直接调 sim 或客户端校验被绕过时仍会白扣疲劳）。
   if (input.sprint && (input.moveX !== 0 || input.moveZ !== 0) && p.needs.fatigue > TUNING.minSprintFatigue && p.burrowId === null) {
-    p.needs.fatigue = Math.max(0, p.needs.fatigue - TUNING.fatigueSprintPerSec * DT);
+    // organ modifier（M1 B2）：sprintFatigueMult（疾足/平衡尾）缩放疲劳消耗速率。
+    p.needs.fatigue = Math.max(0, p.needs.fatigue - TUNING.fatigueSprintPerSec * mods.sprintFatigueMult * DT);
     // behaviorStats.sprintSec（M1 B1，consumed by B3 roll）：与疲劳消耗同一条件——这个
     // 分支被走到就是冲刺"实际生效"的定义（单纯按住 sprint 键但不满足前置条件不算）。
     state.behaviorStats.sprintSec += DT;

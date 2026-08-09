@@ -49,6 +49,44 @@ describe("digging", () => {
   });
 });
 
+// M1 B2：器官接入——装掘爪挖得快。
+describe("organ modifier: digSpeedMult (装掘爪挖得快)", () => {
+  /** 持续按住 interact 挖到 spot.dug 翻转为止，返回实际耗费的 tick 数（含安全上限防死循环）。 */
+  function ticksToComplete(sim: ReturnType<typeof createSim>, spot: ReturnType<typeof placeAtSpot>["spot"]): number {
+    const cap = Math.ceil(TUNING.digDurationSec * TUNING.tickHz) * 4; // 4x 安全余量
+    for (let i = 0; i < cap; i++) {
+      sim.step({ ...idle, interact: true });
+      if (spot.dug) return i + 1;
+    }
+    throw new Error("dig never completed within safety cap");
+  }
+
+  it("juezhua at full temper measurably completes a dig spot faster than the unarmored baseline", () => {
+    // ±2 tick 的窗口——digProgress 是逐 tick 浮点累加（+=DT*mult），累加误差可能让完成
+    // 的那一 tick 早/晚一格（同 digging.test.ts 顶部那条既有测试的做法：只卡一个窗口，
+    // 不断言精确的那一个 tick）。
+    const nominalTicks = Math.ceil(TUNING.digDurationSec * TUNING.tickHz);
+
+    const baseline = createSim(11);
+    const { spot: baselineSpot } = placeAtSpot(baseline);
+    const baselineTicks = ticksToComplete(baseline, baselineSpot);
+    expect(baselineTicks).toBeGreaterThanOrEqual(nominalTicks - 2);
+    expect(baselineTicks).toBeLessThanOrEqual(nominalTicks + 2);
+
+    const sim = createSim(11);
+    sim.state.organs.limbs = { organId: "juezhua", temper: 100 }; // 满淬炼 digSpeedMult 恰好 2
+    const { p, spot } = placeAtSpot(sim);
+    const buffedTicks = ticksToComplete(sim, spot);
+
+    expect(spot.dug).toBe(true);
+    expect(p.burrowId).toBe(spot.id);
+    // digSpeedMult=2 应让有效时长恰好减半，同样留 ±2 tick 的离散化窗口。
+    expect(buffedTicks).toBeGreaterThanOrEqual(nominalTicks / 2 - 2);
+    expect(buffedTicks).toBeLessThanOrEqual(nominalTicks / 2 + 2);
+    expect(buffedTicks).toBeLessThan(baselineTicks);
+  });
+});
+
 // M1 postfix N1（叼运/筑巢/储粮）
 describe("nest building", () => {
   /** 入洞（新按下沿）并断言真的进去了，返回 p/spot 供后续持续按住累积筑巢进度用。 */

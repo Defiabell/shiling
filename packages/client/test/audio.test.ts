@@ -30,6 +30,9 @@ function mkState(over: Partial<GameState>): GameState {
   return {
     tick: 0, playerId: 1, creatures: [], carcasses: [], playerDead: false, nextId: 100, homeNest: null,
     timeOfDay: 0.3, essence: { zu: 0, lin: 0, xue: 0, meng: 0 }, behaviorStats: { swimSec: 0, digCount: 0, sprintSec: 0, kills: 0 },
+    // M1 B2：organs/hitsTaken/organsPrevCounters 是新增的 GameState 字段，client 侧
+    // 目前没有任何消费（B5 才会读 organs 做可视化），这里只补齐类型契约的最小占位值。
+    organs: {}, hitsTaken: 0, organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 },
     ...over,
   };
 }

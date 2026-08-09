@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSim, DT, getPlayer } from "../src/sim.js";
 import { moveCreature } from "../src/movement.js";
+import { getModifiers } from "../src/organs.js";
 import { SPECIES, TUNING } from "@shiling/content";
 import type { Creature } from "../src/state.js";
 
@@ -18,9 +19,14 @@ describe("movePlayer", () => {
     const sim = createSim(3);
     const p = getPlayer(sim.state);
     const start = { ...p.pos };
+    // M1 B2：玩家出生自带本命「神种」（walkSpeedMult 1.05，temper 50 起），移动速度不再
+    // 是裸的 SPECIES.walkSpeed——预期值必须乘上 getModifiers 聚合后的 walkSpeedMult，
+    // 而不是把这个乘数当成需要绕开的噪声（旧断言在这里机械更新，语义未被弱化：仍然是
+    // "一步应该走多远"，只是走多远的公式现在包含器官加成）。
+    const mods = getModifiers(sim.state);
     sim.step({ ...idle, moveX: 1, moveZ: 0 });
     const moved = Math.hypot(p.pos.x - start.x, p.pos.z - start.z);
-    expect(moved).toBeCloseTo(SPECIES.youshou!.walkSpeed * DT, 3);
+    expect(moved).toBeCloseTo(SPECIES.youshou!.walkSpeed * mods.walkSpeedMult * DT, 3);
     expect(p.pos.y).toBeCloseTo(sim.terrain.heightAt(p.pos.x, p.pos.z), 6);
   });
   it("sprint is faster and drains fatigue", () => {
@@ -100,6 +106,26 @@ describe("movePlayer", () => {
     p.burrowId = 7; p.locomotion = "burrow";
     sim.step({ ...idle, moveZ: 1, sprint: true });
     expect(sim.state.behaviorStats.sprintSec).toBe(0);
+  });
+});
+
+// M1 B2：器官接入——装疾足走得快。
+describe("organ modifier: walkSpeedMult (装疾足走得快)", () => {
+  it("walking with a full-temper jizu equipped is faster than the unarmored baseline", () => {
+    const baseline = createSim(3);
+    const start0 = { ...getPlayer(baseline.state).pos };
+    baseline.step({ ...idle, moveX: 1, moveZ: 0 });
+    const movedBaseline = Math.hypot(getPlayer(baseline.state).pos.x - start0.x, getPlayer(baseline.state).pos.z - start0.z);
+
+    const sim = createSim(3);
+    sim.state.organs.limbs = { organId: "jizu", temper: 100 }; // walkSpeedMult 满淬炼 1.15
+    const p = getPlayer(sim.state);
+    const start = { ...p.pos };
+    const mods = getModifiers(sim.state);
+    sim.step({ ...idle, moveX: 1, moveZ: 0 });
+    const moved = Math.hypot(p.pos.x - start.x, p.pos.z - start.z);
+    expect(moved).toBeCloseTo(SPECIES.youshou!.walkSpeed * mods.walkSpeedMult * DT, 3);
+    expect(moved).toBeGreaterThan(movedBaseline);
   });
 });
 

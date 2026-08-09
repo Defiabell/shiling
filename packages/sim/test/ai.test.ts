@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TUNING } from "@shiling/content";
+import { ORGANS, SPECIES, TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { dist2d } from "../src/vec.js";
 
@@ -79,5 +79,34 @@ describe("lingshu ai", () => {
     const fatiguedDist = dist2d(beforeFatigued, shu.pos);
 
     expect(fatiguedDist).toBeLessThan(freshDist * 0.8); // 显著更慢（理论值 ×0.65）
+  });
+
+  // M1 B2：器官接入——装苔纹皮苓鼠更晚惊动。距离取满淬炼后有效半径与裸半径的中点，
+  // 两个数值都从 SPECIES/ORGANS 数据算出来，不手写魔法数字——数据表改动时这条测试
+  // 会跟着数据一起变，不会变成"断言的是过期的常量"。
+  it("organ modifier: preyNoticeMult delays lingshu noticing the player wearing full-temper taiwenpi (装苔纹皮苓鼠更晚惊动)", () => {
+    const rawSenseRadius = SPECIES.lingshu!.senseRadius;
+    // temper=100 时 scale=1.0，effective 恰好等于表里的满淬炼值——直接读表，不重复写一遍 0.85。
+    const fullTemperPreyNoticeMult = ORGANS.taiwenpi!.effects.preyNoticeMult!;
+    const midDist = (rawSenseRadius + rawSenseRadius * fullTemperPreyNoticeMult) / 2; // 落在"缩水后半径"与"裸半径"之间
+
+    function place(sim: ReturnType<typeof createSim>, dist: number) {
+      sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou"); // 隔离
+      const p = getPlayer(sim.state);
+      const shu = sim.state.creatures.find((c) => c.species === "lingshu")!;
+      p.pos = { ...shu.pos }; p.pos.x += dist;
+      return { p, shu };
+    }
+
+    const baseline = createSim(21);
+    const { shu: shuBaseline } = place(baseline, midDist);
+    baseline.step(idle);
+    expect(shuBaseline.aiState).toBe("flee"); // 无器官：midDist < 裸半径，正常惊动
+
+    const sim = createSim(21);
+    sim.state.organs.skin = { organId: "taiwenpi", temper: 100 };
+    const { shu } = place(sim, midDist);
+    sim.step(idle);
+    expect(shu.aiState).not.toBe("flee"); // 满淬炼苔纹皮：有效半径缩到裸半径以下，midDist 未被惊动
   });
 });
