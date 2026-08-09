@@ -41,4 +41,13 @@ export const TUNING = {
   // eating.ts 的 burrow 分支。95 而不是 100：留一点点"没有完全吃饱"的余地，避免每次
   // 一进洞就立刻在饥饿环顶格卡死不动（同时也让"是否要出门再猎一次"仍然是个真问题）。
   homeNestAutoEatHungerCap: 95,
+  // M1 B1（进化系统——见 docs/plans/shiling/2026-08-10-m1-evolution-plan.md）：昼夜时钟与
+  // 精气。dayLengthSec/essenceCap 本批（sim.ts 的 timeOfDay 环绕、essence.ts 的 clamp）
+  // 就消费；essenceThreshold/dormancyStashCost/dormancySec 是 B3 蛰伏蜕变的触发/消耗参数，
+  // 提前一次加齐（避免 B1/B3 分两次动这个文件），本批不读取。
+  dayLengthSec: 300,       // 一个完整昼夜循环的秒数（sim.ts 的 timeOfDay += DT/dayLengthSec）
+  essenceCap: 200,         // 单类精气上限（essence.ts 的 gainEssence clamp）
+  essenceThreshold: 60,    // consumed by B3：蛰伏触发条件之一——任一精气达到此值
+  dormancyStashCost: 20,   // consumed by B3：蛰伏触发/维持消耗的 stash 量
+  dormancySec: 45,         // consumed by B3：蛰伏持续时长（秒）
 } as const;

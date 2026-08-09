@@ -11,7 +11,11 @@ function mkCreature(over: Partial<Creature>): Creature {
     carryingCarcassId: null, carryHeld: false, nestProgress: 0, ...over };
 }
 function mkState(over: Partial<GameState>): GameState {
-  return { tick: 0, playerId: 99, creatures: [], carcasses: [], playerDead: false, nextId: 100, homeNest: null, ...over };
+  return {
+    tick: 0, playerId: 99, creatures: [], carcasses: [], playerDead: false, nextId: 100, homeNest: null,
+    timeOfDay: 0.3, essence: { zu: 0, lin: 0, xue: 0, meng: 0 }, behaviorStats: { swimSec: 0, digCount: 0, sprintSec: 0, kills: 0 },
+    ...over,
+  };
 }
 
 describe("createSimEventDiffer", () => {

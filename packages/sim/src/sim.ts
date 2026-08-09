@@ -86,7 +86,12 @@ export function spawnCreature(
 export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): Sim {
   const rng = createRng(seed);
   const terrain = terrainFactory(seed, params);
-  const state: GameState = { tick: 0, playerId: 0, nextId: 1, creatures: [], carcasses: [], playerDead: false, homeNest: null };
+  const state: GameState = {
+    tick: 0, playerId: 0, nextId: 1, creatures: [], carcasses: [], playerDead: false, homeNest: null,
+    timeOfDay: 0.3, // M1 B1：spawn 初值=上午（[0,1) 环绕，0=黎明）
+    essence: { zu: 0, lin: 0, xue: 0, meng: 0 }, // M1 B1：玩家精气，全 0 初始化
+    behaviorStats: { swimSec: 0, digCount: 0, sprintSec: 0, kills: 0 }, // M1 B1：全 0 初始化
+  };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
   for (const s of params.spawns) {
@@ -98,6 +103,10 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
     terrain,
     step(input: PlayerInput) {
       state.tick++;
+      // 昼夜时钟（M1 B1，client B5 消费）：[0,1) 环绕，一圈耗时 TUNING.dayLengthSec 秒。
+      // 放在 tick 递增之后、其它系统之前——纯粹是"每 tick 必然发生一次"的全局状态更新，
+      // 不依赖也不影响任何后续系统的执行顺序。
+      state.timeOfDay = (state.timeOfDay + DT / TUNING.dayLengthSec) % 1;
       // 系统按序执行；后续任务逐个填入：
       movePlayer(state, terrain, input); // (Task 6)
       tickDigging(state, terrain, input); // (Task 8; 筑巢分支：M1 postfix N1)

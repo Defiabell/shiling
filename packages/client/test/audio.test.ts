@@ -27,7 +27,11 @@ function mkCreature(over: Partial<Creature>): Creature {
   };
 }
 function mkState(over: Partial<GameState>): GameState {
-  return { tick: 0, playerId: 1, creatures: [], carcasses: [], playerDead: false, nextId: 100, homeNest: null, ...over };
+  return {
+    tick: 0, playerId: 1, creatures: [], carcasses: [], playerDead: false, nextId: 100, homeNest: null,
+    timeOfDay: 0.3, essence: { zu: 0, lin: 0, xue: 0, meng: 0 }, behaviorStats: { swimSec: 0, digCount: 0, sprintSec: 0, kills: 0 },
+    ...over,
+  };
 }
 
 // 固定的伪随机序列——同一份数字既喂给白噪声也喂给棕噪声，保证"棕噪声更平滑"这个

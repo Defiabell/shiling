@@ -1,3 +1,4 @@
+import type { EssenceType } from "@shiling/content";
 import type { Vec3 } from "./vec.js";
 
 export type Locomotion = "walk" | "swim" | "burrow";
@@ -106,4 +107,26 @@ export interface GameState {
    * 因为 M1 的设计就是"单一巢穴"，不支持多巢共存。
    */
   homeNest: { spotId: number; stash: number } | null;
+  /**
+   * 昼夜时钟（M1 B1）：[0,1) 环绕，0=黎明；每 tick 由 sim.ts 的 step() 累加
+   * DT/TUNING.dayLengthSec 并取模。玩家全局字段（不挂在任何单个生物上），createSim
+   * 里给 0.3（=上午）作初值——纯展示/氛围用途（B5 昼夜光照消费），sim 侧目前不做任何
+   * 玩法判定。
+   */
+  timeOfDay: number;
+  /**
+   * 玩家精气（M1 B1）：四种类型各自 0..TUNING.essenceCap，createSim 里全 0 初始化。
+   * 玩家全局字段，不是逐生物属性——精气是"这个人吃了什么"的累积记忆，不依附于某只
+   * 具体生物实例。essence.ts 的 gainEssence 是唯一写入点（鲜尸进食路径调用，见该文件
+   * 头注——巢中吃储粮不触发，精气随死亡消散是刻意的设计权衡）。B3 蛰伏开奖消费。
+   */
+  essence: Record<EssenceType, number>;
+  /**
+   * 玩家行为统计（M1 B1）：累计计数，createSim 里全 0 初始化，从不清零/衰减——B3 蛰伏
+   * 开奖用它们做"行为偏置"（游得多偏水系器官、挖得多偏土系器官……），是只增不减的
+   * 终身履历，不是某个时间窗口内的滑动统计。各字段的累加点分散在对应系统里（swimSec 见
+   * movement.ts、sprintSec 见 movement.ts、digCount 见 digging.ts、kills 见
+   * eating.ts），每处都标了 "consumed by B3 roll" 注释。
+   */
+  behaviorStats: { swimSec: number; digCount: number; sprintSec: number; kills: number };
 }

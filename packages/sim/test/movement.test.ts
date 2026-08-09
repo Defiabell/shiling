@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSim, DT, getPlayer } from "../src/sim.js";
 import { moveCreature } from "../src/movement.js";
-import { SPECIES } from "@shiling/content";
+import { SPECIES, TUNING } from "@shiling/content";
 import type { Creature } from "../src/state.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false };
@@ -51,6 +51,55 @@ describe("movePlayer", () => {
     const p = getPlayer(sim.state);
     for (let i = 0; i < 20 * 120; i++) sim.step({ ...idle, moveX: 1, moveZ: 0 });
     expect(Math.abs(p.pos.x)).toBeLessThanOrEqual(sim.terrain.size / 2);
+  });
+
+  // M1 B1（behaviorStats，consumed by B3 roll）
+  it("accumulates behaviorStats.swimSec while locomotion is swim, even standing still", () => {
+    const sim = createSim(3);
+    let wx = 0, wz = 0, found = false;
+    for (let x = -110; x <= 110 && !found; x += 3)
+      for (let z = -110; z <= 110 && !found; z += 3)
+        if (sim.terrain.isWater(x, z)) { wx = x; wz = z; found = true; }
+    expect(found).toBe(true);
+    findLandNear(sim, wx, wz);
+    expect(sim.state.behaviorStats.swimSec).toBe(0);
+    sim.step(idle); // 站进水里不动（moveCreature 的零输入分支也会同步 locomotion）
+    expect(getPlayer(sim.state).locomotion).toBe("swim");
+    expect(sim.state.behaviorStats.swimSec).toBeCloseTo(DT, 9);
+    sim.step(idle);
+    expect(sim.state.behaviorStats.swimSec).toBeCloseTo(DT * 2, 9);
+  });
+  it("does not accumulate swimSec while walking on land", () => {
+    const sim = createSim(3);
+    sim.step({ ...idle, moveX: 1, moveZ: 0 });
+    sim.step({ ...idle, moveX: 1, moveZ: 0 });
+    expect(sim.state.behaviorStats.swimSec).toBe(0);
+  });
+  it("accumulates behaviorStats.sprintSec only when sprint actually takes effect", () => {
+    const sim = createSim(3);
+    sim.step({ ...idle, moveZ: 1, sprint: true });
+    expect(sim.state.behaviorStats.sprintSec).toBeCloseTo(DT, 9);
+    sim.step({ ...idle, moveZ: 1, sprint: true });
+    expect(sim.state.behaviorStats.sprintSec).toBeCloseTo(DT * 2, 9);
+  });
+  it("does not accumulate sprintSec when holding sprint while not moving", () => {
+    const sim = createSim(3);
+    sim.step({ ...idle, sprint: true }); // sprint 按住但 moveX/moveZ 均为 0
+    expect(sim.state.behaviorStats.sprintSec).toBe(0);
+  });
+  it("does not accumulate sprintSec when fatigue is too low to actually sprint", () => {
+    const sim = createSim(3);
+    const p = getPlayer(sim.state);
+    p.needs.fatigue = TUNING.minSprintFatigue; // 边界：`>` 严格判定，等于阈值时冲刺不生效
+    sim.step({ ...idle, moveZ: 1, sprint: true });
+    expect(sim.state.behaviorStats.sprintSec).toBe(0);
+  });
+  it("does not accumulate sprintSec while burrowed", () => {
+    const sim = createSim(3);
+    const p = getPlayer(sim.state);
+    p.burrowId = 7; p.locomotion = "burrow";
+    sim.step({ ...idle, moveZ: 1, sprint: true });
+    expect(sim.state.behaviorStats.sprintSec).toBe(0);
   });
 });
 

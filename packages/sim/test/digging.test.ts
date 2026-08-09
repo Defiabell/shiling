@@ -19,10 +19,13 @@ describe("digging", () => {
     for (let i = 0; i < ticksNeeded - 2; i++) sim.step({ ...idle, interact: true });
     expect(spot.dug).toBe(false);
     expect(p.activity).toBe("digging");
+    expect(sim.state.behaviorStats.digCount).toBe(0); // 未完成前不计数
     for (let i = 0; i < 4; i++) sim.step({ ...idle, interact: true });
     expect(spot.dug).toBe(true);
     expect(p.burrowId).toBe(spot.id);
     expect(p.locomotion).toBe("burrow");
+    // M1 B1：挖点完成（spot.dug 翻转）那一 tick 计一次，多跑几个 tick 不会重复计数。
+    expect(sim.state.behaviorStats.digCount).toBe(1);
   });
   it("movement cancels digging", () => {
     const sim = createSim(11);
@@ -31,6 +34,7 @@ describe("digging", () => {
     sim.step({ moveX: 1, moveZ: 0, sprint: false, interact: false, attack: false, carry: false });
     expect(p.activity).not.toBe("digging");
     expect(spot.dug).toBe(false);
+    expect(sim.state.behaviorStats.digCount).toBe(0); // 被打断，没有真正完成，不计数
   });
   it("interact toggles exit from burrow", () => {
     const sim = createSim(11);

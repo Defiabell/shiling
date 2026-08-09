@@ -113,6 +113,10 @@ export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInp
       p.digProgress += DT;
       if (p.digProgress >= TUNING.digDurationSec) {
         spot.dug = true;
+        // behaviorStats.digCount（M1 B1，consumed by B3 roll）：挖点完成的瞬间计一次——
+        // 这个 if 分支只在 spot.dug 从 false 翻到 true 那一 tick 进入（外层已经是
+        // `if (!spot.dug)` 守卫），不会对同一个洞口重复计数。
+        state.behaviorStats.digCount += 1;
         enterBurrow(p, spot);
       }
     } else if (p.activity === "digging") {

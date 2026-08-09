@@ -1,5 +1,8 @@
 export type Diet = "herbivore" | "carnivore";
 
+/** 精气类型（M1 进化系统，见 docs/plans/shiling/2026-08-10-m1-evolution-plan.md 数据模型）：足/鳞/穴/猛。 */
+export type EssenceType = "zu" | "lin" | "xue" | "meng";
+
 export interface SpeciesDef {
   id: string;
   name: string;       // 中文名，玩家可见
@@ -14,6 +17,10 @@ export interface SpeciesDef {
   attackDamage: number;
   attackRange: number; // m
   fleeDistance: number; // m，逃离到该距离后解除恐慌
+  /** 该物种鲜尸被吃时喂养的精气类型（M1 B1，sim/src/essence.ts 的 gainEssence 消费）。 */
+  essenceType: EssenceType;
+  /** 每单位 meat 吃到嘴里换算的精气量（M1 B1）；现有三物种统一 0.5 占位，无特殊平衡诉求。 */
+  essenceYieldPerMeat: number;
 }
 
 export const SPECIES: Record<string, SpeciesDef> = {
@@ -23,6 +30,10 @@ export const SPECIES: Record<string, SpeciesDef> = {
     // M0.5 postfix-3（狩猎不可行修复）：attackRange 1.6→2.3、attackDamage 12→15——
     // 两口咬死一只苓鼠（25hp/15dmg=2 hits），配合追逃数值收紧后的可行狩猎闭环。
     meat: 20, senseRadius: 25, attackDamage: 15, attackRange: 2.3, fleeDistance: 30,
+    // M1 B1：youshou 是玩家物种，正常玩法里不会被吃（没有"吃玩家鲜尸获得精气"这个
+    // 场景），essenceType/essenceYieldPerMeat 纯占位——给个和其它物种一致的默认值
+    // （zu/0.5），只是为了让 SpeciesDef 字段全物种齐整，不代表任何平衡设计意图。
+    essenceType: "zu", essenceYieldPerMeat: 0.5,
   },
   lingshu: {
     id: "lingshu", name: "苓鼠", diet: "herbivore",
@@ -38,10 +49,14 @@ export const SPECIES: Record<string, SpeciesDef> = {
     // 加上 B 段的疲态/分心机制足以支撑可行狩猎，故保留 3.8 换取生态稳定。
     maxHp: 25, walkSpeed: 3.8, swimSpeed: 0, canSwim: false, canDig: false,
     meat: 30, senseRadius: 10, attackDamage: 0, attackRange: 0, fleeDistance: 18,
+    // M1 B1：苓鼠是地面食草兽，喂"足"精——名字本身就是"善走"的志怪意象来源。
+    essenceType: "zu", essenceYieldPerMeat: 0.5,
   },
   tanshou: {
     id: "tanshou", name: "潭狩", diet: "carnivore",
     maxHp: 120, walkSpeed: 5.2, swimSpeed: 4.5, canSwim: true, canDig: false,
     meat: 80, senseRadius: 22, attackDamage: 18, attackRange: 2.2, fleeDistance: 0,
+    // M1 B1：潭狩凶猛掠食者，喂"猛"精。
+    essenceType: "meng", essenceYieldPerMeat: 0.5,
   },
 };

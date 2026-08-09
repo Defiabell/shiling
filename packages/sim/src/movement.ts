@@ -59,10 +59,18 @@ export function movePlayer(state: GameState, terrain: Terrain, input: PlayerInpu
   // 可叠加（冲刺+叼运 = sprintMultiplier×carrySpeedMult），brief 未要求互斥。
   const speedScale = p.carryingCarcassId !== null ? TUNING.carrySpeedMult : 1;
   moveCreature(p, input.moveX, input.moveZ, input.sprint, terrain, speedScale);
+  // behaviorStats.swimSec（M1 B1，consumed by B3 roll）：看 locomotion 本身而不是"是否在
+  // 移动"——moveCreature 的零输入/挡水分支同样会同步 locomotion，站在水里不动也算"泡着"。
+  // 洞中不会误计：enterBurrow 把 locomotion 钉成 "burrow"，moveCreature 对洞中生物是
+  // no-op，不会把它改回 "swim"。
+  if (p.locomotion === "swim") state.behaviorStats.swimSec += DT;
   // burrowId !== null：moveCreature 对洞中生物直接 no-op（不产生位移），冲刺不该在洞里也扣疲劳
   // ——client 端会屏蔽洞中的移动/冲刺输入，但 sim 是权威层，这里不加守卫就是一个 sim 级漏洞
   // （被客户端输入屏蔽掩盖，直接调 sim 或客户端校验被绕过时仍会白扣疲劳）。
   if (input.sprint && (input.moveX !== 0 || input.moveZ !== 0) && p.needs.fatigue > TUNING.minSprintFatigue && p.burrowId === null) {
     p.needs.fatigue = Math.max(0, p.needs.fatigue - TUNING.fatigueSprintPerSec * DT);
+    // behaviorStats.sprintSec（M1 B1，consumed by B3 roll）：与疲劳消耗同一条件——这个
+    // 分支被走到就是冲刺"实际生效"的定义（单纯按住 sprint 键但不满足前置条件不算）。
+    state.behaviorStats.sprintSec += DT;
   }
 }

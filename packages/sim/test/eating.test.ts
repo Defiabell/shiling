@@ -16,12 +16,33 @@ describe("player hunting & eating", () => {
     const p = getPlayer(sim.state);
     const shu = sim.state.creatures.find((c) => c.species === "lingshu")!;
     const hits = Math.ceil(SPECIES.lingshu!.maxHp / SPECIES.youshou!.attackDamage);
+    expect(sim.state.behaviorStats.kills).toBe(0);
     for (let h = 0; h < hits; h++) {
       shu.pos = { ...p.pos }; shu.pos.x += 1; // 苓鼠会逃，测试里钉回攻击范围
       sim.step({ ...idle, attack: true });
       for (let i = 0; i < TUNING.tickHz; i++) sim.step(idle); // 等冷却
     }
     expect(sim.state.carcasses.some((c) => c.species === "lingshu")).toBe(true);
+    // M1 B1（behaviorStats.kills，consumed by B3 roll）：玩家亲手打死的一击计一次，
+    // 不会因为后续追加的空转 tick（等冷却）重复计数。
+    expect(sim.state.behaviorStats.kills).toBe(1);
+  });
+  // M1 B1：NPC 互杀（潭狩猎杀苓鼠）不计入玩家的 behaviorStats.kills——凶手必须是玩家。
+  it("NPC kills (tanshou hunting lingshu) do not count toward player behaviorStats.kills", () => {
+    const sim = createSim(21);
+    const p = getPlayer(sim.state);
+    p.pos.x = -900; p.pos.z = -900; // 玩家旁观，不参与
+    const tanshou = sim.state.creatures.find((c) => c.species === "tanshou")!;
+    const shu = sim.state.creatures.find((c) => c.species === "lingshu")!;
+    tanshou.pos = { ...shu.pos }; // 拉近距离，加速相遇
+    for (let i = 0; i < TUNING.tickHz * 30 && shu.activity !== "dead"; i++) {
+      p.needs.hunger = 100; p.needs.thirst = 100; // 旁观者不死
+      sim.step(idle);
+    }
+    // sanity：先确认这只苓鼠真的被潭狩咬死了（前置条件成立），否则下面的"kills 仍为 0"
+    // 断言会是假阳性——两者根本没打起来也会通过。
+    expect(shu.activity).toBe("dead");
+    expect(sim.state.behaviorStats.kills).toBe(0);
   });
   it("eating a carcass restores hunger over time and consumes meat", () => {
     const sim = createSim(41);

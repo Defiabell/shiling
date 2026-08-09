@@ -2,6 +2,7 @@ import { SPECIES, TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
 import { dist2d } from "./vec.js";
 import { killCreature } from "./needs.js";
+import { gainEssence } from "./essence.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import type { Terrain } from "./terrain.js";
 
@@ -83,6 +84,12 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
     // 注释），只是消费的是 stash 而不是 Carcass.meat。物理尸体在洞里天然不可见/不可
     // 判定（本分支根本不扫描 state.carcasses），"物理尸体邻近性在洞里无关紧要"因此
     // 是这段代码结构本身的自然结果，不需要额外的优先级判断。
+    //
+    // 精气（M1 B1）：本分支刻意不调用 essence.ts 的 gainEssence——储粮吃到嘴里不养精，
+    // 只有洞外吃真实鲜尸（本文件下方的分支）才调用。设计理由：精气随死亡消散，鲜尸还
+    // 带着"灵气"，存进 stash 的肉已经是死物粮食；这个权衡把"储粮方便"和"鲜食养精"
+    // 分成两条不重叠的收益，逼玩家不能只窝在家里囤粮过日子，仍要出门捕猎才能推进
+    // 进化系统。
     if (state.homeNest && p.burrowId === state.homeNest.spotId && state.homeNest.stash > 0 && p.needs.hunger < TUNING.homeNestAutoEatHungerCap) {
       const eaten = Math.min(state.homeNest.stash, TUNING.eatMeatPerSec * DT);
       state.homeNest.stash -= eaten;
@@ -108,7 +115,13 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
         target.hp -= atk.attackDamage;
         p.attackCooldown = TUNING.attackCooldownSec;
         p.activity = "attacking";
-        if (target.hp <= 0) killCreature(state, target);
+        if (target.hp <= 0) {
+          killCreature(state, target);
+          // behaviorStats.kills（M1 B1，consumed by B3 roll）：只计玩家亲手打死的——这是
+          // 唯一一条"凶手是玩家"的致死路径（NPC 互杀走 ai.ts 的 resolveHunt，不经过这里，
+          // 也不计数）。
+          state.behaviorStats.kills += 1;
+        }
       }
       // 冷却中：范围内仍有目标，本 tick 没有真正出手但保留 "attacking" 语义不降级。
     } else if (p.activity === "attacking") {
@@ -144,6 +157,9 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
   p.feedingCarcassId = carcass.id;
   const eaten = Math.min(carcass.meat, TUNING.eatMeatPerSec * DT);
   carcass.meat -= eaten;
+  // 精气（M1 B1，essence.ts）：只有这条"洞外吃真实尸体"分支调用——巢中吃 stash 的
+  // burrow 分支（本文件顶部）刻意不调用，见 essence.ts 头注的设计权衡。
+  gainEssence(state, carcass.species, eaten);
   // + hungerDecayPerSec*DT：抵消本 tick 稍后 tickNeeds 对玩家（和所有生物一样）无差别扣掉的
   // 饥饿衰减，让"进食中"的净回复量恰好等于 eaten*hungerPerMeat（brief 的验收公式）。
   // 只加在这里（进食者自己的这一次回复上），不改 needs.ts 的衰减规则，因此不会影响苓鼠
