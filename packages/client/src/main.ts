@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { createSim, DT, dist2d, getPlayer, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
-import { buildTerrainMesh, updateDigSpots, updateWater } from "./render/terrainMesh.js";
+import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { setModelLibrary } from "./render/creatureModels.js";
 import { loadModelLibrary } from "./render/modelLibrary.js";
@@ -9,6 +9,7 @@ import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
 import { createParticles } from "./render/particles.js";
 import { createScreenFx } from "./render/screenFx.js";
+import { createKillMarker } from "./render/killMarker.js";
 import { buildScatter } from "./render/scatter.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
@@ -79,7 +80,40 @@ const hud = createHud();
 const minimap = createMinimap(sim.terrain, sim.terrain.size);
 const particles = createParticles(scene, sim.terrain);
 const screenFx = createScreenFx(camera);
+const killMarker = createKillMarker(camera);
 const eventDiffer = createSimEventDiffer();
+
+// ---- 顿帧 hitstop（Part 1，postfix-9 捕食特效强化）----
+// 玩家造成的致命一击冻结 90ms（受击方 lethal:true 且 id !== playerId——见下方渲染
+// 循环里对应的判据/注释），非致命 40ms。这里刻意只是"客户端渲染循环这一帧要不要
+// 继续喂 sim.step()"的一个纯展示层 gate，不是往 sim/PlayerInput 里塞任何新字段——
+// sim 的纯粹性因此完整保留：GameState 完全不知道"顿帧"这回事，DT/tick 计数器的
+// 语义没有任何变化，只是 client 这一侧的墙钟时间在这段窗口内选择性地不去推进它
+// （"client-side time dilation only"）。效果类似很多动作游戏的击中定格：真实时间
+// 仍在流逝（screenFx/particles 仍然照常吃 frameDt 播放这段时间内已经触发的爆发/
+// 震屏），只是模拟世界本身的因果链条在这段窗口内暂停前进。
+const LETHAL_HITSTOP_MS = 90;
+const NONLETHAL_HITSTOP_MS = 40;
+let hitstopEndTime = 0; // performance.now() 时间戳；0 或已过期 = 当前未处于顿帧中
+/**
+ * "玩家造成"检测（code review 2026-08-09 抓到的真实 bug，务必读完再改动判据）：
+ * `id !== playerId` 单独作为"玩家造成"的近似口径不够——hit 事件本身不带攻击者字段，
+ * 而能命中"非玩家"生物的不只是玩家攻击，潭狩猎杀苓鼠（ai.ts resolveHunt）和任意生物
+ * 的饥饿归零掉血致死（needs.ts tickCreatureNeeds，对全体生物一视同仁，不止潭狩）都会
+ * 产出同样形状的 `{kind:"hit", lethal, id, pos}`——这两条路径都是背景常规玩法，不是
+ * 稀有边缘情形（世界里有 26 只苓鼠+4 只潭狩，生态测试的不变量就是"苓鼠没绝种"而不是
+ * "没有生物死亡"）。如果只用 id!==playerId，一次玩家完全不在场、也看不到的野外死亡
+ * 就会把顿帧——这是**全局冻结 sim 步进/玩家操作**，不是纯展示层特效——随机扣到玩家
+ * 头上，读起来像卡顿/掉帧 bug，而不是"我打出了一记漂亮的一击"。
+ *
+ * 修复：额外要求命中位置落在玩家攻击距离内（SPECIES.youshou.attackRange，与
+ * eating.ts 的 findAttackTarget 判定用同一个常量）——这个检查是无损的：玩家自己造成
+ * 的命中，其 `e.pos`（受害者当帧位置）按 eating.ts 自身的攻击判定，必然已经满足
+ * `dist2d(玩家pos, 受害者pos) <= attackRange`，所以真实玩家击杀 100% 通过这道检查、
+ * 不会有假阴性；而潭狩/饥饿死亡发生在地图任意角落，玩家恰好站在 2.3m 内的概率可忽略
+ * ——这道检查把"玩家造成"从"id 不是我自己"收紧成"离我这么近，基本只能是我干的"。
+ */
+const PLAYER_HIT_PROXIMITY = SPECIES.youshou!.attackRange;
 // **CRITICAL（见 simEvents.ts 头部 JSDoc 的快照契约）**：sim.state 是同一个对象、
 // 每次 step() 原地 mutate；prevSnapshot 必须是每步之前对 differ 实际读取字段的
 // 独立深拷贝，否则 prev/curr 会变成同一份引用，事件流会静默永远清零。这里严格
@@ -140,6 +174,10 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
   const homeNestSpot = state.homeNest ? terrain.digSpots.find((s) => s.id === state.homeNest!.spotId) : undefined;
   const nearNest = homeNestSpot !== undefined && dist2d(player.pos, homeNestSpot.pos) <= TUNING.interactRange;
   const inOwnBurrow = player.burrowId !== null && state.homeNest?.spotId === player.burrowId;
+  // postfix-9 Part 2：筑巢进度百分比——只有 nestProgress>0（正在累积，见 digging.ts
+  // 的筑巢分支）才非零；换算用到的 TUNING.nestBuildSec 留在 main.ts 算好再传给
+  // hud.ts（该模块刻意不 import TUNING，见 hud.ts 头部注释）。
+  const nestBuildPct = player.nestProgress > 0 ? Math.min(100, (player.nestProgress / TUNING.nestBuildSec) * 100) : 0;
   return {
     nearWater: nearWater(player.pos, terrain),
     nearCarcass,
@@ -149,6 +187,7 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     nearNest,
     stash: state.homeNest?.stash ?? 0,
     inOwnBurrow,
+    nestBuildPct,
   };
 }
 
@@ -311,10 +350,17 @@ renderer.setAnimationLoop(() => {
   // 无条件执行（上面已经是这样，未改动）——恢复时 frameDt 只是"这一帧到上一帧"的
   // 正常间隔，不会因为暂停期间攒下的墙钟时间被塞进 acc 而在恢复瞬间触发一次追赶式
   // 连续 step（与 title gate 当年解决的是同一个坑，见本文件顶部对应注释）。
-  if (started && !paused) {
+  // 顿帧（Part 1，postfix-9）：与 `paused` 同一套 gate 写法（见下方 while 条件），
+  // 但由命中事件触发、时限极短（40/90ms）——`hitstopped` 只在本帧顶部算一次，
+  // 用的是这一帧的 `now`，与 `paused` 一样冻结 acc 累加/sim.step，不是只跳过
+  // "drain" 这一步本身：如果只让 while 循环空转而 acc 照样累加，解冻瞬间会因为
+  // 攒下的墙钟时间一次性触发多步追赶式 step，读起来像"倒放快进"而不是干净的一次
+  // 定格——与 title/pause 两个既有 gate 要避免的坑是同一个（见本文件顶部对应注释）。
+  const hitstopped = now < hitstopEndTime;
+  if (started && !paused && !hitstopped) {
     acc += frameDt;
   }
-  while (started && !paused && acc >= DT) {
+  while (started && !paused && !hitstopped && acc >= DT) {
     snapshotPrev(views);
     lastInput = input.read(followCam.yaw);
     sim.step(lastInput);
@@ -326,10 +372,26 @@ renderer.setAnimationLoop(() => {
     // 正是 differ 要比较的那一对（见 simEvents.ts JSDoc 里的调用顺序范式）。
     const events = eventDiffer(prevSnapshot, sim.state, DT);
     if (events.length > 0) {
-      particles.handle(events, { waterLevel: sim.terrain.waterLevel });
-      // 同一份 events[] 喂给屏幕特效（Task 7）：只关心玩家自己的 hit/death，
-      // 与 particles.handle 平级消费、互不干扰（各自只读，不改 events）。
-      screenFx.handle(events, sim.state.playerId);
+      // "玩家造成"判定集中在这一处算好，往下游三个消费者传同一份结果——见
+      // PLAYER_HIT_PROXIMITY 头部注释：id!==playerId 单独用不够，还要求命中位置在
+      // 玩家攻击距离内。同一个循环顺带驱动顿帧（含非致命，40ms 档同样要收紧判据，
+      // 潭狩打苓鼠的每一次非致命命中此前也会误触发）。
+      const playerPos = getPlayer(sim.state).pos;
+      const nearPlayerKillIds = new Set<number>(); // 本 tick 里"玩家造成的致命一击"受害者 id 集合
+      for (const e of events) {
+        if (e.kind !== "hit" || e.id === sim.state.playerId) continue;
+        if (dist2d(playerPos, e.pos) > PLAYER_HIT_PROXIMITY) continue; // 不在玩家攻击距离内——大概率是潭狩/饥饿致死，不是玩家
+        const freezeMs = e.lethal ? LETHAL_HITSTOP_MS : NONLETHAL_HITSTOP_MS;
+        hitstopEndTime = Math.max(hitstopEndTime, now + freezeMs);
+        if (e.lethal) nearPlayerKillIds.add(e.id);
+      }
+      particles.handle(events, { waterLevel: sim.terrain.waterLevel }, nearPlayerKillIds);
+      // 同一份 events[] 喂给屏幕特效（Task 7）：只关心玩家自己的 hit/death 与
+      // 自己造成的击杀震屏（Part 1），与 particles.handle 平级消费、互不干扰
+      // （各自只读，不改 events）。
+      screenFx.handle(events, sim.state.playerId, nearPlayerKillIds);
+      // 击杀浮字「＋肉」（Part 1）：同一套消费模式，第三个平级消费者。
+      killMarker.handle(events, nearPlayerKillIds);
     }
     prevSnapshot = structuredClone({
       creatures: sim.state.creatures,
@@ -340,6 +402,10 @@ renderer.setAnimationLoop(() => {
       nextId: sim.state.nextId,
     }) as GameState;
     acc -= DT;
+    // 顿帧一旦在本帧触发，本帧不再继续追加步进——即便 acc 还有余量，也要立刻让画面
+    // 定格在这一击的瞬间，不等到下一帧才生效（`hitstopped` 只在本帧顶部算过一次，
+    // 循环条件本身不会因为 hitstopEndTime 刚被改写而重新求值）。
+    if (now < hitstopEndTime) break;
   }
   // Wall-clock seconds — the sole phase source model.animate's sin/spring
   // formulas key off of (Task 4). The water-surface animation below (Task 5)
@@ -348,8 +414,14 @@ renderer.setAnimationLoop(() => {
   const tSec = now / 1000;
   applyInterp(views, acc / DT, tSec);
   updateDigSpots(terrainGroup, sim.terrain);
+  updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest);
   updateWater(tSec);
+  // 顿帧期间 particles.update()/killMarker.update() 依然无条件执行（brief 明确要求
+  // "do NOT gate screenFx/particles update — the burst must play through the
+  // freeze"）：爆发特效/浮字要在冻结的这几十毫秒里继续播完，不能被顿帧一起冻住，
+  // 否则玩家会先看到"世界定格"而爆发效果却也跟着卡住不动，读起来像卡顿而不是顿帧。
   particles.update(frameDt, tSec);
+  killMarker.update(frameDt);
   // 冲刺 FOV 的判据是"冲刺键按住 AND 玩家确实在移动"（brief 原话），不是单看
   // sprint 键——按住 Shift 站着不动/贴墙顶住不该拉 FOV。player.activity==="moving"
   // 是 movement.ts 权威写入的结果（见该文件 moveCreature），比在渲染层重新判断

@@ -47,6 +47,13 @@ const HIT_SHAKE_OFFSET_SCALE = 0.3;
 // 强度低于此阈值视为"衰减完毕"：不再采样新的随机方向、offset 直接钉零，
 // 避免 shakeIntensity 无限趋近 0 但从不真正等于 0，导致 update() 永远多做一点无意义的三角函数运算。
 const HIT_SHAKE_EPSILON = 0.001;
+// ---- 击杀反馈震屏（Part 1，咬中反馈，postfix-9）----
+// 只在玩家自己造成的致命一击上出现，且远比"受伤"震屏（0.25）克制——brief 原话
+// "restraint"：每一次撕咬都摆动会喧宾夺主，这里只标记"击杀"这一个节拍，不摆红晕
+// （那是 triggerHurt 的专属，见下方 handle() 里两者判据互斥：hit 事件的受害者是
+// 玩家自己 vs 不是玩家自己）。复用同一套 shakeIntensity/指数衰减机制，只是数值
+// 更小，不需要另开一套震屏状态。
+const KILL_SHAKE_INTENSITY = 0.08;
 
 // ---- 冲刺 FOV 弹簧 ----
 const SPRINT_FOV_DELTA = 6; // 60→66，起始值取 createScreenFx 调用时的 camera.fov（当前工程里是 60）
@@ -143,8 +150,14 @@ function ensureOverlayDiv(id: string): HTMLDivElement {
 }
 
 export function createScreenFx(camera: THREE.PerspectiveCamera): {
-  /** 只关心玩家自己的 hit/death；其余 creature 的事件（AI 互相攻击等）忽略。 */
-  handle(events: SimEvent[], playerId: number): void;
+  /**
+   * `playerId` 驱动受伤红晕/死亡墨晕（只认玩家自己的 hit/death）。`killIds`
+   * （Part 1，postfix-9；code review 2026-08-09 收紧）：main.ts 集中算好的"本 tick
+   * 里玩家造成的致命一击"受害者 id 集合——驱动 triggerKillShake，不是简单的
+   * `id!==playerId`（那样潭狩猎杀苓鼠/任意生物饥饿致死也会误触发震屏，见 main.ts
+   * PLAYER_HIT_PROXIMITY 头部注释）。
+   */
+  handle(events: SimEvent[], playerId: number, killIds: Set<number>): void;
   /** 每渲染帧调用一次：推进震屏衰减 + FOV 弹簧。sprinting 已经是"冲刺且实际在移动"这个组合判断的结果（由 main.ts 派生），本函数不再重复判断"是否在动"。 */
   update(frameDt: number, sprinting: boolean): void;
   /** camera 加性偏移，供 main.ts 在 followCam.update() 之后叠加进 camera.position。返回同一个复用对象（见下方"零分配"注释），调用方不应保留跨帧引用、每帧读值即用即弃。 */
@@ -180,10 +193,21 @@ export function createScreenFx(camera: THREE.PerspectiveCamera): {
     deathEl.classList.add("screenfx-death-active");
   }
 
-  function handle(events: SimEvent[], playerId: number): void {
+  /**
+   * 击杀反馈震屏（Part 1，postfix-9）——只摆动，不摆红晕（那是 triggerHurt 的专属，
+   * 见 handle() 里两者互斥的判据）。`Math.max`：万一同一 tick 玩家自己也挨了一下
+   * （罕见但不是不可能——冲上去同归于尽的一击），更强的受伤震屏不该被这里的小数值
+   * 覆盖掉，取两者较大值。
+   */
+  function triggerKillShake(): void {
+    shakeIntensity = Math.max(shakeIntensity, KILL_SHAKE_INTENSITY);
+  }
+
+  function handle(events: SimEvent[], playerId: number, killIds: Set<number>): void {
     for (const e of events) {
       if (e.kind === "hit" && e.id === playerId) triggerHurt();
       else if (e.kind === "death" && e.id === playerId) triggerDeath();
+      else if (e.kind === "hit" && killIds.has(e.id)) triggerKillShake();
     }
   }
 

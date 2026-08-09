@@ -27,6 +27,13 @@ const DUG_HOLE_RADIUS = 1.0;
 const DUG_OUTER_RING_RADIUS = 1.3;
 const DUG_OUTER_RING_OPACITY = 0.15;
 
+// ---- 家巢标记（Part 2，postfix-9）：石/骨围成一圈 + 一点暖光萤火色的光点 ----
+const HOME_NEST_STONE_COUNT = 6;
+const HOME_NEST_STONE_RADIUS = 1.5; // 略大于 DUG_OUTER_RING_RADIUS(1.3)，围在淡环外一圈
+const HOME_NEST_STONE_SIZE = { x: 0.22, y: 0.16, z: 0.16 } as const;
+const HOME_NEST_GLOW_Y = 0.55; // 悬浮高度——与 particles.ts 萤火的悬浮带(FIREFLY_MIN_Y..MAX_Y≈0.8..2.5)同一量级但更贴近地面，读作"就地一盏灯"而非游荡的萤火
+const HOME_NEST_GLOW_RADIUS = 0.16;
+
 /**
  * 每个挖点标记的场景节点，按 dig spot id 索引：undug/dug 两套视觉常驻创建好，
  * updateDigSpots 只做可见性切换（不重建几何体/材质）；isDug 记录上次同步的状态，
@@ -194,6 +201,43 @@ function buildDugVisual(): THREE.Group {
 }
 
 /**
+ * 家巢标记（Part 2，postfix-9）：一圈小石/骨头（6 个灰色小方块，固定均分角度——
+ * 复用 particles.ts spawnBurrowRing 同款"固定角度而非随机"手法，读出"围成一圈"的
+ * 形状而不是散落一地）+ 一颗悬浮的暖光小球（PALETTE.lampWarm，与萤火/HUD 饥饿环
+ * 同一色相，MeshBasicMaterial 自发光读法——延续本工程"氛围光靠未受光材质表达"的
+ * 既有惯例，不为每个巢穴单独开一盏真实 PointLight）。只建一次、单例——
+ * GameState.homeNest 本身就是单例（同一时刻只有一个家），updateHomeNest 每帧只做
+ * "挪到哪个 dig spot、要不要可见"的判断，不重建任何几何体（与 digSpotMarkers 的
+ * "常驻创建、可见性切换"是同一套思路，只是这次只有一份实例，不按 spot id 建 Map）。
+ */
+function buildHomeNestVisual(): THREE.Group {
+  const group = new THREE.Group();
+
+  const stoneGeometry = new THREE.BoxGeometry(HOME_NEST_STONE_SIZE.x, HOME_NEST_STONE_SIZE.y, HOME_NEST_STONE_SIZE.z);
+  const stoneMaterial = new THREE.MeshLambertMaterial({ color: PALETTE.scatterRock });
+  for (let i = 0; i < HOME_NEST_STONE_COUNT; i++) {
+    const angle = (i / HOME_NEST_STONE_COUNT) * Math.PI * 2;
+    const stone = new THREE.Mesh(stoneGeometry, stoneMaterial);
+    stone.position.set(
+      Math.sin(angle) * HOME_NEST_STONE_RADIUS,
+      MARKER_Y_OFFSET + HOME_NEST_STONE_SIZE.y / 2,
+      Math.cos(angle) * HOME_NEST_STONE_RADIUS,
+    );
+    stone.rotation.y = angle; // 沿圆周切线摆一点角度，六块读起来不是完全相同的复制粘贴
+    group.add(stone);
+  }
+
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(HOME_NEST_GLOW_RADIUS, 12, 10),
+    new THREE.MeshBasicMaterial({ color: PALETTE.lampWarm }),
+  );
+  glow.position.y = HOME_NEST_GLOW_Y;
+  group.add(glow);
+
+  return group;
+}
+
+/**
  * 构建灰盒地形展示组：起伏地形网格 + 双层水面（深水静止托底 + 表层逐帧起伏）
  * + 挖点墨环标记。
  *
@@ -268,6 +312,16 @@ export function buildTerrainMesh(terrain: Terrain, params: WorldParams): THREE.G
   group.add(digSpotGroup);
   group.userData["digSpotMarkers"] = markers;
 
+  // --- 家巢标记：单例，默认隐藏，updateHomeNest 每帧按 state.homeNest 决定位置/可见性 ---
+  const homeNestGroup = buildHomeNestVisual();
+  homeNestGroup.visible = false;
+  group.add(homeNestGroup);
+  group.userData["homeNestGroup"] = homeNestGroup;
+  // 独立的 tracker 对象（而不是直接读 homeNestGroup.visible 反推）：dirty-check 要比较
+  // 的是"上一次同步到的 spotId"，不是"当前是否可见"——两者在"重新筑巢挪到新 spot"
+  // 这个场景里不等价（挪动前后 visible 全程都是 true，但 spotId 变了，必须重新定位）。
+  group.userData["homeNestTrackedSpotId"] = { spotId: null as number | null };
+
   return group;
 }
 
@@ -286,6 +340,37 @@ export function updateDigSpots(group: THREE.Group, terrain: Terrain): void {
     visual.dug.visible = spot.dug;
     visual.isDug = spot.dug;
   }
+}
+
+/**
+ * 每帧调用：把家巢标记同步到 state.homeNest 当前指向的 dig spot——null 时隐藏，
+ * spotId 变化时（含"从无到有""重新筑巢挪到新地点"两种情况）重新定位再显示。
+ * dirty-check 用一个独立的 tracker 对象比较"上一次同步到的 spotId"，不是拿
+ * `homeNestGroup.visible` 反推（见 buildTerrainMesh 里那处注释：两者在"挪动"场景
+ * 下不等价）。
+ */
+export function updateHomeNest(group: THREE.Group, terrain: Terrain, homeNest: { spotId: number; stash: number } | null): void {
+  const homeNestGroup = group.userData["homeNestGroup"] as THREE.Group | undefined;
+  const tracker = group.userData["homeNestTrackedSpotId"] as { spotId: number | null } | undefined;
+  if (!homeNestGroup || !tracker) return;
+
+  const nextSpotId = homeNest?.spotId ?? null;
+  if (nextSpotId === tracker.spotId) return;
+  tracker.spotId = nextSpotId;
+
+  if (nextSpotId === null) {
+    homeNestGroup.visible = false;
+    return;
+  }
+  const spot = terrain.digSpots.find((s) => s.id === nextSpotId);
+  if (!spot) {
+    // 防御性兜底：理论上不会发生（homeNest.spotId 只可能来自 buildHomeNest 写入
+    // 一个真实存在的 dig spot id），但宁可安静隐藏也不要指向一个不存在的位置。
+    homeNestGroup.visible = false;
+    return;
+  }
+  homeNestGroup.position.set(spot.pos.x, spot.pos.y, spot.pos.z);
+  homeNestGroup.visible = true;
 }
 
 /**

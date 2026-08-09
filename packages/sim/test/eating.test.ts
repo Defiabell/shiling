@@ -81,60 +81,107 @@ describe("player hunting & eating", () => {
   });
 });
 
-// M1 postfix N1（叼运/筑巢/储粮）：储粮进食——interactRange 内没有真实尸体、但站在
-// 自己巢穴附近时，E 从 state.homeNest.stash 里吃；真实尸体永远优先于 stash（见
-// eating.ts 文件头"叼运联动"一节）。
-describe("home nest stash eating", () => {
+// postfix-9 Part 0（controller ruling on postfix-8 的"储粮进食触达性"待跟进项）：
+// 洞外"持续按住 E 吃 stash"整套路径已移除，替换成"人在自己家的洞里就自动吃"——不需要
+// 任何按键。见 eating.ts 文件头"家巢自动进食"一节。这里直接摆 p.burrowId/locomotion
+// 到 burrow 态（不必真的走完整套挖洞流程），因为该分支只认 p.burrowId ===
+// state.homeNest.spotId 这一个条件，不查 terrain.digSpots。
+describe("home nest auto-eat (postfix-9 Part 0)", () => {
   function isolate(sim: ReturnType<typeof createSim>) {
     sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou");
   }
+  function enterHomeBurrow(p: ReturnType<typeof getPlayer>, spotId: number): void {
+    p.burrowId = spotId;
+    p.locomotion = "burrow";
+  }
 
-  it("eats from stash when near the home nest and no carcass is in range", () => {
+  it("auto-eats from stash while resting inside the home nest burrow — no button needed", () => {
     const sim = createSim(41);
     isolate(sim);
     const p = getPlayer(sim.state);
-    const spot = sim.terrain.digSpots[0]!;
-    spot.dug = true; // 已挖开——否则 tickDigging 会把站在未挖点上的 interact 判成挖掘，抢占 activity
-    sim.state.homeNest = { spotId: spot.id, stash: 40 };
-    p.pos = { ...spot.pos };
+    sim.state.homeNest = { spotId: 42, stash: 40 };
+    enterHomeBurrow(p, 42);
     p.needs.hunger = 20;
-    // interactHeld=true：模拟"已经按住 E 走近"，避免 tickDigging 把这一次按下判成
-    // 新按下沿而直接入洞（进洞后 tickEating 整体早退，见 digging.ts 的 burrow 分支）——
-    // 站在自家已建成的巢穴旁边、E 已经按住不松手，才是储粮进食这条分支真正被触达的方式。
-    p.interactHeld = true;
     const secs = 3;
-    for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step({ ...idle, interact: true });
+    for (let i = 0; i < TUNING.tickHz * secs; i++) sim.step(idle); // 全程不按任何键
     const eaten = TUNING.eatMeatPerSec * secs;
     expect(sim.state.homeNest!.stash).toBeCloseTo(40 - eaten, 0);
     expect(p.needs.hunger).toBeCloseTo(20 + eaten * TUNING.hungerPerMeat, 0);
-    expect(p.activity).toBe("eating");
   });
 
-  it("a nearby physical carcass takes priority over stash eating", () => {
+  it("auto-eat stops once stash is fully depleted (does not go negative)", () => {
     const sim = createSim(41);
     isolate(sim);
     const p = getPlayer(sim.state);
-    const spot = sim.terrain.digSpots[0]!;
-    spot.dug = true;
-    sim.state.homeNest = { spotId: spot.id, stash: 40 };
-    p.pos = { ...spot.pos };
-    p.interactHeld = true; // 同上一个测试：避免这一按被 tickDigging 判成新按下沿而入洞
-    sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 30 });
-    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true });
-    expect(sim.state.homeNest!.stash).toBe(40); // 存粮完全未被动用
-    expect(sim.state.carcasses.find((c) => c.id === 999)!.meat).toBeLessThan(30); // 真实尸体先被吃
-  });
-
-  it("no stash eating when not near the home nest spot", () => {
-    const sim = createSim(41);
-    isolate(sim);
-    const p = getPlayer(sim.state);
-    const spot = sim.terrain.digSpots[0]!;
-    sim.state.homeNest = { spotId: spot.id, stash: 40 };
-    p.pos = { ...spot.pos };
-    p.pos.x += TUNING.interactRange + 5; // 离开巢穴的交互范围
+    sim.state.homeNest = { spotId: 42, stash: 2 }; // 2 肉，eatMeatPerSec*DT=0.2/tick，10 tick 吃完
+    enterHomeBurrow(p, 42);
     p.needs.hunger = 20;
-    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true });
-    expect(sim.state.homeNest!.stash).toBe(40); // 未变化
+    for (let i = 0; i < TUNING.tickHz * 3; i++) sim.step(idle); // 3s，远超吃完 2 肉所需的 0.5s
+    expect(sim.state.homeNest!.stash).toBeCloseTo(0, 5);
+    // 吃完 2 肉后 stash=0，guard 不再满足——剩余时间只有自然衰减，hunger 会从吃完那一刻
+    // 的峰值往下掉，最终仍明显高于起点（20），但不会无限制地继续攀升。
+    expect(p.needs.hunger).toBeGreaterThan(20);
+    expect(p.needs.hunger).toBeCloseTo(22.5, 0);
+  });
+
+  it("auto-eat stops once hunger reaches homeNestAutoEatHungerCap (does not fire at/above the threshold)", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 42, stash: 40 };
+    enterHomeBurrow(p, 42);
+    p.needs.hunger = TUNING.homeNestAutoEatHungerCap; // 恰好在阈值上，guard 用 `<` 严格判定
+    sim.step(idle);
+    expect(sim.state.homeNest!.stash).toBe(40); // 这一 tick 没有吃——guard 拦住了
+  });
+
+  it("auto-eat converges to a plateau near the hunger cap without unbounded stash consumption", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 42, stash: 1000 };
+    enterHomeBurrow(p, 42);
+    p.needs.hunger = 50;
+    for (let i = 0; i < TUNING.tickHz * 30; i++) sim.step(idle); // 30s，足够爬升+触顶震荡
+    expect(p.needs.hunger).toBeGreaterThanOrEqual(TUNING.homeNestAutoEatHungerCap - 1);
+    expect(p.needs.hunger).toBeLessThanOrEqual(TUNING.homeNestAutoEatHungerCap + 1);
+    // 30s 若完全不设上限本可吃掉 120 stash；触顶后大部分 tick 都在"衰减→重新低于阈值→
+    // 补一口"的窄幅震荡里，实际消耗远少于这个量。
+    expect(sim.state.homeNest!.stash).toBeLessThan(1000);
+    expect(sim.state.homeNest!.stash).toBeGreaterThan(900);
+  });
+
+  it("does not auto-eat while burrowed somewhere that isn't the home nest", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 42, stash: 40 };
+    enterHomeBurrow(p, 99); // 另一个洞，不是家
+    p.needs.hunger = 20;
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step(idle);
+    expect(sim.state.homeNest!.stash).toBe(40); // 未被动用
+  });
+
+  it("does not auto-eat while burrowed if the player has no home nest yet", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    enterHomeBurrow(p, 7);
+    p.needs.hunger = 20;
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step(idle);
+    expect(p.needs.hunger).toBeLessThan(20); // 只有自然衰减，没有任何回复
+  });
+
+  it("a physical carcass at the burrow position has no effect — burrowed auto-eat only ever touches stash", () => {
+    const sim = createSim(41);
+    isolate(sim);
+    const p = getPlayer(sim.state);
+    sim.state.homeNest = { spotId: 42, stash: 40 };
+    enterHomeBurrow(p, 42);
+    p.needs.hunger = 20;
+    sim.state.carcasses.push({ id: 999, species: "lingshu", pos: { ...p.pos }, meat: 30 });
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step(idle);
+    expect(sim.state.carcasses.find((c) => c.id === 999)!.meat).toBe(30); // 尸体完全未被动用
+    expect(sim.state.homeNest!.stash).toBeLessThan(40); // 存粮正常在被自动消耗
   });
 });

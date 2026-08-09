@@ -54,15 +54,42 @@ import type { Terrain } from "./terrain.js";
  *     腾出嘴撕咬"）——见下方攻击分支的守卫。
  *   - 叼着时按 E 仍能就地进食：不需要特判——carrying.ts 把叼着的尸体钉在
  *     interactRange 之内（偏移量小于 interactRange），本系统的尸体扫描天然会扫到它。
- *   - 储粮进食（stash）：interactRange 内没有真实尸体、但站在自己的巢穴附近且
- *     stash>0 时，作为进食分支的 fallback 从 state.homeNest.stash 里扣（见下方
- *     "carcassIdx < 0" 分支）。守卫顺序是刻意的——真实尸体永远优先于 stash（新鲜的
- *     肉"该先腐烂"，不该反而先动用囤积的存粮），只有附近确实没有物理尸体时才退而
- *     求其次吃储备。
+ *
+ * 家巢自动进食（postfix-9 Part 0——controller ruling，取代 postfix-8 遗留的"储粮进食
+ * 触达性"待跟进项）：postfix-8 曾经的实现是"站在巢穴 interactRange 内、持续按住 E"
+ * 才能触达 stash，但 tickDigging 排在本系统之前跑，对任意已挖开的洞口（含自家）在
+ * "新按下沿"上无条件判成出/入洞——日常操作"走到家门口点一下 E"永远先入洞，只有
+ * "远处就按住 E 不松手走近"才能避开这个抢占，是个真实的交互死角（见 postfix-8 报告
+ * "待跟进"）。现在的裁决：**不再需要任何按键**——只要玩家人在自己家的洞里
+ * （p.burrowId === state.homeNest.spotId）、stash>0 且 hunger 未到上限，就每 tick
+ * 自动扣 stash、回饥饿，见下方最顶部的 burrow 分支。旧的"洞外持续按住 E 吃 stash"
+ * 路径整体移除（连带 HUD 的「进食」提示词一起，见 hud.ts contextPrompt 的对应改动）
+ * ——洞里显示的是 Part 2 新增的"储粮 N"状态行，不再是可交互的按键提示。
+ *
+ * `terrain` 参数（code review 2026-08-09 标注）：连带旧 stash fallback 一起移除
+ * 之后，函数体内不再有任何地方读它——保留在签名里纯粹是为了跟 sim.ts 里
+ * tickDigging/tickCarrying/tickNeeds 同一套 `(state, terrain, input)` 调用形状对齐，
+ * 不是遗漏。
  */
 export function tickEating(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
-  if (!p || p.activity === "dead" || p.burrowId !== null) return;
+  if (!p || p.activity === "dead") return;
+
+  if (p.burrowId !== null) {
+    // 自动进食：只认"人在自己家"这一个条件（p.burrowId === state.homeNest.spotId），
+    // 不看 input——玩家不需要按任何键，躺在自己家里就会自动吃。stash>0 且
+    // hunger < homeNestAutoEatHungerCap 都满足才继续扣；公式与洞外吃真实尸体完全同源
+    // （+hungerDecayPerSec*DT 抵消本 tick 稍后 tickNeeds 的无差别衰减，见下方原有
+    // 注释），只是消费的是 stash 而不是 Carcass.meat。物理尸体在洞里天然不可见/不可
+    // 判定（本分支根本不扫描 state.carcasses），"物理尸体邻近性在洞里无关紧要"因此
+    // 是这段代码结构本身的自然结果，不需要额外的优先级判断。
+    if (state.homeNest && p.burrowId === state.homeNest.spotId && state.homeNest.stash > 0 && p.needs.hunger < TUNING.homeNestAutoEatHungerCap) {
+      const eaten = Math.min(state.homeNest.stash, TUNING.eatMeatPerSec * DT);
+      state.homeNest.stash -= eaten;
+      p.needs.hunger = Math.min(100, p.needs.hunger + eaten * TUNING.hungerPerMeat + TUNING.hungerDecayPerSec * DT);
+    }
+    return; // 洞内没有攻击/挖掘/真实尸体进食可言，本系统在洞里只做这一件事
+  }
 
   // 冷却是实时的，不受本 tick 是否真正出手影响，先统一递减。
   p.attackCooldown = Math.max(0, p.attackCooldown - DT);
@@ -105,21 +132,8 @@ export function tickEating(state: GameState, terrain: Terrain, input: PlayerInpu
     if (d <= TUNING.interactRange && d < carcassDist) { carcassIdx = i; carcassDist = d; }
   }
   if (carcassIdx < 0) {
-    // 储粮 fallback（M1 postfix N1）：附近没有真实尸体时，才轮到自己巢穴的存粮——
-    // 守卫顺序见文件头"叼运联动"一节。同时要求站在 interactRange 内（贴着 dig spot
-    // 本身，与真实尸体的判定用同一距离常量），不是"只要有家、随便多远都能吃"。
-    if (state.homeNest && state.homeNest.stash > 0) {
-      const spot = terrain.digSpots.find((s) => s.id === state.homeNest!.spotId);
-      if (spot && dist2d(p.pos, spot.pos) <= TUNING.interactRange) {
-        p.activity = "eating";
-        if (p.feedingCarcassId !== null) p.feedingCarcassId = null; // stash 不是 Carcass，没有对应 id
-        const eaten = Math.min(state.homeNest.stash, TUNING.eatMeatPerSec * DT);
-        state.homeNest.stash -= eaten;
-        // 与真实尸体进食同一公式（含 hungerDecayPerSec*DT 的衰减抵消，见下方原有注释）。
-        p.needs.hunger = Math.min(100, p.needs.hunger + eaten * TUNING.hungerPerMeat + TUNING.hungerDecayPerSec * DT);
-        return;
-      }
-    }
+    // postfix-9 起，附近没有真实尸体不再有 stash fallback（见文件头"家巢自动进食"一节
+    // ——储粮进食已经改成"人在洞里自动吃"，不再是洞外的按键分支）。单纯降级退出。
     if (p.feedingCarcassId !== null) p.feedingCarcassId = null;
     if (p.activity === "eating") p.activity = "idle";
     return;

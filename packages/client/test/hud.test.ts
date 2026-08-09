@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Creature } from "@shiling/sim";
-import { contextPrompt, type HudContext } from "../src/hud.js";
+import { contextPrompt, statusLabel, type HudContext } from "../src/hud.js";
 
 /** 最小可用 Creature 字面量——contextPrompt/statusLabel 只读 burrowId/activity/locomotion。 */
 function mkPlayer(over: Partial<Creature> = {}): Creature {
@@ -17,7 +17,7 @@ function mkPlayer(over: Partial<Creature> = {}): Creature {
 
 const baseCtx: HudContext = {
   nearWater: false, nearCarcass: false, nearDigSpot: false, nearPrey: false,
-  carrying: false, nearNest: false, stash: 0, inOwnBurrow: false,
+  carrying: false, nearNest: false, stash: 0, inOwnBurrow: false, nestBuildPct: 0,
 };
 
 describe("contextPrompt", () => {
@@ -56,27 +56,55 @@ describe("contextPrompt", () => {
     expect(contextPrompt({ ...baseCtx, nearCarcass: true }, mkPlayer())).toEqual({ word: "叼起", key: "C" });
   });
 
-  it("stash eating shows a plain two-char 进食 — regression: must not embed a variable-length count", () => {
-    const prompt = contextPrompt({ ...baseCtx, nearNest: true, stash: 87 }, mkPlayer());
-    expect(prompt).toEqual({ word: "进食", key: "E" });
-    // createHud()'s update() unconditionally does word.slice(0,-1)/word.slice(-1) to color the
-    // last character — any word whose length isn't exactly 2 breaks that convention (this is
-    // exactly the bug a 2026-08-09 review caught: `进食(87)` tore the closing paren off as the
-    // "accented" character instead of a meaningful glyph). Pin the invariant directly instead of
-    // just eyeballing today's literal, so a future embedded-number regression fails loudly here.
-    expect(prompt!.word.length).toBe(2);
-  });
-
-  it("no stash eating when stash is empty even if near the nest", () => {
-    expect(contextPrompt({ ...baseCtx, nearNest: true, stash: 0 }, mkPlayer())).toBeNull();
-  });
-
-  it("stash eating only shows when no physical carcass is in range (carcass wins)", () => {
-    const ctx: HudContext = { ...baseCtx, nearNest: true, stash: 50, nearCarcass: true };
-    expect(contextPrompt(ctx, mkPlayer())).toEqual({ word: "叼起", key: "C" });
+  // postfix-9 Part 0（controller ruling）：洞外"储粮进食"提示词整体移除——储粮进食
+  // 已经改成"人在自己家的洞里自动吃"，不再是洞外的按键交互，HUD 也就没有对应的提示
+  // 可显示（stash 数值改由 Part 2 的巢内状态行展示，见 hud.ts 的 statusLabel）。
+  // nearNest/stash 仍然是 HudContext 上合法的字段（叼着时的"存粮"/"放下"判断还要用），
+  // 这里回归测试的是"单纯 nearNest+stash>0、不叼着、附近没有其它东西"不再产出任何提示。
+  it("stash presence alone (not carrying, no carcass) no longer surfaces a prompt — auto-eat is silent (Part 0)", () => {
+    expect(contextPrompt({ ...baseCtx, nearNest: true, stash: 87 }, mkPlayer())).toBeNull();
   });
 
   it("falls through to 饮水 when nothing else applies", () => {
     expect(contextPrompt({ ...baseCtx, nearWater: true }, mkPlayer())).toEqual({ word: "饮水", key: "E" });
+  });
+});
+
+// postfix-9 Part 2：巢中休息状态行——burrowed-at-home 展示的是 stash 数量，取代泛用的
+// "洞中休息"；这是 Part 0 静默自动进食唯一的可见痕迹（无提示、无按键），见 hud.ts 的
+// statusLabel 头部注释。
+describe("statusLabel", () => {
+  it("burrowed in own home nest shows the floored stash count", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(statusLabel(p, { ...baseCtx, inOwnBurrow: true, stash: 87.9 })).toBe("巢中休息——储粮 87");
+  });
+
+  it("burrowed in own home nest with an empty stash still shows the line (0, not hidden)", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(statusLabel(p, { ...baseCtx, inOwnBurrow: true, stash: 0 })).toBe("巢中休息——储粮 0");
+  });
+
+  it("burrowed but not yet home keeps the generic 洞中休息 (no stash number)", () => {
+    const p = mkPlayer({ burrowId: 3 });
+    expect(statusLabel(p, { ...baseCtx, inOwnBurrow: false, stash: 40 })).toBe("洞中休息");
+  });
+
+  it("digging shows 挖掘中", () => {
+    const p = mkPlayer({ activity: "digging" });
+    expect(statusLabel(p, baseCtx)).toBe("挖掘中");
+  });
+
+  it("eating a real carcass shows 进食中 (unrelated to the burrow stash line)", () => {
+    const p = mkPlayer({ activity: "eating" });
+    expect(statusLabel(p, baseCtx)).toBe("进食中");
+  });
+
+  it("swimming shows 潜泳", () => {
+    const p = mkPlayer({ locomotion: "swim" });
+    expect(statusLabel(p, baseCtx)).toBe("潜泳");
+  });
+
+  it("idle on land shows nothing", () => {
+    expect(statusLabel(mkPlayer(), baseCtx)).toBe("");
   });
 });

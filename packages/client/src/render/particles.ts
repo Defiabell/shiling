@@ -54,8 +54,16 @@ const FIREFLY_POINT_SIZE = POINT_SIZE * 0.5; // 用户反馈"小黄点"太显眼
 
 // ---- hit（墨溅）----
 const HIT_COUNT = 12;
+// HIT_LETHAL_INK_COUNT/CINNABAR_COUNT：玩家自己的死亡（victim id === playerId，见下方
+// handle() 的 isKill 判据）仍然只用这两个"普通致命"数值——沿用 postfix-9 之前的既有
+// 观感，不跟着一起放大。真正放大的是下面 HIT_KILL_*（玩家造成的击杀，"爽"感升级，
+// Part 1 postfix-9）。两套数值分裂开是刻意的：把"更满足的大爆发"堆在玩家自己身上
+// 死亡这一刻，观感上是本末倒置的。
 const HIT_LETHAL_INK_COUNT = 36;
 const HIT_LETHAL_CINNABAR_COUNT = 2;
+// ---- 击杀爆发升级（Part 1，postfix-9）：36→60 墨 + 2→4 朱砂，外加下方的冲击环 ----
+const HIT_KILL_INK_COUNT = 60;
+const HIT_KILL_CINNABAR_COUNT = 4;
 const HIT_LIFE = 0.5;
 const HIT_GRAVITY = -9;
 const HIT_SPEED_MIN = 2.5;
@@ -63,6 +71,19 @@ const HIT_SPEED_MAX = 5;
 const HIT_CONE_HALF_ANGLE = (50 * Math.PI) / 180; // 锥形上抛，够宽读作"溅"
 const HIT_SIZE = 0.3;
 const HIT_LETHAL_CINNABAR_SIZE = 0.4;
+
+// ---- 击杀冲击环（Part 1，postfix-9）：短命的平贴 RingGeometry mesh，靠整体 scale
+// 模拟"扩散"，比逐帧重建几何体便宜得多——4 个一组池化（环形分配，同事件粒子池同一套
+// 简单方案：击杀频率远低于连续命中，4 个足够覆盖"连续击杀"的极限场景，不需要真正的
+// free-list）。颜色用 cinnabar，呼应致命一击本就用朱砂点题的既有配色。
+const KILL_RING_POOL = 4;
+const KILL_RING_LIFE = 0.35;
+const KILL_RING_BASE_RADIUS = 1.0;
+const KILL_RING_THICKNESS = 0.18;
+const KILL_RING_START_SCALE = 0.5;
+const KILL_RING_END_SCALE = 2.4;
+const KILL_RING_START_OPACITY = 0.8;
+const KILL_RING_Y_OFFSET = 0.08; // 略高于地面，避免与地形/尸体贴地阴影 z-fighting
 
 // ---- splash（水花）----
 const SPLASH_COUNT = 18;
@@ -187,7 +208,14 @@ export function createParticles(
   scene: THREE.Scene,
   terrain: Terrain,
 ): {
-  handle(events: SimEvent[], terrain: { waterLevel: number }): void;
+  /**
+   * `killIds`（Part 1，postfix-9 新增第三参；code review 2026-08-09 收紧）：main.ts
+   * 集中算好的"本 tick 里玩家造成的致命一击"受害者 id 集合——不是简单的
+   * `id!==playerId`（那样潭狩猎杀苓鼠/任意生物饥饿致死也会被误判成"玩家造成"，
+   * 见 main.ts PLAYER_HIT_PROXIMITY 头部注释）。本模块只管按 id 是否在集合里决定
+   * 要不要放大爆发，不重新判定"是不是玩家造成"。
+   */
+  handle(events: SimEvent[], terrain: { waterLevel: number }, killIds: Set<number>): void;
   update(frameDt: number, tSec: number): void;
 } {
   const sprite = createGlowSprite();
@@ -280,6 +308,51 @@ export function createParticles(
   effectPoints.frustumCulled = false;
   scene.add(effectPoints);
 
+  // ---- 击杀冲击环池（Part 1，postfix-9）：4 个常驻 Mesh，共享一份几何体，各自独立
+  // material（opacity 逐个动画，不能共享）。初始全部 visible=false，同事件粒子池
+  // 一样"常驻创建、环形游标复用"，不逐次 new/dispose。 ----
+  const killRingGeometry = new THREE.RingGeometry(KILL_RING_BASE_RADIUS - KILL_RING_THICKNESS, KILL_RING_BASE_RADIUS, 32);
+  killRingGeometry.rotateX(-Math.PI / 2);
+  const killRingSlots: { mesh: THREE.Mesh; life: number }[] = [];
+  for (let i = 0; i < KILL_RING_POOL; i++) {
+    const material = new THREE.MeshBasicMaterial({
+      color: PALETTE.cinnabar,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(killRingGeometry, material);
+    mesh.visible = false;
+    scene.add(mesh);
+    killRingSlots.push({ mesh, life: 0 });
+  }
+  let nextKillRingSlot = 0;
+
+  function spawnKillRing(pos: { x: number; y: number; z: number }): void {
+    const slot = killRingSlots[nextKillRingSlot]!;
+    nextKillRingSlot = (nextKillRingSlot + 1) % KILL_RING_POOL;
+    slot.life = KILL_RING_LIFE;
+    slot.mesh.position.set(pos.x, pos.y + KILL_RING_Y_OFFSET, pos.z);
+    slot.mesh.scale.setScalar(KILL_RING_START_SCALE);
+    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = KILL_RING_START_OPACITY;
+    slot.mesh.visible = true;
+  }
+
+  function updateKillRings(frameDt: number): void {
+    for (const slot of killRingSlots) {
+      if (slot.life <= 0) continue;
+      slot.life -= frameDt;
+      if (slot.life <= 0) {
+        slot.life = 0;
+        slot.mesh.visible = false;
+        continue;
+      }
+      const t = 1 - slot.life / KILL_RING_LIFE; // 0→1，扩散进度
+      slot.mesh.scale.setScalar(KILL_RING_START_SCALE + (KILL_RING_END_SCALE - KILL_RING_START_SCALE) * t);
+      (slot.mesh.material as THREE.MeshBasicMaterial).opacity = KILL_RING_START_OPACITY * (1 - t);
+    }
+  }
+
   let nextEffectSlot = 0; // 环形分配游标，范围 [0, EFFECT_CAPACITY)
 
   function allocSlot(): number {
@@ -320,14 +393,23 @@ export function createParticles(
     gravity[i] = grav;
   }
 
-  function spawnHit(pos: { x: number; y: number; z: number }, lethal: boolean): void {
-    const inkCount = lethal ? HIT_LETHAL_INK_COUNT : HIT_COUNT;
+  /**
+   * `isKill`（Part 1，postfix-9；code review 2026-08-09 收紧判据）：`killIds.has(e.id)`
+   * ——main.ts 已经把"玩家造成的致命一击"（id!==playerId 且落在玩家攻击距离内，见
+   * main.ts PLAYER_HIT_PROXIMITY 头部注释）算好传进来，这里只管按结果分支，不重新
+   * 判定。让"更满足的大爆发+冲击环"只出现在玩家真正打出的致命一击上——既不会在
+   * 玩家自己死亡时放大（那个场景走下面 `lethal` 分支的原始 36/2 数值），也不会被
+   * 潭狩猎杀苓鼠这类玩家不在场的背景死亡误触发。
+   */
+  function spawnHit(pos: { x: number; y: number; z: number }, lethal: boolean, isKill: boolean): void {
+    const inkCount = lethal ? (isKill ? HIT_KILL_INK_COUNT : HIT_LETHAL_INK_COUNT) : HIT_COUNT;
     for (let i = 0; i < inkCount; i++) {
       const v = coneVelocity(HIT_SPEED_MIN, HIT_SPEED_MAX, HIT_CONE_HALF_ANGLE);
       spawn(pos.x, pos.y, pos.z, v.vx, v.vy, v.vz, INK[0], INK[1], INK[2], HIT_LIFE, HIT_SIZE, HIT_GRAVITY);
     }
     if (lethal) {
-      for (let i = 0; i < HIT_LETHAL_CINNABAR_COUNT; i++) {
+      const cinnabarCount = isKill ? HIT_KILL_CINNABAR_COUNT : HIT_LETHAL_CINNABAR_COUNT;
+      for (let i = 0; i < cinnabarCount; i++) {
         const v = coneVelocity(HIT_SPEED_MIN, HIT_SPEED_MAX, HIT_CONE_HALF_ANGLE);
         spawn(
           pos.x, pos.y, pos.z, v.vx, v.vy, v.vz,
@@ -336,6 +418,7 @@ export function createParticles(
         );
       }
     }
+    if (isKill) spawnKillRing(pos);
   }
 
   function spawnSplash(pos: { x: number; z: number }, waterLevel: number): void {
@@ -386,12 +469,14 @@ export function createParticles(
     }
   }
 
-  function handle(events: SimEvent[], eventTerrain: { waterLevel: number }): void {
+  function handle(events: SimEvent[], eventTerrain: { waterLevel: number }, killIds: Set<number>): void {
     for (const e of events) {
       switch (e.kind) {
-        case "hit":
-          spawnHit(e.pos, e.lethal);
+        case "hit": {
+          const isKill = killIds.has(e.id);
+          spawnHit(e.pos, e.lethal, isKill);
           break;
+        }
         case "splash":
           spawnSplash(e.pos, eventTerrain.waterLevel);
           break;
@@ -456,6 +541,8 @@ export function createParticles(
     }
     effectPositionAttr.needsUpdate = true;
     effectColorAttr.needsUpdate = true;
+
+    updateKillRings(frameDt);
   }
 
   return { handle, update };

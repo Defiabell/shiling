@@ -57,6 +57,13 @@ const SKIN = {
   digSpotDugColor: "#332a20",
   digSpotRadius: 3,
 
+  // 家巢标记（Part 2，postfix-9）：amber 圆环，套在家巢那个挖点外面——复用玩家标记
+  // 同一色相（playerColor/playerGlow），一眼就能认出"这个挖点是我的家"，不与普通
+  // 挖点（digSpotColor/digSpotDugColor）混淆。
+  homeNestRingRadius: 6,
+  homeNestRingWidth: 1.5,
+  homeNestRingGlowBlur: 5,
+
   viewConeColor: "rgba(232, 236, 242, 0.14)",
   viewConeHalfAngle: Math.PI / 6, // 30°
   playerMarkerSize: 6,
@@ -236,6 +243,21 @@ function drawOverlay(ctx: CanvasRenderingContext2D, terrain: Terrain, worldSize:
       ctx.strokeStyle = SKIN.digSpotColor;
       ctx.lineWidth = 1.5;
       ctx.stroke();
+    }
+    if (state.homeNest?.spotId === spot.id) {
+      // 家巢标记（Part 2，postfix-9）：套一圈 amber 圆环，比普通挖点大一圈并带一点
+      // 辉光——与玩家三角标记同一色相/发光手法，一眼区分"这是我的家"。
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, SKIN.homeNestRingRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = SKIN.playerColor;
+      ctx.lineWidth = SKIN.homeNestRingWidth;
+      ctx.shadowColor = SKIN.playerGlow;
+      ctx.shadowBlur = SKIN.homeNestRingGlowBlur;
+      ctx.stroke();
+      // 立刻复位——见 drawPlayerMarker 头部注释，shadow* 是 ctx 全局态，不会随
+      // stroke() 自动清零，遗留下来会悄悄污染后面画尸体/生物的调用。
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "transparent";
     }
   }
 

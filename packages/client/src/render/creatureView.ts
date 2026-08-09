@@ -24,6 +24,15 @@ export interface CreatureView {
   locomotion: string;
   /** = model.animate, captured once at view construction (Task 4's per-frame procedural animation). */
   animate: CreatureModel["animate"];
+  /**
+   * Part 2（postfix-9）：true 恰好一帧一帧地跟着 `state.creatures`（玩家）的
+   * `carryingCarcassId === 此尸体 id` 走——syncCreatures 每帧重写，never true for a
+   * `creature:*` view（叼运是玩家专属机制，只有 carcass 视图会被标记）。applyInterp
+   * 读它决定要不要叠加"叼运浮动同步"的 bob（见上方 CARRY_BOB_* 常量），carcass 自身
+   * 的 `animate` 仍然是 creatureModels.ts 里那个硬 no-op（见 buildCarcassModel 的
+   * doc comment）——bob 完全在这一层（creatureView）叠加，不碰那个 no-op 契约。
+   */
+  isCarried: boolean;
 }
 
 /**
@@ -41,6 +50,21 @@ function creatureKey(id: number): string {
 function carcassKey(id: number): string {
   return `carcass:${id}`;
 }
+
+/**
+ * 叼运浮动同步（Part 2，postfix-9）：与 creatureModels.ts 里 createLivingAnimate 的
+ * 呼吸/走动 bob 用同一套"频率随速度线性增长、幅度按速度线性增长再封顶"公式（tSec
+ * 相位也共享同一个 wall-clock 源），只是幅度整体 ×0.6——尸体本身没有生命，"跟着
+ * 叼它的玩家步频一起晃"才是这里要读出的"同步"效果，不需要自成一套独立的摆荡节奏，
+ * 更不需要真的比玩家本体晃得夸张。被叼着的尸体的 speedHint（下方 applyInterp 里
+ * 已经在算的 dist2d(prevPos,currPos)/DT）天然约等于玩家的行进速度——carrying.ts
+ * 把它逐 tick 钉在玩家下巴前方的固定偏移，位移几乎与玩家本体同步——不需要额外从
+ * 玩家自己的视图里读一份速度出来跨 view 传递。
+ */
+const CARRY_BOB_FREQ_BASE = 4;
+const CARRY_BOB_FREQ_SPEED_SCALE = 2;
+const CARRY_BOB_AMP_CAP = 0.08 * 0.6;
+const CARRY_BOB_AMP_SPEED_SCALE = 0.02 * 0.6;
 
 /** Creates a view whose prevPos/currPos both start at the model's spawn position, so a freshly-added model never pops from some default. */
 function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureView {
@@ -63,6 +87,7 @@ function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureVi
     activity: "idle",
     locomotion: "walk",
     animate: model.animate,
+    isCarried: false,
   };
 }
 
@@ -101,6 +126,11 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
     view.mesh.visible = c.burrowId === null && c.activity !== "dead";
   }
 
+  // Part 2（postfix-9）：只有玩家能叼运，且一次只能叼一具——一次性查一遍即可，不必
+  // 在下面的循环里对每具尸体各自重新 find() 一次玩家。
+  const player = state.creatures.find((c) => c.id === state.playerId);
+  const carriedCarcassId = player?.carryingCarcassId ?? null;
+
   for (const carcass of state.carcasses) {
     const key = carcassKey(carcass.id);
     liveKeys.add(key);
@@ -113,6 +143,7 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
     }
     view.currPos.set(carcass.pos.x, carcass.pos.y, carcass.pos.z);
     view.mesh.visible = true;
+    view.isCarried = carriedCarcassId === carcass.id;
   }
 
   for (const [key, view] of views) {
@@ -162,6 +193,11 @@ function lerpAngle(a: number, b: number, t: number): number {
  * from — dist2d (horizontal-only, matches "水平速度") over one fixed
  * timestep — rather than computing anything new: it's constant for the
  * whole fixed step, independent of alpha.
+ *
+ * Part 2（postfix-9）：`view.isCarried` 视图（叼运中的尸体）在 `animate()`（对
+ * carcass 永远是 no-op）之后再叠加一个小幅度的 bob——见 CARRY_BOB_* 常量的头部
+ * 注释。同样是 `+=`，同样依赖"这一帧刚被 lerp 写过一次 position.y"这个前提，与
+ * `createLivingAnimate` 自己那处 `+=` 的安全性论证完全一致（不会跨帧累积）。
  */
 export function applyInterp(views: CreatureViews, alpha: number, tSec: number): void {
   const t = Math.max(0, Math.min(1, alpha));
@@ -170,5 +206,10 @@ export function applyInterp(views: CreatureViews, alpha: number, tSec: number): 
     view.mesh.rotation.y = lerpAngle(view.prevYaw, view.currYaw, t);
     const speedHint = dist2d(view.prevPos, view.currPos) / DT;
     view.animate({ activity: view.activity, locomotion: view.locomotion, speedHint, tSec });
+    if (view.isCarried) {
+      const bobFreq = CARRY_BOB_FREQ_BASE + speedHint * CARRY_BOB_FREQ_SPEED_SCALE;
+      const bobAmp = Math.min(CARRY_BOB_AMP_CAP, speedHint * CARRY_BOB_AMP_SPEED_SCALE);
+      view.mesh.position.y += Math.abs(Math.sin(tSec * bobFreq)) * bobAmp;
+    }
   }
 }

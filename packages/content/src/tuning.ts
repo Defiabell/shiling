@@ -36,4 +36,9 @@ export const TUNING = {
   carrySpeedMult: 0.75,   // 叼着尸体走路的速度倍率
   nestBuildSec: 12,       // 在已挖开的洞穴里持续按 E 筑巢所需时长
   nestStashCap: 120,      // 巢穴存粮上限（meat 单位，与 Carcass.meat 同一量纲）
+  // postfix-9（Part 0，controller ruling on postfix-8 的"储粮进食触达性"待跟进项）：
+  // 玩家在自己家巢的洞里休息时自动从 stash 进食，直到 hunger 达到这个上限为止——见
+  // eating.ts 的 burrow 分支。95 而不是 100：留一点点"没有完全吃饱"的余地，避免每次
+  // 一进洞就立刻在饥饿环顶格卡死不动（同时也让"是否要出门再猎一次"仍然是个真问题）。
+  homeNestAutoEatHungerCap: 95,
 } as const;

@@ -104,6 +104,10 @@ describe("nest building", () => {
     const sim = createSim(11);
     const { p, spot } = enterOwnBurrow(sim);
     sim.state.homeNest = { spotId: spot.id, stash: 30 };
+    // postfix-9 Part 0：既然人在自己家的洞里会自动吃 stash（见 eating.ts），把 hunger 钉在
+    // 100——decay 整场测试（~12.25s×0.35/s≈4.3）都掉不到 homeNestAutoEatHungerCap(95) 以下，
+    // 自动进食全程不触发，stash 因此保持这条测试原本要验证的"未被清零/重建"语义不受干扰。
+    p.needs.hunger = 100;
     const ticksNeeded = Math.ceil(TUNING.nestBuildSec * TUNING.tickHz);
     for (let i = 0; i < ticksNeeded + 5; i++) sim.step({ ...idle, interact: true });
     expect(sim.state.homeNest).toEqual({ spotId: spot.id, stash: 30 }); // 未被清零/重建

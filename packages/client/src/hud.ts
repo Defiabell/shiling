@@ -26,6 +26,15 @@ export interface HudContext {
   /** 玩家当前是否"身处"自己已建成的巢穴内（burrowId 命中 homeNest.spotId）——区分
    *  "在洞里但还不是家"（提示筑巢）与"在自己家里"（提示出洞）。 */
   inOwnBurrow: boolean;
+  /**
+   * 筑巢进度百分比（Part 2，postfix-9），0..100，未在筑巢时为 0——main.ts 算好
+   * （`player.nestProgress / TUNING.nestBuildSec * 100`）直接传进来，而不是让本模块
+   * 自己 import TUNING：见本文件头部注释，hud.ts 刻意不碰 TUNING/Terrain，所有需要
+   * sim 内部常量参与的换算都由 main.ts 完成，这里只管展示。0 同时也是"不在筑巢"的
+   * 隐藏信号——nestProgress 一旦真的在累积（哪怕只过了一个 tick）就必然 >0（见
+   * digging.ts 的筑巢分支），不会有"正在筑巢但传进来的百分比恰好是 0"这种歧义。
+   */
+  nestBuildPct: number;
 }
 
 export interface Hud {
@@ -232,6 +241,55 @@ const HUD_CSS = `
   font-weight: 300;
 }
 
+/* ---- 筑巢进度：情境提示胶囊正上方一条细玻璃条（Part 2，postfix-9） ---- */
+.hud-build-bar {
+  position: absolute;
+  bottom: 132px; /* 100(pill 的 bottom) + 24(键帽高度，约等于 pill 视觉高度) + 8 间隙 */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140px;
+  height: 4px;
+  border-radius: 999px;
+  background: ${GLASS.track};
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
+  display: none;
+  overflow: hidden;
+}
+.hud-build-bar.hud-visible { display: block; }
+.hud-build-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: ${ACCENT.hunger};
+  transition: width 150ms linear; /* 与环形仪表的 --pct 过渡同一时长，读起来是同一套语言 */
+}
+
+/* ---- 叼运中提示：靠近三环的小玻璃胶囊（Part 2，postfix-9） ---- */
+.hud-carry-chip {
+  position: absolute;
+  left: 20px;
+  bottom: 94px; /* 20(rings 的 bottom) + 64(单个环的高度) + 10 间隙——紧贴三环上方 */
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: ${GLASS.pill};
+  backdrop-filter: blur(${GLASS.blurPill});
+  -webkit-backdrop-filter: blur(${GLASS.blurPill});
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
+  font-size: 13px;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  color: ${TEXT.primary};
+  white-space: nowrap;
+}
+.hud-carry-chip.hud-visible { display: flex; }
+.hud-carry-chip-penalty {
+  color: ${TEXT.dim};
+  font-size: 12px;
+}
+
 /* ---- 右上：状态字（小地图正下方，无底框细体宽字距） ---- */
 .hud-status-text {
   /* top 174px = minimap.ts SKIN.top(16) + SKIN.cssSize(148) + 10px 间隙——
@@ -414,9 +472,13 @@ export interface ContextPrompt {
  *     pill 状态来同时展示 C 和 E 两个键——批次二的 UI 打磨再考虑要不要拆出来。
  *   - 尸体本身（not carrying）现在优先展示"叼起"而不是"进食"——这批的主打机制，
  *     E 进食同一具尸体依旧完全可用（HUD 只是没把它挑出来当第一提示）。
- *   - 储粮进食 tier 挂在 nearWater 之前、nearCarcass 之后：只有 interactRange 内
- *     确实没有物理尸体、且站在自己巢穴附近、stash>0 时才出现（镜像 eating.ts 的
- *     stash fallback 守卫顺序——见该文件"叼运联动"一节）。
+ *
+ * postfix-9 Part 0（controller ruling）：洞外"储粮进食"这一档提示词已经整体移除——
+ * 储粮进食不再是洞外的按键交互（旧版"interactRange 内没有真实尸体、站在巢穴附近、
+ * stash>0"这一条已随 eating.ts 的 stash fallback 分支一起删掉），改成"人在自己家
+ * 的洞里就自动吃"，不需要任何提示（HUD 改用 Part 2 新增的"储粮 N"状态行展示，见
+ * statusLabel）。ctx.nearNest/ctx.stash 两个字段仍然保留在 HudContext 上——叼着时
+ * 的"存粮"/"放下"判断（上面那一档）依旧要用到它们，只是不再喂给这个已删除的提示词。
  */
 // exported for hud.test.ts — pure, DOM-free priority-chain logic worth pinning
 // down directly (code review 2026-08-09: this is exactly the class of function
@@ -429,12 +491,6 @@ export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt 
   if (ctx.nearDigSpot) return { word: "挖掘", key: "E" };
   if (ctx.nearPrey) return { word: "撕咬", key: "J" };
   if (ctx.nearCarcass) return { word: "叼起", key: "C" };
-  // 与真实尸体进食共用同一个两字词——不嵌入具体数值：update() 对任意 word 都无条件
-  // `word.slice(0,-1)`/`word.slice(-1)` 做"末字变色"处理（见下方 createHud 内的
-  // ContextPrompt 消费逻辑），这个约定隐含"word 恰好两个汉字"；嵌入变长数字（如
-  // `进食(87)`）会把结尾的括号／数字判成变色字符，撕裂词义。储粮量的展示留给
-  // 批次二的 UI 打磨（brief 本身也把这批的客户端接线定性为"minimal"）。
-  if (ctx.nearNest && ctx.stash > 0) return { word: "进食", key: "E" };
   if (ctx.nearWater) return { word: "饮水", key: "E" };
   return null;
 }
@@ -447,9 +503,24 @@ export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt 
  * still co-occur with locomotion === "swim" (e.g. digging/eating right at a
  * shoreline) — in that case the deliberate action takes precedence over the
  * ambient "潜泳" descriptor.
+ *
+ * postfix-9 Part 2：burrowed-at-home now shows the live stash count instead
+ * of the generic "洞中休息" — this is the visible trace of Part 0's silent
+ * auto-eat (no button, no prompt; see eating.ts's burrow branch), and the
+ * only place a player can see the number tick down. `Math.floor` mirrors
+ * hud.ts's own dirty-check convention elsewhere (rings round to whole
+ * percent) — the caller (createHud().update()) already only rewrites this
+ * string when it actually differs from the last one written, so flooring
+ * here is what makes that comparison naturally throttle to "once per whole
+ * unit consumed" instead of firing every single tick's fractional decrement.
  */
-function statusLabel(player: Creature): string {
-  if (player.burrowId !== null) return "洞中休息";
+// exported for hud.test.ts — same "pure, DOM-free, worth pinning down directly"
+// rationale as contextPrompt above.
+export function statusLabel(player: Creature, ctx: HudContext): string {
+  if (player.burrowId !== null) {
+    if (ctx.inOwnBurrow) return `巢中休息——储粮 ${Math.floor(ctx.stash)}`;
+    return "洞中休息";
+  }
   if (player.activity === "digging") return "挖掘中";
   if (player.activity === "eating") return "进食中";
   if (player.locomotion === "swim") return "潜泳";
@@ -491,6 +562,15 @@ export function createHud(): Hud {
   promptPillEl.appendChild(promptWordEl);
   root.appendChild(promptPillEl);
 
+  // 筑巢进度条（Part 2，postfix-9）：紧贴情境提示胶囊正上方，只在 ctx.nestBuildPct>0
+  // 时可见——见 update() 里的 dirty-check。
+  const buildBarEl = document.createElement("div");
+  buildBarEl.className = "hud-build-bar";
+  const buildBarFillEl = document.createElement("div");
+  buildBarFillEl.className = "hud-build-bar-fill";
+  buildBarEl.appendChild(buildBarFillEl);
+  root.appendChild(buildBarEl);
+
   const ringsEl = document.createElement("div");
   ringsEl.className = "hud-rings";
   const hunger = buildRing("饥", "hud-ring-hunger");
@@ -500,6 +580,20 @@ export function createHud(): Hud {
   ringsEl.appendChild(thirst.el);
   ringsEl.appendChild(fatigue.el);
   root.appendChild(ringsEl);
+
+  // 叼运中提示胶囊（Part 2，postfix-9）：紧贴三环上方，随 ctx.carrying 切换可见性。
+  // 「↓」是速度惩罚的纯字形图标——工程里没有任何图标字体/SVG 依赖，延续 HUD 全局
+  // "只用字符/字距表达"的既有语言（环标签/键帽/箭头式提示同一惯例）。
+  const carryChipEl = document.createElement("div");
+  carryChipEl.className = "hud-carry-chip";
+  const carryChipWordEl = document.createElement("span");
+  carryChipWordEl.textContent = "叼运中";
+  const carryChipPenaltyEl = document.createElement("span");
+  carryChipPenaltyEl.className = "hud-carry-chip-penalty";
+  carryChipPenaltyEl.textContent = "↓";
+  carryChipEl.appendChild(carryChipWordEl);
+  carryChipEl.appendChild(carryChipPenaltyEl);
+  root.appendChild(carryChipEl);
 
   const deathEl = document.createElement("div");
   deathEl.className = "hud-death";
@@ -525,6 +619,8 @@ export function createHud(): Hud {
   let lastDeathVisible = false;
   let lastWord = ""; // "" = prompt hidden — mirrors lastStatus's empty-string-as-hidden convention
   let lastStatus = "";
+  let lastCarrying = false;
+  let lastBuildPct = -1; // -1：强制第一帧写入，0 是"筑巢条隐藏"这个合法值本身，不能拿来当哨兵
 
   // Reload is a full page reload (Task 16 brief), not a sim reset call, so a
   // fresh Date.now()-seeded world is created from scratch on the next load —
@@ -585,7 +681,23 @@ export function createHud(): Hud {
         lastWord = nextWord;
       }
 
-      const nextStatus = statusLabel(player);
+      // 叼运中提示胶囊（Part 2，postfix-9）：纯布尔可见性切换，无需渐显动画——
+      // 叼起/放下本身已经是明确的按键动作，不需要额外的过渡语言。
+      if (ctx.carrying !== lastCarrying) {
+        carryChipEl.classList.toggle("hud-visible", ctx.carrying);
+        lastCarrying = ctx.carrying;
+      }
+
+      // 筑巢进度条（Part 2，postfix-9）：与环形仪表同一套"四舍五入到整数百分比才重写"
+      // dirty-check（见 updateRing/pct 的注释），0 同时驱动隐藏。
+      const nextBuildPct = pct(ctx.nestBuildPct);
+      if (nextBuildPct !== lastBuildPct) {
+        buildBarEl.classList.toggle("hud-visible", nextBuildPct > 0);
+        buildBarFillEl.style.width = `${nextBuildPct}%`;
+        lastBuildPct = nextBuildPct;
+      }
+
+      const nextStatus = statusLabel(player, ctx);
       if (nextStatus !== lastStatus) {
         if (nextStatus === "") {
           statusTextEl.classList.remove("hud-visible");
