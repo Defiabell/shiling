@@ -599,8 +599,12 @@ if (import.meta.env.DEV) {
     getMountainCenter: () => ({ x: mountainCenter.x, z: mountainCenter.z }),
     getMountainMaskAt: (x: number, z: number) => mountainMaskAt(x, z, mountainCenter),
     // landmarks.ts 的地标 site 锚点——同上一条同一惯例，供外部 Playwright 脚本飞到
-    // 古树/巨石阵/白骨/灵芝丛附近取景截图。
+    // 古树/巨石阵/白骨/灵芝丛/石碑/铜鼎/图腾柱/山门/断桥附近取景截图。
     getLandmarkAnchors: () => landmarks.anchors,
+    // M2 A2 verification hook：GLB 布景 lazy-load swap 是否已完成——供外部 Playwright
+    // 脚本确定性地等待 swap 边沿（poll 直到翻真）再各截一张 procedural/GLB 对照图，
+    // 不需要瞎猜一个"应该够了"的超时时长。
+    getPropsReady: () => landmarks.isPropsReady(),
   };
 }
 
@@ -717,7 +721,9 @@ renderer.setAnimationLoop(() => {
   // 灵泉可视化（M15 P3）：与 updateWater/pitVisuals 同一"backdrop 无条件继续吃
   // tSec/frameDt"惯例——上浮灵光颗粒纯靠 tSec 驱动，标题画面/暂停/顿帧期间继续飘不
   // 依赖 sim 是否在步进。
-  landmarks.update(frameDt, tSec);
+  // M2 A2：新增第三参 timeOfDay——铜鼎余烬/石碑刻纹两枚夜间 gated 光效需要它算
+  // nightAmount（同 particles.update 早已在用的 sim.state.timeOfDay 直传惯例）。
+  landmarks.update(frameDt, tSec, sim.state.timeOfDay);
   // 昼夜光照（M1 B5）：无条件每帧调用——timeOfDay 只在 sim.step() 推进时变化，暂停/
   // 标题画面/顿帧/蜕变冻结期间重复写入同一份取值没有副作用，与 particles/killMarker
   // 同一套"backdrop 无条件继续吃 tSec/frameDt"惯例。

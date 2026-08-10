@@ -63,6 +63,13 @@ export const PALETTE = {
   essenceXueGlow: 0x9a7a4a,  // 穴·土棕
   essenceMengGlow: 0xd9432a, // 猛·赤朱
   newOrganShimmer: 0xf5e2a0, // 新生器官尚带神辉（蜕变后 30s 内）——比任一精气色都更亮更金的统一强调色
+  // M2 A2（Meshy 山海经布景——owner feedback「布景劣质，能不能生成精致的布景」）：
+  // GLB 到位前的瞬时 graybox 占位块统一用一种中性石色，不为 6 个新地标类型各开一色
+  // （占位只存活几秒，不值得像上面 landmark* 系列那样逐类型精细调色）。
+  landmarkPropPlaceholder: 0x7a7568,
+  // 夜间氛围新增两枚 gated 光效（timeOfDay-gated，见 landmarks.ts 的 nightAmount 用法）：
+  landmarkDingEmberGlow: 0xe8703d,   // 铜鼎——鼎腹内隐约的余烬暖光，暖橙红
+  landmarkSteleShimmer: 0x8fe0e8,    // 石碑——刻纹夜间泛起的幽幽青光，比 springGlowRing 更冷一档，读作"字纹自身在发光"而不是水面反光
 } as const;
 
 /**
