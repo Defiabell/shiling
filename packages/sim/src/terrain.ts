@@ -56,7 +56,14 @@ const MAX_REJECTION_ATTEMPTS = 10_000;
 const RIDGE_WAVELENGTH = 55; // 山脊噪声波长（米）——比 COARSE_WAVELENGTH(72) 略短，脊线密度看得出走势又不至于太碎太乱
 /** 山地区振幅倍数（相对 hillAmp）——brief 明确给定的数值，全局唯一权威来源，测试/client 都从这里导入，不各自抄一份魔法数字。 */
 export const MOUNTAIN_AMP_MULT = 1.6;
-/** mask=1 的核心半径（米）——"steepest core"，灵泉禁止落在这个范围内（见 createTerrain 的灵泉采样循环）。 */
+/**
+ * mask=1 的核心半径（米）——"steepest core"。**不是**灵泉排斥半径本身（code review
+ * 2026-08-10 指出这条注释此前的措辞容易让人以为调这个常量就能直接挪动排斥范围）：
+ * 灵泉是否被排斥真正看的是下面 SPRING_MOUNTAIN_MASK_REJECT 这个 mask 阈值——由于
+ * smoothstep 的非线性，mask>0.6 对应的实际距离（约 80m）比这个 55m 更大，调
+ * MOUNTAIN_RADIUS_INNER 会连带影响 mask 曲线形状，但真正决定"灵泉能不能落在这里"
+ * 的判据在 createTerrain 的灵泉采样循环里，见该处对 SPRING_MOUNTAIN_MASK_REJECT 的引用。
+ */
 export const MOUNTAIN_RADIUS_INNER = 55;
 /** mask 渐落到 0 的外半径（米）——inner..outer 之间是 smoothstep 过渡带，两端导数为零，与其余地图之间不会出现可见接缝。 */
 export const MOUNTAIN_RADIUS_OUTER = 115;
