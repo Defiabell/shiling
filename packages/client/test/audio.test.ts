@@ -8,6 +8,7 @@ import {
   PAUSE_DUCK_GAIN,
   computeAmbientTarget,
   computeHeartbeatGainScale,
+  computeHeartbeatPeriod,
   computeMasterTarget,
   computeWindBaseGain,
   createAudio,
@@ -25,6 +26,7 @@ const BASE_UPDATE_CTX = {
   playerHunger: 80, playerThirst: 80, playerHp: 60, maxHp: 60,
   locomotion: "walk" as const, drinking: false, paused: false, started: true,
   dormant: false, lastEvolutionTick: null, timeOfDay: 0.25,
+  adrenaline: false,
 };
 
 /** 与 test/simEvents.test.ts 同一套最小 Creature/GameState 字面量惯例。 */
@@ -35,7 +37,9 @@ function mkCreature(over: Partial<Creature>): Creature {
     aiState: "idle", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0, ...over,
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0,
+    pitDigProgress: 0, snaredTicks: 0,
+    ...over,
   };
 }
 function mkState(over: Partial<GameState>): GameState {
@@ -47,6 +51,8 @@ function mkState(over: Partial<GameState>): GameState {
     organs: {}, hitsTaken: 0, organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 },
     // M1 B3：dormancy/lastEvolution 同理——client 侧目前无消费，占位值即可。
     dormancy: null, lastEvolution: null,
+    // M15 P1：pits/adrenaline* 同理——占位值即可，本文件测试逐条 spread 覆盖需要的字段。
+    pits: [], adrenalineTicks: 0, adrenalineCooldown: 0, adrenalineArmed: true,
     ...over,
   };
 }
@@ -90,6 +96,17 @@ describe("computeHeartbeatGainScale", () => {
   it("clamps defensively for out-of-range input", () => {
     expect(computeHeartbeatGainScale(-1)).toBeCloseTo(1, 5);
     expect(computeHeartbeatGainScale(1)).toBeCloseTo(computeHeartbeatGainScale(HEARTBEAT_HP_RATIO_THRESHOLD), 5);
+  });
+});
+
+// M15 P1（反制包·濒死爆发）："heartbeat tempo up" 只影响节拍周期，不影响
+// computeHeartbeatGainScale 算出的音量强度——两者是正交的两个轴。
+describe("computeHeartbeatPeriod", () => {
+  it("is faster (shorter period) while adrenaline is active", () => {
+    const normal = computeHeartbeatPeriod(false);
+    const spedUp = computeHeartbeatPeriod(true);
+    expect(spedUp).toBeLessThan(normal);
+    expect(spedUp).toBeGreaterThan(0);
   });
 });
 

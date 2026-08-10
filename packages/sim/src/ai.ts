@@ -2,7 +2,7 @@ import { SPECIES, TUNING, type SpeciesDef } from "@shiling/content";
 import { DT } from "./sim.js";
 import { moveCreature, isTerrainBlocked } from "./movement.js";
 import { killCreature } from "./needs.js";
-import { getModifiers } from "./organs.js";
+import { getModifiers, hasOrganEquipped } from "./organs.js";
 import { dist2d, norm2d } from "./vec.js";
 import type { Rng } from "./rng.js";
 import type { Creature, GameState } from "./state.js";
@@ -170,7 +170,20 @@ function resolveHunt(c: Creature, state: GameState, terrain: Terrain, def: Speci
     return;
   }
   const d = dist2d(c.pos, target.pos);
-  if (d > def.senseRadius * 1.5) {
+  // 棘背威慑（M15 P1「反制包」）：目标是玩家且装备棘背(jibei)时，放弃追猎的距离
+  // 收缩 ×spineDeterrenceMult(0.65)——棘背原有的被动效果（damageTakenMult/
+  // senseRadiusAdd，见 content/organs.ts）之外再叠一条主动反制：让潭狩更容易放弃
+  // 追击，是"棘背"成为主动反猎装备的关键一环。isPlayerTarget 判定与下面攻击分支
+  // 的 damageTakenMult 应用同一条件（只有玩家有 organs，见 organs.ts hasOrganEquipped
+  // 的头部注释）——NPC 目标（例如潭狩猎苓鼠）走到这里 hasJibei 恒为 false，不产生
+  // 任何多余的判断成本（hasOrganEquipped 本身就是一次 O(7) 的 Object.values 扫描，
+  // 但只在 isPlayerTarget 为真时才调用，NPC 路径上完全跳过）。
+  const isPlayerTarget = target.id === state.playerId;
+  const giveUpDist =
+    isPlayerTarget && hasOrganEquipped(state, "jibei")
+      ? def.senseRadius * 1.5 * TUNING.spineDeterrenceMult
+      : def.senseRadius * 1.5;
+  if (d > giveUpDist) {
     c.targetId = null;
     c.aiState = "patrol";
     return;
@@ -181,8 +194,8 @@ function resolveHunt(c: Creature, state: GameState, terrain: Terrain, def: Speci
       // organ modifier（M1 B2）：damageTakenMult（鳞甲/棘背）只在受害者是玩家时生效——
       // getModifiers(state) 本身就是"玩家的聚合效果"（organs 是玩家专属的全局字段，见
       // state.ts），target 若是别的 NPC（潭狩也会猎苓鼠），它没有 organs，不该被这个
-      // 乘数影响，所以显式判 isPlayer 才应用。
-      const isPlayerTarget = target.id === state.playerId;
+      // 乘数影响，所以显式判 isPlayer 才应用。isPlayerTarget 复用上方棘背威慑那段已经
+      // 算好的同一个变量（M15 P1，避免同一函数内两处重复同一判定）。
       const dmg = isPlayerTarget ? def.attackDamage * getModifiers(state).damageTakenMult : def.attackDamage;
       target.hp -= dmg;
       c.attackCooldown = TUNING.attackCooldownSec;
@@ -238,6 +251,13 @@ function endFeed(c: Creature): void {
 function tickTanshou(c: Creature, state: GameState, terrain: Terrain, rng: Rng): void {
   const def = SPECIES.tanshou!;
   c.attackCooldown = Math.max(0, c.attackCooldown - DT); // 潭狩自身冷却；玩家的另见 Task 11
+  // 陷坑定身倒数（M15 P1，见 pits.ts）：与 attackCooldown 同一处、无条件递减——
+  // moveCreature 只做纯粹的位置早退（见该文件），倒数本身必须有个地方推进，选在这里
+  // 是因为 tickTanshou 每 tick 对每只活跃（未入洞）潭狩恰好调用一次，与 attackCooldown
+  // 的递减时机完全同构。aiState/targetId 完全不受影响（brief 原话"aiState untouched，
+  // 定身解除后从原状态继续"）——resolveHunt/doChase/doWander 等仍会照常被调用，只是
+  // 它们内部的 moveCreature 调用在定身期间全部是 no-op。
+  if (c.snaredTicks > 0) c.snaredTicks -= 1;
 
   if (c.aiState === "patrol") {
     if (c.satiatedTimer > 0) {

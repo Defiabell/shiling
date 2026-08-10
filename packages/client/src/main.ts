@@ -12,6 +12,7 @@ import { createScreenFx } from "./render/screenFx.js";
 import { createKillMarker } from "./render/killMarker.js";
 import { createEvolutionFx } from "./render/evolutionFx.js";
 import { buildScatter } from "./render/scatter.js";
+import { createPitVisuals } from "./render/pits.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
@@ -108,6 +109,9 @@ const hud = createHud();
 // 与这里手动传入的常量保持同步"这条隐含假设（code review 建议）。
 const minimap = createMinimap(sim.terrain, sim.terrain.size);
 const particles = createParticles(scene, sim.terrain);
+// M15 P1（反制包）：陷坑视觉，与 particles/screenFx 同层的又一个纯展示消费者——固定
+// 容量池，见该文件头部注释。
+const pitVisuals = createPitVisuals(scene);
 const screenFx = createScreenFx(camera);
 const killMarker = createKillMarker(camera);
 // M1 postfix N3（程序化音效）：与 particles/screenFx/killMarker 同层的第四个事件消费者，
@@ -208,6 +212,13 @@ function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
  * exactly sim's own tryTriggerDormancy predicate, so this calls @shiling/sim's
  * exported `isDormancyEligible(state)` directly rather than duplicating
  * TUNING.essenceThreshold/dormancyStashCost comparisons here.
+ *
+ * M15 P1（反制包）additions: nearTanshou gates the new「E 挖陷坑」prompt (see hud.ts
+ * contextPrompt's fallback tier) — deliberately a wider radius than interactRange,
+ * pure presentation, does not gate the sim-side pit-dig mechanic itself. nestBuildPct
+ * is repurposed to also carry pit-dig progress (the two scenes are mutually exclusive
+ * by construction — see digging.ts). adrenalineActive is a direct read of
+ * state.adrenalineTicks>0, same "nothing to re-derive" treatment as dormant above.
  */
 function computeHudContext(terrain: Terrain, state: GameState, player: Creature): HudContext {
   const nearDigSpot = terrain.digSpots.some((spot) => dist2d(player.pos, spot.pos) <= TUNING.interactRange);
@@ -216,13 +227,28 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
   const nearPrey = state.creatures.some(
     (c) => c.id !== player.id && c.activity !== "dead" && c.burrowId === null && dist2d(player.pos, c.pos) <= attackRange,
   );
+  // M15 P1（反制包）：任一潭狩落在 pitPromptRadius(35m) 内——只驱动「E 挖陷坑」提示
+  // 是否显示（见 hud.ts contextPrompt 头部注释的设计取舍），不影响挖坑本身能不能
+  // 触发——sim 侧 tickPitDig 完全不看附近有没有潭狩。
+  const nearTanshou = state.creatures.some(
+    (c) => c.species === "tanshou" && c.activity !== "dead" && dist2d(player.pos, c.pos) <= TUNING.pitPromptRadius,
+  );
   const homeNestSpot = state.homeNest ? terrain.digSpots.find((s) => s.id === state.homeNest!.spotId) : undefined;
   const nearNest = homeNestSpot !== undefined && dist2d(player.pos, homeNestSpot.pos) <= TUNING.interactRange;
   const inOwnBurrow = player.burrowId !== null && state.homeNest?.spotId === player.burrowId;
   // postfix-9 Part 2：筑巢进度百分比——只有 nestProgress>0（正在累积，见 digging.ts
   // 的筑巢分支）才非零；换算用到的 TUNING.nestBuildSec 留在 main.ts 算好再传给
   // hud.ts（该模块刻意不 import TUNING，见 hud.ts 头部注释）。
-  const nestBuildPct = player.nestProgress > 0 ? Math.min(100, (player.nestProgress / TUNING.nestBuildSec) * 100) : 0;
+  // M15 P1：pitDigProgress>0 时改用 pitDigSec 换算同一根进度条——两者在数据模型上
+  // 互斥（nestProgress 只在洞里累积，pitDigProgress 只在开阔地累积，见 digging.ts），
+  // 共用同一个 ctx 字段/同一根 UI 进度条完全安全（brief 原话"progress bar reuses
+  // nest-build UI pattern"），不需要新开一个字段。
+  const nestBuildPct =
+    player.nestProgress > 0
+      ? Math.min(100, (player.nestProgress / TUNING.nestBuildSec) * 100)
+      : player.pitDigProgress > 0
+        ? Math.min(100, (player.pitDigProgress / TUNING.pitDigSec) * 100)
+        : 0;
   // M1 B5（精气 HUD）：换算成 0..100 的百分比再传给 hud.ts——同 nestBuildPct 一样，
   // 涉及 TUNING 常量的换算集中在这里，hud.ts 本身不 import TUNING（见该文件头部注释）。
   const essencePct = {} as Record<EssenceType, number>;
@@ -234,6 +260,7 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     nearCarcass,
     nearDigSpot,
     nearPrey,
+    nearTanshou,
     carrying: player.carryingCarcassId !== null,
     nearNest,
     stash: state.homeNest?.stash ?? 0,
@@ -242,6 +269,7 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     dormant: state.dormancy !== null,
     dormancyEligible: isDormancyEligible(state),
     essencePct,
+    adrenalineActive: state.adrenalineTicks > 0, // M15 P1：驱动 HUD 爆发图标 chip
   };
 }
 
@@ -482,6 +510,29 @@ if (import.meta.env.DEV) {
     // 实际结果，再用这个 probe 验证"这份效果数值确实按 temper 缩放公式生效"——比反过来
     // 靠"实测移动速度differences"这种带渲染帧率/网络噪声的间接验证更精确、更少 flaky。
     getModifiers: () => getModifiers(sim.state),
+    // M15 P1（反制包）verification hooks：陷坑/濒死爆发状态直读，供外部 Playwright
+    // 脚本驱动"挖坑→潭狩踩中→定身"与"低血量→触发爆发"两条端到端验证，不反查 sim 内部。
+    getPits: () => sim.state.pits.map((pit) => ({ id: pit.id, x: pit.pos.x, z: pit.pos.z, armed: pit.armed })),
+    getSnaredTicks: (id: number) => sim.state.creatures.find((c) => c.id === id)?.snaredTicks ?? null,
+    getAdrenalineTicks: () => sim.state.adrenalineTicks,
+    getAdrenalineCooldown: () => sim.state.adrenalineCooldown,
+    // 验证专用捷径（镜像 warpTo/debugForceNestAndEssence 的既有惯例）：真实打到濒死血量
+    // 需要真实挨打，Playwright 会话里更稳妥的做法是直接摆一个低 hp 值，让下一 tick 的
+    // tickAdrenaline 判到真正的边沿并触发。
+    debugSetPlayerHp: (hp: number) => {
+      getPlayer(sim.state).hp = hp;
+    },
+    // 验证专用捷径（同上一条同一惯例）：真实让潭狩自己巡逻/追猎着走进陷坑范围，时间
+    // 与随机性都不可控——直接把某个 creature 传送到指定坐标，让外部 Playwright 脚本
+    // 能确定性地摆出"潭狩恰好踩在刚挖好的陷坑上"这个场景，走的仍是真实
+    // tickPitSnares/moveCreature 判定，只是位置摆放本身走捷径。
+    warpCreatureTo: (id: number, x: number, z: number) => {
+      const c = sim.state.creatures.find((cc) => cc.id === id);
+      if (!c) return;
+      c.pos.x = x;
+      c.pos.z = z;
+      c.pos.y = sim.terrain.isWater(x, z) ? sim.terrain.waterLevel : sim.terrain.heightAt(x, z);
+    },
   };
 }
 
@@ -574,6 +625,8 @@ renderer.setAnimationLoop(() => {
       playerId: sim.state.playerId,
       tick: sim.state.tick,
       nextId: sim.state.nextId,
+      // M15 P1：adrenaline 事件的边沿判据（见 simEvents.ts JSDoc 更新后的字段清单）。
+      adrenalineTicks: sim.state.adrenalineTicks,
     }) as GameState;
     acc -= DT;
     // 顿帧一旦在本帧触发，本帧不再继续追加步进——即便 acc 还有余量，也要立刻让画面
@@ -590,6 +643,9 @@ renderer.setAnimationLoop(() => {
   updateDigSpots(terrainGroup, sim.terrain);
   updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest);
   updateWater(tSec);
+  // 陷坑视觉（M15 P1）：与 dig spot/家巢标记同一 gate（无条件每帧调用）——state.pits
+  // 在 `started` 变真之前恒为空数组（sim.step 从未跑过），提前调用没有任何副作用。
+  pitVisuals.update(sim.state);
   // 昼夜光照（M1 B5）：无条件每帧调用——timeOfDay 只在 sim.step() 推进时变化，暂停/
   // 标题画面/顿帧/蜕变冻结期间重复写入同一份取值没有副作用，与 particles/killMarker
   // 同一套"backdrop 无条件继续吃 tSec/frameDt"惯例。
@@ -635,6 +691,9 @@ renderer.setAnimationLoop(() => {
     dormant: sim.state.dormancy !== null,
     lastEvolutionTick: sim.state.lastEvolution?.tick ?? null,
     timeOfDay: sim.state.timeOfDay,
+    // M15 P1：直传 state.adrenalineTicks>0——audio.ts 内部只用它给心跳临时提速（tempo
+    // up），不做任何边沿检测，见该文件对应注释。
+    adrenaline: sim.state.adrenalineTicks > 0,
   });
   // Post-fix-6（code review 抓到的真实 bug）：screenFx.update() 必须同样按
   // `!paused` 冻结——它内部用真实 frameDt 推进震屏指数衰减 + 冲刺 FOV 弹簧，并

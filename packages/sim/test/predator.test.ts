@@ -109,4 +109,53 @@ describe("tanshou ai", () => {
     expect(loss).toBeCloseTo(SPECIES.tanshou!.attackDamage * mods.damageTakenMult, 6);
     expect(loss).toBeLessThan(lossBaseline);
   });
+
+  // M15 P1「反制包」：棘背威慑——装备棘背(jibei)的玩家被追猎时，潭狩的放弃距离
+  // (senseRadius×1.5) 再收缩 ×spineDeterrenceMult(0.65)。
+  it("spine deterrence: wearing jibei shrinks the tanshou's give-up distance below the unarmored baseline", () => {
+    function setup(withJibei: boolean) {
+      const sim = createSim(31);
+      const p = getPlayer(sim.state);
+      const t = sim.state.creatures.find((c) => c.species === "tanshou")!;
+      sim.state.creatures = sim.state.creatures.filter((c) => c.id === p.id || c.id === t.id); // 隔离
+      if (withJibei) sim.state.organs.back = { organId: "jibei", temper: 100 };
+      t.pos = { ...p.pos };
+      t.pos.x += 25; // 22×1.5×0.65=21.45（收缩后）＜ 25 ＜ 22×1.5=33（基线）——正好落在两者之间
+      t.aiState = "hunt";
+      t.targetId = p.id;
+      t.attackCooldown = 0;
+      sim.step(idle);
+      return t;
+    }
+
+    const baseline = setup(false);
+    expect(baseline.aiState).toBe("hunt"); // 未装棘背：25m 仍在基线放弃距离(33m)内，继续追猎
+    expect(baseline.targetId).not.toBeNull();
+
+    const withJibei = setup(true);
+    expect(withJibei.aiState).toBe("patrol"); // 装棘背：放弃距离收缩到 21.45m，25m 已经超出
+    expect(withJibei.targetId).toBeNull();
+  });
+
+  // 回归：棘背威慑只在目标是玩家时才生效——潭狩猎苓鼠（NPC 之间）不该被这条新分支
+  // 影响（NPC 没有 organs，hasOrganEquipped 恒读到玩家自己的装备，但 isPlayerTarget
+  // 守卫应该挡住它被错误应用到非玩家目标上）。
+  it("spine deterrence does not affect tanshou hunting non-player prey, even if the player happens to wear jibei", () => {
+    const sim = createSim(31);
+    const p = getPlayer(sim.state);
+    p.pos.x = -900; p.pos.z = -900; // 玩家远离，不参与，只用来装备棘背
+    sim.state.organs.back = { organId: "jibei", temper: 100 };
+    const t = sim.state.creatures.find((c) => c.species === "tanshou")!;
+    const shu = sim.state.creatures.find((c) => c.species === "lingshu")!;
+    sim.state.creatures = sim.state.creatures.filter((c) => c.id === p.id || c.id === t.id || c.id === shu.id);
+    t.pos = { ...shu.pos };
+    t.pos.x += 25; // 与上面同一个距离——若被误应用，苓鼠也会被"错误地"放弃追猎
+    t.aiState = "hunt";
+    t.targetId = shu.id;
+    t.attackCooldown = 0;
+    sim.step(idle);
+    // 猎物不是玩家：给出距离仍是未收缩的基线 33m，25m 在范围内，潭狩继续追猎苓鼠。
+    expect(t.aiState).toBe("hunt");
+    expect(t.targetId).toBe(shu.id);
+  });
 });

@@ -526,6 +526,15 @@ export function createParticles(
           // 遁地本身已经是"瞬间消失"，creatureView.ts 的可见性判定当帧就把它的 mesh
           // 隐藏掉了，不需要再叠一层粒子来强调这次消失。
           break;
+        case "pitSnare":
+          // M15 P1：陷坑触发——尘土爆（brief 原话"dust burst (reuse particles)"），
+          // 直接复用 digTick 同一份配方（spawnDust），不新增一套粒子参数。
+          spawnDust(e.pos);
+          break;
+        case "adrenaline":
+          // 无独立粒子效果——濒死爆发走 screenFx.ts 的红晕脉冲 + audio.ts 的心跳提速，
+          // 见那两个文件对应的 handle() 分支。
+          break;
         default: {
           const _exhaustive: never = e;
           void _exhaustive;

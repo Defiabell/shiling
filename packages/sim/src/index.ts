@@ -10,3 +10,10 @@ export * from "./dormancy.js";
 // （dormancy.js 已整体 export *）同一惯例。
 export * from "./organs.js";
 export { createRng, type Rng } from "./rng.js";
+// M15 P1（反制包）：陷坑数据模型/踩踏判定 + 濒死爆发，client 侧（HUD/simEvents 差分）
+// 需要 addPit 之外的类型信息（Pit 已经随 state.ts 的 `export *` 一并导出），tickPitSnares/
+// tickAdrenaline 本身只被 sim.ts 内部消费，公开导出是为了让 dev-only 验证钩子（main.ts
+// 的 __shiling，同 isDormancyEligible/getModifiers 的既有惯例）与未来 Playwright 脚本
+// 有直接的包外调用入口，不强行反查 sim 内部实现。
+export * from "./pits.js";
+export * from "./adrenaline.js";

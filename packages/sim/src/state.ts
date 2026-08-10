@@ -79,6 +79,20 @@ export interface Creature {
    * fleeTime 对非苓鼠物种恒为 0 同一惯例（见上方 fleeTime 字段注释）。
    */
   hiddenTicks: number;
+  /**
+   * 陷坑挖掘进度（M15 P1，玩家专属，见 digging.ts 的 pit-dig 分支）：与 digProgress/
+   * nestProgress 同构（可打断、松开即清零），但挂在"开阔地、无其它 E 消费者在场"这个
+   * 第三种场景，故另开一个字段而不是复用前两者——三者互斥（同一 tick 只可能落进其中
+   * 一个分支），复用同一个字段会让"从挖点移到开阔地"这种切换场景意外继承残留进度。
+   */
+  pitDigProgress: number;
+  /**
+   * 陷坑定身倒数（M15 P1，见 pits.ts 的 tickPitSnares）：0=未被定身；>0 时 moveCreature
+   * 整体早退（见该文件顶部早退列表），aiState 不受影响（脱身后从原状态继续）。目前只有
+   * 潭狩会被写入非零值（玩家/猎物不触发陷坑，见 pits.ts 头部注释），其余物种恒为 0——
+   * 与 hiddenTicks/fleeTime 对不适用物种恒为 0 同一惯例。
+   */
+  snaredTicks: number;
 }
 
 export interface Carcass {
@@ -86,6 +100,18 @@ export interface Carcass {
   species: string;
   pos: Vec3;
   meat: number;
+}
+
+/**
+ * 陷坑（M15 P1，见 sim/src/pits.ts）：玩家在开阔地挖出的反制陷阱。armed=true 时会对
+ * 踩中它的潭狩生效；触发那一刻在同一个 tick 内置 false 再从 state.pits 过滤掉（"disarm
+ * →removed"是同一次操作里前后两步，外部观察者——包括 client 的快照 diff——永远看不到
+ * armed:false 的中间状态，只会看到这个 id 从数组里消失，见 pits.ts 头部注释）。
+ */
+export interface Pit {
+  id: number;
+  pos: Vec3;
+  armed: boolean;
 }
 
 export interface PlayerInput {
@@ -195,4 +221,26 @@ export interface GameState {
    * 追加历史。replacedId 是被替换掉的旧器官 id（该槽此前为空则为 null）。
    */
   lastEvolution: { organId: string; slot: OrganSlot; replacedId: string | null; tick: number } | null;
+  /**
+   * 陷坑（M15 P1，见 sim/src/pits.ts）：玩家挖出的反制陷阱列表，上限 TUNING.maxPits——
+   * 挖第 4 个由 pits.ts 的 addPit 移除最旧的一个（数组第一个，先进先出）。全局字段
+   * （不挂在任何 Creature 上，同 homeNest 一样是"这个人在世界里留下的构造物"）。
+   */
+  pits: Pit[];
+  /**
+   * 濒死爆发（M15 P1，见 sim/src/adrenaline.ts）：ticksLeft 风格但直接用字段名表达状态
+   * （字段命名沿用 plan 原话），>0 时玩家速度×adrenalineSpeedMult 且冲刺不耗疲劳，每
+   * tick -1。玩家专属全局字段，createSim 里 0 初始化（未触发）。
+   */
+  adrenalineTicks: number;
+  /** 濒死爆发冷却倒数（M15 P1）：>0 时即使 hp 再次跌破阈值也不会重触发，每 tick -1。 */
+  adrenalineCooldown: number;
+  /**
+   * 濒死爆发边沿检测锚点（M15 P1，adrenaline.ts 内部实现细节，非跨系统契约字段）：
+   * true=hp 当前处于阈值之上，下一次跌破阈值时算作一次新的边沿、可以触发；跌破阈值的
+   * 那一 tick 起置 false，直到 hp 重新回升到阈值之上才再次置 true——防止"持续处于低血量"
+   * 被电平判定误读成每 tick 都是一次新的边沿（那样冷却期结束的瞬间会立即重触发，而不是
+   * 真正等一次新的下跌）。createSim 里 true 初始化（出生满血，天然在阈值之上）。
+   */
+  adrenalineArmed: boolean;
 }

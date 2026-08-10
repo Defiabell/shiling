@@ -2,6 +2,8 @@ import { TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
 import { dist2d } from "./vec.js";
 import { getModifiers } from "./organs.js";
+import { nearWater } from "./needs.js";
+import { addPit } from "./pits.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
 import type { DigSpot, Terrain } from "./terrain.js";
 
@@ -12,6 +14,8 @@ function enterBurrow(p: Creature, spot: DigSpot): void {
   p.locomotion = "burrow";
   p.activity = "idle";
   p.digProgress = 0;
+  p.pitDigProgress = 0; // 防御性收口（M15 P1）：理论上进洞前 pitDigProgress 必然已经是 0
+                        // （见 tickPitDig 调用点旁边"E 优先级链"注释——两者互斥场景），一并清零。
 }
 
 /** 出洞：恢复 walk，按当前（洞口）位置贴地。 */
@@ -20,6 +24,37 @@ function exitBurrow(p: Creature, terrain: Terrain): void {
   p.locomotion = "walk";
   p.activity = "idle";
   p.pos.y = terrain.heightAt(p.pos.x, p.pos.z);
+}
+
+/**
+ * 陷坑挖掘（M15 P1「反制包」，owner feedback「面对高级怪物只能被追上被杀，没有反制
+ * 措施，不能设置陷阱」）：与挖点数值同构（累积/打断语义完全照抄 tickDigging 对
+ * digProgress 的既有处理——见调用点旁边关于"仅移动才清零、松开只是暂停"的说明），
+ * 唯一的区别是完成后不入洞，而是调 addPit 在原地生成一个陷坑。
+ *
+ * 疲劳净耗损（brief 原话「drains fatigue slightly, i.e. net drain」）：tickNeeds
+ * 稍后本 tick 仍会给"未在移动、未在洞里"的生物（挖陷坑复用 activity="digging"，落在
+ * tickNeeds 的 else 分支）统一加一份 fatigueRecoverPerSec×DT 的空闲恢复——这里先扣掉
+ * "这份恢复 + pitDigFatigueDrainMult 份耗损"，两者相加后净效果正是耗损
+ * pitDigFatigueDrainMult×fatigueWalkRecoverPerSec（与 eating.ts 头部注释的
+ * decay-compensation 手法同构，只是方向相反：那里是"垫平衰减"，这里是"垫平恢复再
+ * 倒扣耗损"）。刻意不在这一行 clamp 到 0——tickNeeds 稍后的 clamp01to100 才是唯一的
+ * 钳制点；若在这里先 clamp 到 0 再让 tickNeeds 加回正值，疲劳触底时会被"弹起"，
+ * 违背"净耗损、触底后钉住"的设计意图。
+ */
+function tickPitDig(state: GameState, p: Creature, input: PlayerInput): void {
+  if (input.interact) {
+    p.activity = "digging";
+    p.pitDigProgress += DT;
+    p.needs.fatigue -= (TUNING.fatigueRecoverPerSec + TUNING.pitDigFatigueDrainMult * TUNING.fatigueWalkRecoverPerSec) * DT;
+    if (p.pitDigProgress >= TUNING.pitDigSec) {
+      addPit(state, p.pos);
+      p.pitDigProgress = 0;
+      p.activity = "idle";
+    }
+  } else if (p.activity === "digging") {
+    p.activity = "idle";
+  }
 }
 
 /**
@@ -66,6 +101,23 @@ function buildHomeNest(state: GameState, p: Creature, terrain: Terrain): void {
  * 叼运互斥（M1 postfix N1）：叼着尸体时（p.carryingCarcassId !== null）本系统整体
  * 早退——不能挖洞、不能进出洞、不能筑巢（brief 原话"不能拖回巢穴"）。反过来"叼着时
  * 不能进食"不成立——进食走 eating.ts 的独立守卫，见该文件。
+ *
+ * 陷坑（M15 P1「反制包」）与 E 消费者优先级链：整个游戏里 E（interact）同一 tick 可能
+ * 被四套系统各自独立读到——本文件的挖点/进出洞/筑巢、eating.ts 的进食、needs.ts 的
+ * 饮水，现在再加上本文件新增的"陷坑挖掘"。四者从不真的互相查询对方的判定结果，靠的
+ * 是 sim.ts step() 的调用顺序（本文件排最前）+ 各自扫描范围天然大多不重叠这一事实
+ * 隐性分出优先级：
+ *   1. 挖点/洞口（本文件，interactRange 内存在 dig spot）——最高优先级，命中就直接
+ *      return，后面三者今天这一 tick 都不会跑到。
+ *   2. 陷坑挖掘（本文件新增的 FALLBACK，见 tickPitDig 调用点）——只在"附近没有挖点"
+ *      的前提下，进一步排除"附近有尸体"（留给 eating.ts 的叼起/进食）与"在水边"
+ *      （留给 needs.ts 的饮水，用同一份 nearWater 几何判据，见 needs.ts 的导出注释）
+ *      之后才轮到；玩家因此必须站在真正开阔、可挖的陆地上才能触发陷坑挖掘，不会跟
+ *      饮水/进食在同一次按键上打架。
+ *   3/4. 进食、饮水——本文件对它们完全不知情，只是通过"如果附近有尸体/水就不挖陷坑"
+ *      间接让位，真正的判定各自留在 eating.ts/needs.ts 内部。
+ * client 侧的 HUD 提示（hud.ts 的 contextPrompt）按同一优先级顺序渲染单一提示词，
+ * 见该文件顶部注释。
  */
 export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInput): void {
   const p = state.creatures.find((c) => c.id === state.playerId);
@@ -80,6 +132,7 @@ export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInp
   if (moving) {
     if (p.burrowId === null) {
       p.digProgress = 0;
+      p.pitDigProgress = 0; // M15 P1：移动同样打断陷坑挖掘（与打断挖点是同一语义）
       if (p.activity === "digging") p.activity = "idle";
     } else {
       p.nestProgress = 0; // 移动对洞中玩家本就是 no-op（moveCreature 直接 early-return），
@@ -106,7 +159,21 @@ export function tickDigging(state: GameState, terrain: Terrain, input: PlayerInp
 
   const spot = terrain.digSpots.find((s) => dist2d(p.pos, s.pos) <= TUNING.interactRange);
   if (!spot) {
+    // 陷坑（M15 P1）：E 优先级链的 FALLBACK——见函数头部注释"E 消费者优先级链"一节。
+    // 走到这里已经确定附近没有挖点（上面 `!spot`）；再排除尸体（tickEating 的 E
+    // 消费者）与水边（tickNeeds 的饮水 E 消费者，nearWater 与那里同一份实现，见
+    // needs.ts 导出注释）之后，剩下的才是"开阔地、没有其它 E 消费者"，轮到陷坑挖掘。
+    // 三者判据都是只读几何探测，不改变任何状态，先判后走不会有副作用泄漏。
+    const nearCarcass = state.carcasses.some((cc) => dist2d(p.pos, cc.pos) <= TUNING.interactRange);
+    if (!nearCarcass && !nearWater(p, terrain)) {
+      tickPitDig(state, p, input);
+      p.interactHeld = input.interact;
+      return;
+    }
+    // 附近有尸体/水但没有挖点：既不挖挖点也不挖陷坑，原样保留挖掘早退（活着的
+    // digProgress/activity 交给 tickEating/tickNeeds 各自的 E 消费者去处理这次按键）。
     if (p.activity === "digging") { p.activity = "idle"; p.digProgress = 0; }
+    p.pitDigProgress = 0;
     p.interactHeld = input.interact;
     return;
   }

@@ -71,6 +71,19 @@ export function getModifiers(state: GameState): Required<OrganEffects> {
   return mods;
 }
 
+/**
+ * 某个具体器官（按 organId）当前是否装备在任意槽位（M15 P1，ai.ts 的 resolveHunt 用它
+ * 判定目标玩家是否戴着棘背 jibei）。只有玩家有 organs（见 state.ts 字段注释），调用方
+ * 因此只应该在明确知道"这次要判定的目标是玩家"时才调用——与 getModifiers 同一前提。
+ * 遍历 state.organs 而不是直接读固定槽位（例如 `state.organs.back?.organId`）：
+ * organId 与其登记的槽位键在数据模型上恒等（rollOrgan 只会把某个器官装进它自己
+ * OrganDef.slot 对应的键），但按 id 整体扫描不依赖这条隐含假设，未来若某个器官的槽位
+ * 定义变化也不需要回来改这里的判定逻辑。
+ */
+export function hasOrganEquipped(state: GameState, organId: string): boolean {
+  return Object.values(state.organs).some((equipped) => equipped?.organId === organId);
+}
+
 /** 器官效果字段 → 用进触发类别（"写成器官→触发条件映射表常量"）。 */
 type TriggerKind = "swim" | "sprint" | "dig" | "kill" | "eat" | "hit" | "passive";
 

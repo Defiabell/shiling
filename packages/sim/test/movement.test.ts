@@ -164,6 +164,7 @@ describe("moveCreature shore block (non-swimmer)", () => {
       fleeTime: 0, fleeRecoverTime: 0,
       carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
       hiddenTicks: 0,
+      pitDigProgress: 0, snaredTicks: 0,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝水点方向走一步，应被挡在岸边
@@ -236,6 +237,7 @@ describe("moveCreature aquatic lock (fish can't beach, land creature unaffected)
       fleeTime: 0, fleeRecoverTime: 0,
       carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
       hiddenTicks: 0,
+      pitDigProgress: 0, snaredTicks: 0,
     };
 
     moveCreature(c, 1, 0, false, sim.terrain); // 朝陆地方向游一步，应被挡在水边
@@ -270,6 +272,7 @@ describe("moveCreature aquatic lock (fish can't beach, land creature unaffected)
       fleeTime: 0, fleeRecoverTime: 0,
       carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false,
       hiddenTicks: 0,
+      pitDigProgress: 0, snaredTicks: 0,
     };
     moveCreature(c, 1, 0, false, sim.terrain); // 两栖物种：不该被新分支挡住，无论朝哪个方向都能移动
     expect(c.activity).toBe("moving");

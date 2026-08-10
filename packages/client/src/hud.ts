@@ -17,6 +17,12 @@ export interface HudContext {
   nearCarcass: boolean;
   nearDigSpot: boolean;
   nearPrey: boolean;
+  /**
+   * M15 P1（反制包）：任一潭狩落在 TUNING.pitPromptRadius(35m) 内——只驱动「E 挖陷坑」
+   * 提示是否显示（见 contextPrompt 头部注释的设计取舍），main.ts 负责换算半径判据，
+   * 本模块不 import TUNING（同本文件头部注释的既有惯例）。
+   */
+  nearTanshou: boolean;
   /** M1 postfix N1（叼运/筑巢/储粮）：player.carryingCarcassId !== null。 */
   carrying: boolean;
   /** interactRange 内是否有玩家的巢穴（state.homeNest 存在且距离达标）——叼着时驱动
@@ -55,6 +61,8 @@ export interface HudContext {
    * ≥100 时对应的精气珠触发柔光脉冲（呼应"已达蛰伏门槎"）。
    */
   essencePct: Record<EssenceType, number>;
+  /** M15 P1（反制包）：state.adrenalineTicks>0 直传——驱动 HUD 的爆发图标 chip。 */
+  adrenalineActive: boolean;
 }
 
 export interface Hud {
@@ -387,6 +395,37 @@ const HUD_CSS = `
   font-size: 12px;
 }
 
+/* ---- 濒死爆发图标 chip（M15 P1）：与叼运中提示同一玻璃语言，独立坐标——挂在三环
+   正上方、叼运 chip 再上一层（两者理论上不会同时出现：叼着尸体时不太可能同一瞬间
+   又跌破濒死阈值，但即便凑巧重叠，纵向堆叠也不会互相遮挡）。amber 强调色的柔光
+   脉冲——呼应"心跳加速"的读法，同 .hud-ring.hud-low/.hud-orb.hud-orb-ready 同一
+   手法（只呼吸外发光，不碰内容透明度）。 ---- */
+.hud-adrenaline-chip {
+  position: absolute;
+  left: 20px;
+  bottom: 132px; /* 20(rings 的 bottom) + 64(环高度) + 10(叼运 chip 间隙) + 24(叼运 chip 高度) + 14 再叠一层 */
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: ${GLASS.pill};
+  backdrop-filter: blur(${GLASS.blurPill});
+  -webkit-backdrop-filter: blur(${GLASS.blurPill});
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
+  font-size: 13px;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  color: ${ACCENT.hunger};
+  white-space: nowrap;
+  animation: hud-adrenaline-pulse 1.1s ease-in-out infinite;
+}
+.hud-adrenaline-chip.hud-visible { display: flex; }
+@keyframes hud-adrenaline-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset, 0 0 0 0 rgba(232, 180, 95, 0); }
+  50% { box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset, 0 0 14px 3px rgba(232, 180, 95, 0.55); }
+}
+
 /* ---- 右上：状态字（小地图正下方，无底框细体宽字距） ---- */
 .hud-status-text {
   /* top 174px = minimap.ts SKIN.top(16) + SKIN.cssSize(148) + 10px 间隙——
@@ -653,6 +692,14 @@ export function contextPrompt(ctx: HudContext, player: Creature): ContextPrompt 
   if (ctx.nearPrey) return { word: "撕咬", key: "J" };
   if (ctx.nearCarcass) return { word: "叼起", key: "C" };
   if (ctx.nearWater) return { word: "饮水", key: "E" };
+  // M15 P1（反制包）：陷坑挖掘——整条链最末的 FALLBACK，只在附近没有挖点/猎物/尸体/水
+  // （上面五档全部落空）时才轮到，与 sim 侧 tickDigging 的 E 优先级链完全对应（见该
+  // 文件头部"E 消费者优先级链"一节）。额外用 ctx.nearTanshou 门一层——不然这个提示
+  // 会几乎在任何开阔地常驻可见（"没有挖点/猎物/尸体/水在附近"是绝大多数位置的常态），
+  // 读起来像噪音；只在真的有潭狩威胁（35m 内）时才提示"你可以挖坑"，是刻意的设计
+  // 取舍（design call，见 main.ts computeHudContext 的对应注释），不影响挖坑本身
+  // 能不能触发——sim 侧完全不看这个门槎。
+  if (ctx.nearTanshou) return { word: "挖陷坑", key: "E" };
   return null;
 }
 
@@ -774,6 +821,14 @@ export function createHud(): Hud {
   carryChipEl.appendChild(carryChipPenaltyEl);
   root.appendChild(carryChipEl);
 
+  // 濒死爆发图标 chip（M15 P1）：纯布尔可见性切换，同叼运中提示一样不需要渐显动画
+  // ——爆发触发本身已经是一次明确的边沿事件，脉冲发光（见上面 CSS）已经承担了
+  // "正在生效"的持续提示。
+  const adrenalineChipEl = document.createElement("div");
+  adrenalineChipEl.className = "hud-adrenaline-chip";
+  adrenalineChipEl.textContent = "濒死爆发";
+  root.appendChild(adrenalineChipEl);
+
   const deathEl = document.createElement("div");
   deathEl.className = "hud-death";
   const deathTitle = document.createElement("div");
@@ -799,6 +854,7 @@ export function createHud(): Hud {
   let lastWord = ""; // "" = prompt hidden — mirrors lastStatus's empty-string-as-hidden convention
   let lastStatus = "";
   let lastCarrying = false;
+  let lastAdrenaline = false;
   let lastBuildPct = -1; // -1：强制第一帧写入，0 是"筑巢条隐藏"这个合法值本身，不能拿来当哨兵
 
   // Reload is a full page reload (Task 16 brief), not a sim reset call, so a
@@ -869,6 +925,12 @@ export function createHud(): Hud {
       if (ctx.carrying !== lastCarrying) {
         carryChipEl.classList.toggle("hud-visible", ctx.carrying);
         lastCarrying = ctx.carrying;
+      }
+
+      // 濒死爆发图标 chip（M15 P1）：同一套 dirty-check 切换。
+      if (ctx.adrenalineActive !== lastAdrenaline) {
+        adrenalineChipEl.classList.toggle("hud-visible", ctx.adrenalineActive);
+        lastAdrenaline = ctx.adrenalineActive;
       }
 
       // 筑巢进度条（Part 2，postfix-9）：与环形仪表同一套"四舍五入到整数百分比才重写"

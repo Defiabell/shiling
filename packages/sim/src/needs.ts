@@ -28,8 +28,15 @@ export function killCreature(state: GameState, c: Creature): void {
   state.creatures = state.creatures.filter((x) => x.id !== c.id);
 }
 
-/** 身前 8 方向采样 interactRange 距离的点，命中任一水点即视为"在水边"。 */
-function nearWater(c: Creature, terrain: Terrain): boolean {
+/**
+ * 身前 8 方向采样 interactRange 距离的点，命中任一水点即视为"在水边"。导出
+ * （M15 P1）供 digging.ts 的陷坑挖掘判据复用——同一套"是否在水边"几何只应该有一份
+ * 实现，digging.ts 需要用它排除"贴着水边的开阔地不该触发陷坑挖掘"（否则会跟这里
+ * 的饮水判据在同一 tick 抢占同一次 E 按下，见 digging.ts 头部注释）。client 侧的
+ * main.ts 另有一份独立的只读复刻（不经过这个导出）——那份是隔着 sim 包边界的 HUD
+ * 探针，见该文件头注释，与这里的包内复用是两个不同的问题。
+ */
+export function nearWater(c: Creature, terrain: Terrain): boolean {
   if (terrain.isWater(c.pos.x, c.pos.z)) return true;
   const r = TUNING.interactRange;
   for (let i = 0; i < 8; i++) {

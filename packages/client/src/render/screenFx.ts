@@ -29,7 +29,16 @@ import type { SimEvent } from "./simEvents.js";
 const STYLE_ID = "shiling-screenfx-style";
 const HURT_ID = "shiling-screenfx-hurt";
 const DEATH_ID = "shiling-screenfx-death";
+const ADRENALINE_ID = "shiling-screenfx-adrenaline";
 const SCREENFX_Z = 8;
+
+// ---- 濒死爆发红晕脉冲（M15 P1，随 adrenaline 事件触发一次）----
+// 与受击红晕（HURT_FADE_MS）共用同一种"box-shadow 红晕"语言，但是对称的"扑一下就
+// 退"（brief 原话"brief red-shift vignette pulse"），不是持续到底的单向淡出——窗口本身
+// 长达 adrenalineSec(4s)，若红晕真的持续那么久会喧宾夺主，这里只在触发的瞬间"扑"一下
+// 提示"爆发已生效"，HUD 的爆发图标 chip（hud.ts）才是持续 4 秒的常驻反馈。
+const ADRENALINE_PULSE_MS = 900;
+const ADRENALINE_BOX_SHADOW_ALPHA = 0.4;
 
 // ---- 受击红晕（hit）----
 const HURT_FADE_MS = 300;
@@ -135,6 +144,22 @@ function ensureStyleInjected(): void {
   from { transform: scale(0); }
   to { transform: scale(3); }
 }
+#${ADRENALINE_ID} {
+  position: fixed;
+  inset: 0;
+  z-index: ${SCREENFX_Z};
+  pointer-events: none;
+  box-shadow: inset 0 0 220px 90px rgba(${cinnabar}, ${ADRENALINE_BOX_SHADOW_ALPHA});
+  opacity: 0;
+}
+#${ADRENALINE_ID}.screenfx-adrenaline-active {
+  animation: screenfx-adrenaline-pulse ${ADRENALINE_PULSE_MS}ms ease-out forwards;
+}
+@keyframes screenfx-adrenaline-pulse {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  100% { opacity: 0; }
+}
 `;
   document.head.appendChild(style);
 }
@@ -166,6 +191,7 @@ export function createScreenFx(camera: THREE.PerspectiveCamera): {
   ensureStyleInjected();
   const hurtEl = ensureOverlayDiv(HURT_ID);
   const deathEl = ensureOverlayDiv(DEATH_ID);
+  const adrenalineEl = ensureOverlayDiv(ADRENALINE_ID);
 
   // ---- 震屏状态：闭包里的纯数字 + 一个复用的 {x,y} 输出对象，update() 全程零分配 ----
   let shakeIntensity = 0;
@@ -203,11 +229,19 @@ export function createScreenFx(camera: THREE.PerspectiveCamera): {
     shakeIntensity = Math.max(shakeIntensity, KILL_SHAKE_INTENSITY);
   }
 
+  /** 濒死爆发红晕脉冲（M15 P1）——重触发手法同 triggerHurt（remove/reflow/add）。 */
+  function triggerAdrenaline(): void {
+    adrenalineEl.classList.remove("screenfx-adrenaline-active");
+    void adrenalineEl.offsetWidth;
+    adrenalineEl.classList.add("screenfx-adrenaline-active");
+  }
+
   function handle(events: SimEvent[], playerId: number, killIds: Set<number>): void {
     for (const e of events) {
       if (e.kind === "hit" && e.id === playerId) triggerHurt();
       else if (e.kind === "death" && e.id === playerId) triggerDeath();
       else if (e.kind === "hit" && killIds.has(e.id)) triggerKillShake();
+      else if (e.kind === "adrenaline") triggerAdrenaline();
     }
   }
 

@@ -11,6 +11,8 @@ import { tickNeeds } from "./needs.js";
 import { tickCarrying } from "./carrying.js";
 import { tickTemper } from "./organs.js";
 import { tickDormancy } from "./dormancy.js";
+import { tickPitSnares } from "./pits.js";
+import { tickAdrenaline } from "./adrenaline.js";
 
 export const DT = 1 / TUNING.tickHz;
 
@@ -103,6 +105,8 @@ export function spawnCreature(
     nestProgress: 0,
     dormantHeld: false,
     hiddenTicks: 0, // M1 B4：仅穴獾的 tickBurrowEvader 会写非零值，其余物种恒 0
+    pitDigProgress: 0, // M15 P1：仅玩家的 tickPitDig 会写非零值，其余物种恒 0
+    snaredTicks: 0, // M15 P1：仅潭狩会被 pits.ts 的 tickPitSnares 写非零值，其余物种恒 0
   };
   state.creatures.push(c);
   return c;
@@ -124,6 +128,10 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
     organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 }, // M1 B2：全 0 初始化
     dormancy: null, // M1 B3：未在蛰伏
     lastEvolution: null, // M1 B3：从未开奖过
+    pits: [], // M15 P1：尚未挖出任何陷坑
+    adrenalineTicks: 0, // M15 P1：未在濒死爆发窗口
+    adrenalineCooldown: 0, // M15 P1：不在冷却中
+    adrenalineArmed: true, // M15 P1：出生满血，天然在阈值之上，可以触发下一次边沿
   };
 
   state.playerId = spawnCreature(state, rng, terrain, params, "youshou").id;
@@ -168,7 +176,15 @@ export function createSim(seed: number, params: WorldParams = QINGQIU_GRAYBOX): 
       // 一 tick=50ms 的延迟不影响体感。
       tickTemper(state, input);
       tickAi(state, terrain, rng); // (Task 9)
+      // 陷坑踩踏判定（M15 P1）：排在 tickAi 之后——要读的是本 tick 潭狩移动结算完的
+      // 最终位置（追击/巡逻都可能在 tickAi 内部位移），不能排在它前面读到上一 tick
+      // 的残留位置（那样会晚一 tick 才判定到"已经踩进去了"）。
+      tickPitSnares(state);
       tickNeeds(state, terrain, input); // (Task 7)
+      // 濒死爆发边沿检测（M15 P1）：排在 step() 最后——要读的是本 tick 战斗
+      // （tickAi 的 resolveHunt）/饿死（tickNeeds 的 starve 分支）结算完的最终 hp，
+      // 见 adrenaline.ts 头部注释的"1 tick 延迟，同 organs.ts hit 触发惯例"论证。
+      tickAdrenaline(state);
     },
   };
 }

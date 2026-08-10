@@ -13,7 +13,9 @@ export type SimEvent =
   | { kind: "drink"; pos: Vec3 } // 玩家 activity 变为 "drinking" 边沿
   | { kind: "carcassGone"; id: number; pos: Vec3 } // 尸体消失（吃光）
   | { kind: "burrowToggle"; entered: boolean; pos: Vec3 } // 玩家 burrowId null↔非 null
-  | { kind: "vanish"; id: number; pos: Vec3 }; // hiddenTicks 0→>0（M1 B6，目前只有穴獾遁地会命中）
+  | { kind: "vanish"; id: number; pos: Vec3 } // hiddenTicks 0→>0（M1 B6，目前只有穴獾遁地会命中）
+  | { kind: "pitSnare"; id: number; pos: Vec3 } // M15 P1：潭狩 snaredTicks 0→>0（陷坑触发瞬间）
+  | { kind: "adrenaline"; pos: Vec3 }; // M15 P1：玩家 adrenalineTicks 0→>0（濒死爆发触发边沿）
 
 const DIG_TICK_INTERVAL_SEC = 0.4;
 
@@ -45,7 +47,8 @@ function isSplashTransition(prev: Locomotion, curr: Locomotion): boolean {
  *   const events = diff(prevSnapshot, sim.state, dtSec); // 拿上一帧快照 vs 刚推进后的最新状态
  *   // ... 消费 events（粒子/屏幕特效）...
  *   // 关键：snapshot 只需要覆盖 differ 实际读取的字段
- *   // （creatures、carcasses、playerDead、playerId），不必整份 clone terrain 等重量级字段；
+ *   // （creatures、carcasses、playerDead、playerId、adrenalineTicks——M15 P1 新增的
+ *   // 顶层字段边沿判据，见下方 adrenaline 事件），不必整份 clone terrain 等重量级字段；
  *   // structuredClone 是 deep clone，保证下一帧 diff 时 prevSnapshot 不会和 sim.state 共享引用。
  *   prevSnapshot = structuredClone({
  *     creatures: sim.state.creatures,
@@ -54,6 +57,7 @@ function isSplashTransition(prev: Locomotion, curr: Locomotion): boolean {
  *     playerId: sim.state.playerId,
  *     tick: sim.state.tick,
  *     nextId: sim.state.nextId,
+ *     adrenalineTicks: sim.state.adrenalineTicks,
  *   }) as GameState;
  * }
  * ```
@@ -90,6 +94,12 @@ export function createSimEventDiffer(): (prev: GameState | null, curr: GameState
       // death 分支。
       if (p.hiddenTicks === 0 && c.hiddenTicks > 0) {
         events.push({ kind: "vanish", id, pos: { ...c.pos } });
+      }
+      // M15 P1：陷坑触发——snaredTicks 0→>0，与上面 hiddenTicks 的判据同一套边沿写法
+      // （只有潭狩会命中，见 sim/src/pits.ts 的 tickPitSnares，但这里不需要按 species
+      // 特判——非潭狩物种的 snaredTicks 恒为 0，这条边沿天然只会在潭狩身上触发）。
+      if (p.snaredTicks === 0 && c.snaredTicks > 0) {
+        events.push({ kind: "pitSnare", id, pos: { ...c.pos } });
       }
     }
 
@@ -140,6 +150,13 @@ export function createSimEventDiffer(): (prev: GameState | null, curr: GameState
         events.push({ kind: "burrowToggle", entered: true, pos: { ...currPlayer.pos } });
       } else if (prevBurrowId !== null && currPlayer.burrowId === null) {
         events.push({ kind: "burrowToggle", entered: false, pos: { ...currPlayer.pos } });
+      }
+
+      // M15 P1：濒死爆发边沿——state.adrenalineTicks 0→>0（GameState 顶层字段，不挂在
+      // Creature 上，见 sim/src/state.ts），与上面 burrowId 的判据同一层级、同一写法，
+      // 只是比对的字段来自 prev/curr 整体而不是 currPlayer。
+      if (prev.adrenalineTicks === 0 && curr.adrenalineTicks > 0) {
+        events.push({ kind: "adrenaline", pos: { ...currPlayer.pos } });
       }
     }
 

@@ -8,7 +8,9 @@ function mkCreature(over: Partial<Creature>): Creature {
     aiState: "wander", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0, ...over };
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0,
+    pitDigProgress: 0, snaredTicks: 0,
+    ...over };
 }
 function mkState(over: Partial<GameState>): GameState {
   return {
@@ -19,6 +21,8 @@ function mkState(over: Partial<GameState>): GameState {
     organs: {}, hitsTaken: 0, organsPrevCounters: { digCount: 0, kills: 0, hitsTaken: 0 },
     // M1 B3：dormancy/lastEvolution 同理——client 侧目前无消费，占位值即可。
     dormancy: null, lastEvolution: null,
+    // M15 P1：pits/adrenaline* 同理——占位值即可，本文件测试逐条 spread 覆盖需要的字段。
+    pits: [], adrenalineTicks: 0, adrenalineCooldown: 0, adrenalineArmed: true,
     ...over,
   };
 }
@@ -71,5 +75,43 @@ describe("createSimEventDiffer", () => {
     const a = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 1 })] });
     const b = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 0 })] });
     expect(diff(a, b, 0.05).some((e) => e.kind === "vanish")).toBe(false);
+  });
+
+  // M15 P1（反制包）：陷坑触发——snaredTicks 0→>0（潭狩踩中陷坑那一瞬间），与
+  // hiddenTicks 的边沿写法完全同构。
+  it("snaredTicks 0→>0 emits pitSnare once", () => {
+    const diff = createSimEventDiffer();
+    const a = mkState({ creatures: [mkCreature({ id: 1, species: "tanshou", snaredTicks: 0 })] });
+    const b = mkState({ creatures: [mkCreature({ id: 1, species: "tanshou", snaredTicks: 60 })] });
+    expect(diff(a, b, 0.05)).toContainEqual(expect.objectContaining({ kind: "pitSnare", id: 1 }));
+    expect(diff(b, b, 0.05)).toEqual([]); // 持续定身中不重复触发
+  });
+
+  it("snaredTicks counting down to 0 (freed) does not emit pitSnare", () => {
+    const diff = createSimEventDiffer();
+    const a = mkState({ creatures: [mkCreature({ id: 1, species: "tanshou", snaredTicks: 1 })] });
+    const b = mkState({ creatures: [mkCreature({ id: 1, species: "tanshou", snaredTicks: 0 })] });
+    expect(diff(a, b, 0.05).some((e) => e.kind === "pitSnare")).toBe(false);
+  });
+
+  // M15 P1：濒死爆发——GameState 顶层字段 adrenalineTicks 0→>0，不挂在任何 Creature 上。
+  // 事件的 pos 取自玩家当前位置（见 simEvents.ts 的 currPlayer 判据），因此 state.creatures
+  // 里必须真的有玩家这个 id 对应的 creature（与 digTick/drink/burrowToggle 三个既有的
+  // "玩家专属"事件同一前提）。
+  it("adrenalineTicks 0→>0 emits adrenaline once", () => {
+    const diff = createSimEventDiffer();
+    const player = mkCreature({ id: 99, species: "youshou" });
+    const a = mkState({ creatures: [player], adrenalineTicks: 0 });
+    const b = mkState({ creatures: [player], adrenalineTicks: 80 });
+    expect(diff(a, b, 0.05)).toContainEqual(expect.objectContaining({ kind: "adrenaline" }));
+    expect(diff(b, b, 0.05).some((e) => e.kind === "adrenaline")).toBe(false); // 窗口持续中不重复触发
+  });
+
+  it("adrenalineTicks counting down to 0 (window ends) does not emit adrenaline", () => {
+    const diff = createSimEventDiffer();
+    const player = mkCreature({ id: 99, species: "youshou" });
+    const a = mkState({ creatures: [player], adrenalineTicks: 1 });
+    const b = mkState({ creatures: [player], adrenalineTicks: 0 });
+    expect(diff(a, b, 0.05).some((e) => e.kind === "adrenaline")).toBe(false);
   });
 });

@@ -73,4 +73,22 @@ export const TUNING = {
   xuehuanChannelSec: 1.2, // 「遁地」channel 时长——期间原地不动、activity="digging"，可被击杀打断（正常死亡，非特殊打断逻辑）
   xuehuanHiddenSec: 4, // 隐匿倒数——期间从渲染与目标选择中排除（Creature.hiddenTicks）
   xuehuanReappearDist: 8, // 隐匿结束后重现的距离（米）——固定半径、随机角度，见 ai.ts 的 randomLandPosNear
+
+  // M15 P1（反制包——见 docs/plans/shiling 对应计划）：陷坑，见 sim/src/digging.ts 的
+  // pit-dig 分支与 sim/src/pits.ts。
+  pitDigSec: 3,          // 在开阔地（非挖点/非水边/非尸体旁）持续按住 E 挖好一个陷坑所需时长
+  maxPits: 3,            // 同时存活的陷坑上限——挖第 4 个会移除最旧的一个（先进先出）
+  pitSnareSec: 3,        // 潭狩踩中陷坑后定身的时长
+  pitTriggerRadius: 0.9, // 潭狩与陷坑中心的触发距离（米）
+  pitPromptRadius: 35,   // HUD「E 挖陷坑」提示只在潭狩进入这个半径时才显示，避免提示常驻噪音
+  pitDigFatigueDrainMult: 2, // 挖陷坑期间的疲劳净耗损＝此倍数×fatigueWalkRecoverPerSec（见 digging.ts）
+
+  // M15 P1：濒死爆发，见 sim/src/adrenaline.ts。
+  adrenalineHpFrac: 0.3,     // hp 跌破 maxHp×此比例的那一刻触发（真正的边沿，非电平判定）
+  adrenalineSpeedMult: 1.3,  // 触发窗口内整体移动速度倍率（不论是否在冲刺）
+  adrenalineSec: 4,          // 触发窗口时长——期间冲刺不消耗疲劳
+  adrenalineCooldownSec: 60, // 冷却时长，期间即使 hp 再次跌破阈值也不会重触发
+
+  // M15 P1：棘背威慑，见 sim/src/ai.ts 的 resolveHunt。
+  spineDeterrenceMult: 0.65, // 目标玩家装备棘背(jibei)时，潭狩的放弃追猎距离(senseRadius×1.5)再乘此系数
 } as const;

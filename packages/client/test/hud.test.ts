@@ -11,15 +11,17 @@ function mkPlayer(over: Partial<Creature> = {}): Creature {
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
     carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0,
+    pitDigProgress: 0, snaredTicks: 0,
     ...over,
   };
 }
 
 const baseCtx: HudContext = {
-  nearWater: false, nearCarcass: false, nearDigSpot: false, nearPrey: false,
+  nearWater: false, nearCarcass: false, nearDigSpot: false, nearPrey: false, nearTanshou: false,
   carrying: false, nearNest: false, stash: 0, inOwnBurrow: false, nestBuildPct: 0,
   dormant: false, dormancyEligible: false,
   essencePct: { zu: 0, lin: 0, xue: 0, meng: 0 },
+  adrenalineActive: false,
 };
 
 describe("contextPrompt", () => {
@@ -69,6 +71,23 @@ describe("contextPrompt", () => {
 
   it("falls through to 饮水 when nothing else applies", () => {
     expect(contextPrompt({ ...baseCtx, nearWater: true }, mkPlayer())).toEqual({ word: "饮水", key: "E" });
+  });
+
+  // M15 P1（反制包）：陷坑挖掘——整条链最末的 FALLBACK，只在 nearTanshou 为真（35m 内
+  // 有潭狩）时才显示，避免在任何开阔地常驻可见（见 hud.ts contextPrompt 的设计取舍）。
+  it("falls through to 挖陷坑 only when a tanshou is within pitPromptRadius, otherwise stays null", () => {
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true }, mkPlayer())).toEqual({ word: "挖陷坑", key: "E" });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: false }, mkPlayer())).toBeNull();
+  });
+
+  it("挖陷坑 is the lowest priority — any of the five higher tiers wins over it even with a tanshou nearby", () => {
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, nearWater: true }, mkPlayer())).toEqual({ word: "饮水", key: "E" });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, nearDigSpot: true }, mkPlayer())).toEqual({ word: "挖掘", key: "E" });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, nearCarcass: true }, mkPlayer())).toEqual({ word: "叼起", key: "C" });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, nearPrey: true }, mkPlayer())).toEqual({ word: "撕咬", key: "J" });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, carrying: true, nearNest: true }, mkPlayer())).toEqual({ word: "存粮", key: "C" });
+    const burrowed = mkPlayer({ burrowId: 3 });
+    expect(contextPrompt({ ...baseCtx, nearTanshou: true, inOwnBurrow: false }, burrowed)).toEqual({ word: "筑巢", key: "E" });
   });
 
   // M1 B3（蛰伏蜕变）：见 hud.ts contextPrompt 头部注释新增的这一小节。

@@ -236,6 +236,12 @@ const HEARTBEAT_PAIR_GAP_SEC = 0.09; // "咚-咚"两响的间隔
 const HEARTBEAT_FREQ_HZ = 55;
 const HEARTBEAT_DECAY_SEC = 0.11;
 const HEARTBEAT_BASE_GAIN = 0.22;
+// M15 P1（反制包）：濒死爆发窗口内心跳"tempo up"（brief 原话）——周期乘这个系数
+// （<1，节拍更密），只在心跳本就因为 hpRatio<HEARTBEAT_HP_RATIO_THRESHOLD 而跳动时
+// 生效（两个阈值都是 0.3，见 tuning.ts 的 adrenalineHpFrac 注释——并非巧合，两者本就是
+// 同一个"命悬一线"的判据，各自独立声明常量只是模块边界纪律，不是刻意对齐两个不相关
+// 的数字）。
+const ADRENALINE_HEARTBEAT_TEMPO_MULT = 0.6;
 
 const DRINK_TICK_RATE_HZ = 3;
 const DRINK_TICK_BANDPASS_HZ = 800;
@@ -307,6 +313,15 @@ export function computeHeartbeatGainScale(hpRatio: number): number {
   const clamped = Math.min(HEARTBEAT_HP_RATIO_THRESHOLD, Math.max(0, hpRatio));
   const t = 1 - clamped / HEARTBEAT_HP_RATIO_THRESHOLD;
   return HEARTBEAT_MIN_SCALE + (1 - HEARTBEAT_MIN_SCALE) * t;
+}
+
+/**
+ * 心跳周期（M15 P1，反制包·濒死爆发"heartbeat tempo up"）：爆发窗口内周期乘
+ * ADRENALINE_HEARTBEAT_TEMPO_MULT（<1，节拍更密），否则维持既有的 HEARTBEAT_PERIOD_SEC。
+ * 与 computeHeartbeatGainScale 同一惯例——纯函数抽出来单测，不依赖 AudioContext。
+ */
+export function computeHeartbeatPeriod(adrenaline: boolean): number {
+  return adrenaline ? HEARTBEAT_PERIOD_SEC * ADRENALINE_HEARTBEAT_TEMPO_MULT : HEARTBEAT_PERIOD_SEC;
 }
 
 /**
@@ -638,6 +653,15 @@ function playDormancyDrone(g: AudioGraph): void {
   });
 }
 
+/**
+ * 陷坑触发闷响（M15 P1「反制包」）——brief 原话"short heavy thump (audio recipe
+ * reuse)"：直接复用 LETHAL_THUMP_* 三个常量（低频、稍长衰减，本就是"沉重一击"配方
+ * 的既有落点），不新开一套数值。
+ */
+function playPitSnareThump(g: AudioGraph): void {
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: LETHAL_THUMP_FREQ_HZ, durationSec: LETHAL_THUMP_DECAY_SEC, peak: LETHAL_THUMP_GAIN });
+}
+
 /** 觉醒揭示和弦（M1 B6）——五声音阶三音升序错开起奏，见文件头常量注释。 */
 function playAwakenChord(g: AudioGraph): void {
   AWAKEN_CHORD_NOTES.forEach((freq, i) => {
@@ -668,6 +692,12 @@ export interface AudioUpdateContext {
   lastEvolutionTick: number | null;
   /** M1 B6：state.timeOfDay 直传——驱动昼夜氛围联动（虫鸣/风声），见文件头 M1 B6 段落。 */
   timeOfDay: number;
+  /**
+   * M15 P1（反制包）：state.adrenalineTicks>0 直传。不做任何边沿检测（不像 dormant 那样
+   * 驱动入眠/呼吸声的状态机）——只在心跳已经因为低血量而跳动时（hpRatio<
+   * HEARTBEAT_HP_RATIO_THRESHOLD）临时把节拍调快，见 update() 里的心跳周期计算。
+   */
+  adrenaline: boolean;
 }
 
 export interface AudioController {
@@ -777,6 +807,16 @@ export function createAudio(): AudioController {
           // M1 B6：穴獾遁地隐匿——见 simEvents.ts 的 hiddenTicks 0→>0 判据注释。
           playBurrowVanish(g);
           break;
+        case "pitSnare":
+          // M15 P1：陷坑触发——见文件头常量区 playPitSnareThump 的注释（LETHAL_THUMP_*
+          // 配方复用）。
+          playPitSnareThump(g);
+          break;
+        case "adrenaline":
+          // 刻意不响：濒死爆发本身没有独立的"触发音"，听觉反馈完全靠下方 update() 的
+          // 心跳提速（本就在 hpRatio<阈值时持续跳动，见文件头 M1 B6 段落与本 case 的
+          // 姊妹字段 ctx.adrenaline）——再叠一个离散音效会与心跳的连续节拍互相打架。
+          break;
         case "drink":
           // 刻意忽略：饮水音由 update() 里的 ctx.drinking 门控循环驱动，不吃这个边沿
           // 事件（见文件头"ctx 形状的刻意偏离"）。
@@ -823,10 +863,13 @@ export function createAudio(): AudioController {
       if (hpRatio < HEARTBEAT_HP_RATIO_THRESHOLD) {
         heartbeatPhaseSec += frameDt;
         const scale = computeHeartbeatGainScale(hpRatio);
+        // 濒死爆发窗口内心跳提速（M15 P1）：只影响节拍密度（周期），不影响 scale
+        // （音量强度仍只看 hpRatio），见 computeHeartbeatPeriod 的头部注释。
+        const period = computeHeartbeatPeriod(uctx.adrenaline);
         // while（非 if）：万一某一帧 frameDt 异常大（掉帧恢复），不会漏掉本该发生的
         // 多次心跳节拍——同 simEvents.ts digTick 节流累加器的同一套写法。
-        while (heartbeatPhaseSec >= HEARTBEAT_PERIOD_SEC) {
-          heartbeatPhaseSec -= HEARTBEAT_PERIOD_SEC;
+        while (heartbeatPhaseSec >= period) {
+          heartbeatPhaseSec -= period;
           const peak = HEARTBEAT_BASE_GAIN * scale;
           playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: HEARTBEAT_FREQ_HZ, durationSec: HEARTBEAT_DECAY_SEC, peak });
           playTone(g.ctx, g.sfxGain, {

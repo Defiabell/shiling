@@ -62,12 +62,21 @@ const SKIN = {
   carcassColor: "#5f6862",
   carcassRadius: 2,
   digSpotColor: "#5a4a38",
-  digSpotDugColor: "#332a20",
   digSpotRadius: 3,
+  // 逃生网络（M15 P1「反制包」）：已挖开的洞口（spot.dug）改画成一圈绿意墨环——
+  // "这是一个能钻进去的逃生点"，与未挖开（digSpotColor 描边）/家巢（playerColor 圆环）
+  // 两种既有标记区分度足够（暖褐 vs 冷绿 vs 暖 amber），不复用任何已有色值。
+  escapeRingColor: "#5fae7a",
+  // 陷坑（M15 P1）：小十字，暗色（与陷坑本身的"暗坑"读法一致）——armed 陷坑才画，
+  // 触发/轮换移除后跟着 state.pits 一起从地图上消失。
+  pitCrossColor: "#2a2620",
+  pitCrossSize: 3,
+  pitCrossWidth: 1.5,
 
   // 家巢标记（Part 2，postfix-9）：amber 圆环，套在家巢那个挖点外面——复用玩家标记
-  // 同一色相（playerColor/playerGlow），一眼就能认出"这个挖点是我的家"，不与普通
-  // 挖点（digSpotColor/digSpotDugColor）混淆。
+  // 同一色相（playerColor/playerGlow），一眼就能认出"这个挖点是我的家"，不与普通挖点
+  // （digSpotColor 未挖描边／escapeRingColor 已挖描边，M15 P1 起后者替代原来的
+  // digSpotDugColor 填色实心洞，见上面的逃生网络注释）混淆。
   homeNestRingRadius: 6,
   homeNestRingWidth: 1.5,
   homeNestRingGlowBlur: 5,
@@ -216,6 +225,20 @@ function drawPlayerMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.shadowColor = "transparent";
 }
 
+/** 陷坑标记（M15 P1「反制包」）：小十字，暗色——armed 才画，与 drawPlayerMarker/
+ *  homeNestRing 的 shadow* 复位惯例不同，本标记不带发光，画完不需要额外复位。 */
+function drawPitCross(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+  const r = SKIN.pitCrossSize;
+  ctx.strokeStyle = SKIN.pitCrossColor;
+  ctx.lineWidth = SKIN.pitCrossWidth;
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy - r);
+  ctx.lineTo(cx + r, cy + r);
+  ctx.moveTo(cx + r, cy - r);
+  ctx.lineTo(cx - r, cy + r);
+  ctx.stroke();
+}
+
 /** 视野锥：camYaw 的正前方 ±viewConeHalfAngle 的扇形，半径到卡片边缘。 */
 function drawViewCone(ctx: CanvasRenderingContext2D, cx: number, cy: number, dirX: number, dirY: number, radius: number, halfAngle: number): void {
   const baseAngle = Math.atan2(dirY, dirX);
@@ -245,8 +268,11 @@ function drawOverlay(ctx: CanvasRenderingContext2D, terrain: Terrain, worldSize:
     ctx.beginPath();
     ctx.arc(m.x, m.y, SKIN.digSpotRadius, 0, Math.PI * 2);
     if (spot.dug) {
-      ctx.fillStyle = SKIN.digSpotDugColor;
-      ctx.fill();
+      // 逃生网络（M15 P1）：已挖开的洞口画成绿意墨环（描边，不再是填色实心洞），与
+      // 未挖开的暖褐描边区分度更高——"这里能钻进去"一眼可辨。
+      ctx.strokeStyle = SKIN.escapeRingColor;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     } else {
       ctx.strokeStyle = SKIN.digSpotColor;
       ctx.lineWidth = 1.5;
@@ -267,6 +293,14 @@ function drawOverlay(ctx: CanvasRenderingContext2D, terrain: Terrain, worldSize:
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
     }
+  }
+
+  // 陷坑（M15 P1）：armed 才画——触发消耗/轮换移除后自然跟着 state.pits 一起从地图上
+  // 消失，不需要额外的可见性判定。
+  for (const pit of state.pits) {
+    if (!pit.armed) continue;
+    const m = toMap(pit.pos.x, pit.pos.z);
+    drawPitCross(ctx, m.x, m.y);
   }
 
   for (const c of state.carcasses) {
