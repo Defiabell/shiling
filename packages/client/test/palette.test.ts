@@ -56,6 +56,13 @@ describe("interpolateDayNight", () => {
       const resolved = interpolateDayNight(kf.t);
       expect(resolved.nightAmount).toBe(kf.nightAmount);
       expect(resolved.sunColor).toBe(kf.sunColor);
+      // M2 A4：天空远景（skyscape.ts）新增的四个字段与既有 8 个字段共用同一套
+      // lerp 机制（见 palette.ts interpolateDayNight 头注），在锚点处同样不该有
+      // smoothstep 渗色。
+      expect(resolved.mountainInk).toBe(kf.mountainInk);
+      expect(resolved.cloudTint).toBe(kf.cloudTint);
+      expect(resolved.celestialColor).toBe(kf.celestialColor);
+      expect(resolved.celestialSize).toBe(kf.celestialSize);
     }
   });
 

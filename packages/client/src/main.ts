@@ -16,6 +16,7 @@ import { buildGrassField } from "./render/grassField.js";
 import { buildGroundMist } from "./render/groundMist.js";
 import { createPitVisuals } from "./render/pits.js";
 import { buildLandmarks } from "./render/landmarks.js";
+import { buildSkyscape } from "./render/skyscape.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
@@ -76,6 +77,11 @@ const groundMist = buildGroundMist(scene, sim.terrain, seed);
 // 与 scatter 同一层——地形建好之后一次性构建（大部分是静态 InstancedMesh，只有灵泉
 // 的上浮灵光颗粒需要每帧更新，见渲染循环里的 landmarks.update() 调用点）。
 const landmarks = buildLandmarks(scene, sim.terrain, seed);
+// M2 A4（天空远景，owner feedback「整体风格和山海经差很远」）：水墨远山剪影/云海/
+// 日月轮/星河银河——与 landmarks/groundMist 同层的又一个纯背景层，本身不读
+// `sim.terrain`（所有元素的位置都是相对世界原点的固定半径/高度，见 skyscape.ts
+// 头部注释），紧跟在其余"世界装饰"builder 之后调用只是分组习惯，不是有实际依赖。
+const skyscape = buildSkyscape(scene, seed);
 // 险峰山地区圆心（M15 P3）：main.ts 顶层只算一次（纯函数，同一个 seed 恒定不变），
 // 供下面 flavor toast 的"是否已进入山地区核心"判定复用——不需要每帧重新算。
 const mountainCenter = mountainCenterFor(seed, sim.terrain.size);
@@ -616,6 +622,10 @@ if (import.meta.env.DEV) {
     // 脚本确定性地等待 swap 边沿（poll 直到翻真）再各截一张 procedural/GLB 对照图，
     // 不需要瞎猜一个"应该够了"的超时时长。
     getPropsReady: () => landmarks.isPropsReady(),
+    // M2 A4（天空远景）verification hook：日月轮最近一次 update() 算出的世界坐标——
+    // 供外部 Playwright 脚本核对"正午顶空为日轮/子夜顶空为月轮"这条 celestialElevation
+    // 契约在真实渲染场景里也成立（不止是 skyscape.test.ts 里的纯函数断言）。
+    getSkyscapeCelestialPos: () => skyscape.getCelestialWorldPos(),
     // M2 A3（地表精致化）verification hook：draw-call 计数直读——供外部 Playwright
     // 脚本核实"风草场 1 draw call + 贴地流雾 ≤14 + 飘落物 1"这条 perf 预算，而不是
     // 只信代码审查数出来的账本。`renderer.info.render.calls` 每次 `render()` 调用后
@@ -751,6 +761,10 @@ renderer.setAnimationLoop(() => {
   // M2 A2：新增第三参 timeOfDay——铜鼎余烬/石碑刻纹两枚夜间 gated 光效需要它算
   // nightAmount（同 particles.update 早已在用的 sim.state.timeOfDay 直传惯例）。
   landmarks.update(frameDt, tSec, sim.state.timeOfDay);
+  // 天空远景（M2 A4）：与 landmarks/groundMist 同一"backdrop 无条件继续吃
+  // tSec/timeOfDay"惯例——远山剪影颜色/云海漂移与色调/日月轮位置与光晕/星河银河的
+  // night-only 淡入淡出全部只吃这两个参数，标题/暂停/顿帧期间继续照常演算。
+  skyscape.update(tSec, sim.state.timeOfDay);
   // 昼夜光照（M1 B5）：无条件每帧调用——timeOfDay 只在 sim.step() 推进时变化，暂停/
   // 标题画面/顿帧/蜕变冻结期间重复写入同一份取值没有副作用，与 particles/killMarker
   // 同一套"backdrop 无条件继续吃 tSec/frameDt"惯例。

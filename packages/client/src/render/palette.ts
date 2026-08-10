@@ -75,6 +75,14 @@ export const PALETTE = {
   groundMistPale: 0xcfd8d6, // 贴地流雾——不随昼夜变色（只有透明度按 nightAmount 呼吸），固定一种苍白冷灰调，与 PALETTE.fog（随昼夜变色、驱动 scene.fog）刻意区分职责
   petalPink: 0xe0aebc,  // 飘落物——暖粉，"落花"读法
   petalAmber: 0xd6a468, // 飘落物——暖琥珀，"落叶"读法，与 petalPink 交替，见 particles.ts 的 spawnPetal
+  // M2 A4（天空远景——owner feedback「整体风格和山海经差很远」）：skyscape.ts 消费的
+  // 静态色——远山/云海/日月轮三件的**随时间变化**的色相在 DAYNIGHT_KEYFRAMES 里另开
+  // 字段（mountainInk/cloudTint/celestialColor，见下方关键帧块），这里只放"不随昼夜
+  // 变化、只随 night-only 可见度呼吸"的三个静态色——同 groundMistPale 的既有分工
+  // （呼吸用 nightAmount 驱动透明度，色相本身恒定）。
+  moonHaloTint: 0x9fd0e0,  // 月轮夜间光晕——冷淡青，只在夜里随 nightAmount 淡入，见 skyscape.ts 的 haloOpacity
+  starTint: 0xeaf2ff,      // 星河星点——冷白，300 颗共用同一基色，逐点只有 alpha（twinkle）不同
+  galaxyTint: 0xd6e4f0,    // 银河带——冷白偏蓝，比 starTint 更蓝一档，"云雾般的星带"与"锐利的孤星"刻意区分
 } as const;
 
 /**
@@ -103,6 +111,29 @@ export interface DayNightKeyframe {
   skyHorizon: number;
   skyGlow: number;
   nightAmount: number;
+  /**
+   * M2 A4：远山剪影（skyscape.ts 的 buildInkMountains）墨色基调——黎明黛青/白昼
+   * 青灰/黄昏绛紫掺暖/夜近黑（owner brief 原话四档）。与 skyTop/skyHorizon/skyGlow
+   * 同属"天空整体氛围"的一部分，但这几个已有字段的色相是为天穹渐变调的，直接借用
+   * 会让远山读成"和天空一个颜色、没有轮廓"——山海经水墨的"层山"感恰恰要靠山与天
+   * 之间有一层若隐若现的色差，所以另开一个独立字段，不复用既有天穹三色。
+   *
+   * **必须比"看起来该有多深"再深一档**（真实 Playwright 截图判读修正，见
+   * skyscape.ts 的 RING_CONFIGS 头注释）：远山所在的天球纬度（u≈0.5，见
+   * atmosphere.ts 天穹 shader 的 glow 项）恰好是全天穹最亮的一条带，近圈 opacity
+   * 只有 0.5——混合公式 `0.5*ink + 0.5*sky` 意味着即便 ink 是纯黑，能压暗的上限也
+   * 只有背景亮度的一半；用一开始"看起来该有的"中等灰蓝/中等青灰色试算，混合结果
+   * 幾乎与背景等亮，肉眼完全读不出剪影轮廓（首次实测：图中只有一片模糊色带，找不到
+   * 山形）。这里四档全部再压暗一档（非仅夜档），拿到足够的"输入端深度"去抵消
+   * "0.5 opacity 削去一半反差"这道数学上限。
+   */
+  mountainInk: number;
+  /** M2 A4：云海（skyscape.ts 的 buildCloudBank）色调——dawn/dusk 暖、midday 近白、night 暗冷（乘 cloudGainFor 的透明度衰减）。 */
+  cloudTint: number;
+  /** M2 A4：日月轮（skyscape.ts 的 buildCelestialDisc）本体色——暖白日轮／青白月轮。 */
+  celestialColor: number;
+  /** M2 A4：日月轮直径（世界单位）——夜间月轮明显放大，呼应"山海经巨月"的夸张审美。 */
+  celestialSize: number;
 }
 
 export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
@@ -113,6 +144,9 @@ export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     fogColor: 0x4a4652, fogDensityMult: 1.0,
     skyTop: 0x1c2230, skyHorizon: 0x6a5a52, skyGlow: 0xd88a54,
     nightAmount: 0.35,
+    // M2 A4：黛青远山 + 暖粉云海 + 低悬暖白日轮（将升未升，见 skyscape.ts 的
+    // celestialElevation——t=0 恰好是这条公式的水平线一端）。
+    mountainInk: 0x161e26, cloudTint: 0xe6b28f, celestialColor: 0xf2b483, celestialSize: 26,
   },
   {
     t: 0.25, name: "白昼",
@@ -121,6 +155,10 @@ export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     fogColor: 0x7c8a97, fogDensityMult: 0.7,
     skyTop: 0x3a5570, skyHorizon: 0xbfd0dc, skyGlow: 0xe8d9b0,
     nightAmount: 0.0,
+    // M2 A4：青灰远山（比黎明黛青更冷更浅）+ 近白云海（brief 原话"midday near-white"）+
+    // 小而含蓄的暖白日轮（brief 原话"the sky is stylized"——白昼不该被一个抢镜的太阳
+    // 分走注意力，celestialSize 是四档里最小的）。
+    mountainInk: 0x333c42, cloudTint: 0xf3efe6, celestialColor: 0xfff2d4, celestialSize: 20,
   },
   {
     // 黄昏＝既有静态暮色美术方向的原样数值（PALETTE.sun*/hemi*/fog/sky*），见本块头注释。
@@ -130,6 +168,10 @@ export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     fogColor: PALETTE.fog, fogDensityMult: 1.0,
     skyTop: PALETTE.skyTop, skyHorizon: PALETTE.skyHorizon, skyGlow: PALETTE.skyGlow,
     nightAmount: 0.65,
+    // M2 A4：绛紫掺暖远山（brief 原话——深紫带一点暮色余晖的暖调，与黎明的黛青/白昼的
+    // 青灰区分开，读作"晚霞染红了山影"）+ 暖橙云海（比黎明更烈一档，正对着落日）+
+    // 低悬暖橙日轮（即将西沉，见 celestialElevation 在 t=0.5 同样落在水平线上）。
+    mountainInk: 0x2e1820, cloudTint: 0xdd8f66, celestialColor: 0xf0925a, celestialSize: 28,
   },
   {
     // 夜：hemiGround/hemiIntensity/sunIntensity 三者的具体取值不是随手挑的——见
@@ -156,6 +198,13 @@ export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
     fogColor: 0x333a4a, fogDensityMult: 1.0,
     skyTop: 0x05070c, skyHorizon: 0x171c28, skyGlow: 0x2a3550,
     nightAmount: 1.0,
+    // M2 A4：近黑远山（brief 原话）——四档里最暗，几乎融进夜空，只留一道极淡的冷光
+    // 轮廓（skyscape.ts 的 ring opacity 固定在 0.68/0.48/0.32，颜色本身压到近黑；
+    // 三档 opacity 数值的调整依据见 skyscape.ts RING_CONFIGS 头注释）+
+    // 昏暗云海（brief"night very dim"，靠 cloudGainFor 把透明度再打折，这里的色相本身
+    // 也调暗调冷）+ 硕大青白月轮（brief 原话"山海经 oversized-moon 美学"，celestialSize
+    // 是四档里最大的，约白昼日轮的 2.7 倍）。
+    mountainInk: 0x0e0f13, cloudTint: 0x4a5568, celestialColor: 0xb9e3ec, celestialSize: 54,
   },
 ];
 
@@ -222,6 +271,12 @@ export function interpolateDayNight(timeOfDay: number): ResolvedDayNight {
     skyHorizon: lerpHexColor(a.skyHorizon, b.skyHorizon, alpha),
     skyGlow: lerpHexColor(a.skyGlow, b.skyGlow, alpha),
     nightAmount: lerpNum(a.nightAmount, b.nightAmount, alpha),
+    // M2 A4：与上面 8 个既有字段同一套 lerp 机制，不另开分支——skyscape.ts 的
+    // updateSkyscape() 与 updateAtmosphere()/fireflyGainFor 等共用这一个解析入口。
+    mountainInk: lerpHexColor(a.mountainInk, b.mountainInk, alpha),
+    cloudTint: lerpHexColor(a.cloudTint, b.cloudTint, alpha),
+    celestialColor: lerpHexColor(a.celestialColor, b.celestialColor, alpha),
+    celestialSize: lerpNum(a.celestialSize, b.celestialSize, alpha),
   };
 }
 
