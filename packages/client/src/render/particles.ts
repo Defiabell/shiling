@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Terrain } from "@shiling/sim";
+import type { WorldParams } from "@shiling/content";
 import { interpolateDayNight, PALETTE } from "./palette.js";
 import type { SimEvent } from "./simEvents.js";
 
@@ -203,6 +204,55 @@ export function fireflyGainFor(timeOfDay: number): number {
   return FIREFLY_GAIN_DAY + (FIREFLY_GAIN_NIGHT - FIREFLY_GAIN_DAY) * night;
 }
 
+// ---- M2 A3（地表精致化——owner feedback「地图不精致」）：飘落物常驻氛围 ----
+// 与萤火同一套"常驻创建、独立小规模 Points、每帧原地漂移"结构（brief 原话"12
+// dedicated ambient slots (like fireflies pattern)"），但混合模式不同——飘落物是
+// 暖色调的实体色小片（花瓣/落叶），不该像萤火那样加色发光，NormalBlending 与
+// 事件粒子池同一混合语义；因此不能复用萤火的 Points/material（同文件头注释
+// "二者对混合模式的要求互斥"那条论证——萤火用 Additive，事件池用 Normal，飘落物
+// 也要 Normal，但事件池是"有限寿命+事件触发"的语义，飘落物是"永久存活+自行循环
+// 重生"的语义，两者生命周期模型不同，不能共用同一套 alloc/life 记账，所以飘落物
+// 单开第三个 Points，而不是塞进事件池或复用萤火）。
+//
+// 位置分布：与萤火一样以世界原点为锚点、`PETAL_SPREAD` 范围内（不追踪玩家位置，
+// 同萤火的既有惯例），但按"草甸密度 x2"做位置加权——候选点落在草甸带（swampMax
+// < h < peakMin，与 grassField.ts/terrainMesh.ts 同一镜像公式）总是接受，落在
+// 其它带（沼泽/山地/水域附近）则按 `PETAL_NON_MEADOW_REJECT_PROB`=0.5 概率剔除
+// 重新采样——最终落点密度比例草甸:非草甸=1:0.5=2:1，precisely "density doubles in
+// meadow band"。`params.hillAmp` 因此成为本函数新增的第三个参数（`createParticles`
+// 原先只接 `Terrain`，草甸带阈值需要 hillAmp，Terrain 接口本身不暴露）。
+//
+// 漂移：固定风向（`PETAL_WIND_ANGLE`，斜向而非正东正北——"diagonal drift"），叠加
+// 一点垂直于风向的正弦 sway（读作"风里打转"，不是笔直平移）与缓慢下沉；超出
+// `PETAL_SPREAD` 或沉到贴地高度时在风的上游一侧重新生成（`respawnPetal` 里若候选
+// 点落在下风侧则把 x/z 各自取反，强制落回上风侧，见该函数内注释）。
+const PETAL_COUNT = 12;
+const PETAL_SPREAD = 70; // 比萤火 FIREFLY_SPREAD(90) 略小——飘落物该比萤火更贴近视野中心
+const PETAL_NON_MEADOW_REJECT_PROB = 0.5; // 见上方"位置分布"——达成草甸密度 x2
+// 比 scatter.ts/grassField.ts/groundMist.ts 共用的 MAX_REJECTION_ATTEMPTS(10_000)
+// 小得多——那几个采样器的目标带（沼泽/山地/低地）在世界里可能是稀疏的小块区域，
+// 需要很多次尝试才能命中；这里每次尝试的接受率恒 ≥50%（草甸必接受，非草甸也有
+// 1-PETAL_NON_MEADOW_REJECT_PROB 概率接受），64 次早已过量冗余，见
+// samplePetalSpawn 尾部的兜底异常注释。
+const PETAL_SAMPLE_ATTEMPTS = 64;
+const PETAL_WIND_ANGLE = Math.PI / 7; // 固定斜向风向（≈25.7°），非正交轴——"diagonal drift"
+const PETAL_WIND_DIR_X = Math.cos(PETAL_WIND_ANGLE);
+const PETAL_WIND_DIR_Z = Math.sin(PETAL_WIND_ANGLE);
+const PETAL_DRIFT_SPEED_MIN = 0.35;
+const PETAL_DRIFT_SPEED_MAX = 0.7;
+const PETAL_FALL_SPEED = 0.1; // 缓慢下沉——花瓣/落叶最终会落地，不是永远悬停
+const PETAL_SWAY_AMP = 0.5; // 垂直于风向的摆动幅度（米）
+const PETAL_SWAY_FREQ_MIN = 0.5;
+const PETAL_SWAY_FREQ_MAX = 1.0;
+const PETAL_HEIGHT_MIN = 1.0; // 初生高度（相对地表）——头顶到略高一点的量级
+const PETAL_HEIGHT_MAX = 3.2;
+const PETAL_GROUND_CLEARANCE = 0.15; // 沉到这个高度以内视为"落地"，触发重生
+// PointsMaterial.size 是材质级 uniform（同一 Points 下所有点共用同一个值，非逐顶点
+// attribute——同事件粒子池文件头注释里"size 字段目前不会真的改变渲染出的点的大小"
+// 那条已知限制同一原因），因此只给一个固定常量，不像颜色那样每粒子随机——避免重复
+// 那条"记录了但没接上渲染"的坑，这里干脆不留一个用不上的每粒子 size 字段。
+const PETAL_POINT_SIZE = POINT_SIZE * 0.7;
+
 // ---- 柔光贴图（Post-fix-1）----
 const SPRITE_TEXTURE_SIZE = 64;
 
@@ -258,6 +308,12 @@ function coneVelocity(
 export function createParticles(
   scene: THREE.Scene,
   terrain: Terrain,
+  /**
+   * M2 A3（飘落物常驻氛围）新增第三参：`params.hillAmp` 用于镜像
+   * grassField.ts/terrainMesh.ts 的 `peakMin` 公式，判定候选落点是不是"草甸带"
+   * （见上方"位置分布"一节的密度加权）——`Terrain` 接口本身不暴露 hillAmp。
+   */
+  params: WorldParams,
 ): {
   /**
    * `killIds`（Part 1，postfix-9 新增第三参；code review 2026-08-09 收紧）：main.ts
@@ -282,6 +338,13 @@ export function createParticles(
   spawnCreatureDust(pos: { x: number; y: number; z: number }, count: number): void;
   spawnInkSmoke(pos: { x: number; y: number; z: number }): void;
   spawnBubble(pos: { x: number; y: number; z: number }): void;
+  /**
+   * M2 A3 verification hook：只有 12 个飘落物槎位，随机撒在世界原点附近
+   * `PETAL_SPREAD` 半径内（同萤火 anchor 惯例），外部 Playwright 脚本靠"随便挑
+   * 一个位置"几乎不可能确定性地把镜头摆到某一颗附近——暴露当前坐标供脚本直接
+   * warp 到最近的一颗取景。
+   */
+  getPetalPositions(): ReadonlyArray<{ x: number; y: number; z: number }>;
 } {
   const sprite = createGlowSprite();
 
@@ -338,6 +401,105 @@ export function createParticles(
   // 几何体，懒计算的 boundingSphere 不会跟着更新——沿用事件池同样的理由关闭裁剪。
   fireflyPoints.frustumCulled = false;
   scene.add(fireflyPoints);
+
+  // ---- M2 A3：飘落物 Points——一次性初始化，永久存活+自行循环重生，独立
+  // geometry/material（见文件头"飘落物常驻氛围"一节为何不能复用萤火/事件池） ----
+  const PETAL_A = toRgb01(PALETTE.petalPink);
+  const PETAL_B = toRgb01(PALETTE.petalAmber);
+  const petalSwampMax = terrain.waterLevel + 0.9; // 镜像 grassField.ts/terrainMesh.ts
+  const petalPeakMin = params.hillAmp * 0.75; // 镜像 grassField.ts/terrainMesh.ts
+
+  /** 是否落在草甸带（swampMax < h < peakMin）——见文件头"位置分布"一节。 */
+  function isMeadowAt(x: number, z: number): boolean {
+    const h = terrain.heightAt(x, z);
+    return h > petalSwampMax && h < petalPeakMin;
+  }
+
+  /**
+   * 采样一个飘落物生成点：在 `PETAL_SPREAD` 范围内取随机 (x,z)，非草甸候选按
+   * `PETAL_NON_MEADOW_REJECT_PROB` 概率重采样（草甸密度 x2，见文件头一节）；
+   * `pushUpwind` 为真时（重生场景）若候选点落在下风侧（相对世界原点，沿风向的
+   * 投影 >0）整体取反坐标，强制落回上风侧——保证重生的飘落物有完整的一段"漂进
+   * 视野"路程，而不是刚生成就即将飘出边界。
+   *
+   * **镜像必须在草甸判定之前做**（code review 抓到的真实 bug）：世界地形不是
+   * 中心对称的，"取反坐标"会把一个已经通过草甸判定的候选点搬到地图上完全
+   * 不相关的另一位置，那个新位置的地形带完全可能不再是草甸——如果先判定再镜像
+   * （第一版写法），最终真正落地的坐标从未被判定过，"草甸密度 x2"这条设计
+   * 目标对**除首次构建外的所有重生**（`pushUpwind` 恒为 true）都会静默失效。
+   * 现在的写法：先按 `pushUpwind` 把候选坐标搬到最终会落地的那个位置，再对
+   * *这个真正的最终坐标* 做草甸判定——判定的永远是会被使用的那个点。
+   */
+  function samplePetalSpawn(pushUpwind: boolean): { x: number; z: number } {
+    for (let attempt = 0; attempt < PETAL_SAMPLE_ATTEMPTS; attempt++) {
+      let x = (Math.random() * 2 - 1) * PETAL_SPREAD;
+      let z = (Math.random() * 2 - 1) * PETAL_SPREAD;
+      if (pushUpwind) {
+        const along = x * PETAL_WIND_DIR_X + z * PETAL_WIND_DIR_Z;
+        if (along > 0) {
+          x = -x;
+          z = -z;
+        }
+      }
+      if (isMeadowAt(x, z) || Math.random() > PETAL_NON_MEADOW_REJECT_PROB) return { x, z };
+    }
+    // 与 scatter.ts/grassField.ts/groundMist.ts 的既有 rejection-sample 惯例一致
+    // （耗尽即抛异常，不静默返回一个未经判定的兜底点）——概率上几乎不会走到这里
+    // （每次尝试至少 50% 接受率：草甸候选必接受，非草甸候选也有
+    // 1-PETAL_NON_MEADOW_REJECT_PROB 的接受率），`PETAL_SAMPLE_ATTEMPTS`(64) 次
+    // 全部失手的概率 ≈0.5^64，纯粹是为了与其它采样器同一套防御性写法，不是
+    // 因为这里真的预期会触发。
+    throw new Error("particles: no petal spawn position found after max attempts; check WorldParams/terrain");
+  }
+
+  const petalPositions = new Float32Array(PETAL_COUNT * 3); // 实际渲染位置（= center + 垂直 sway 偏移，见 update()）
+  // 纯漂移中心（不含 sway 偏移）——sway 是每帧从 tSec 重新算出的一个瞬时垂直偏移量
+  // （sin(...) * PETAL_SWAY_AMP，有界），不能把它当"速度"逐帧累加进 petalPositions
+  // 本身（那样积分出来的实际摆动幅度会被 frameDt 压缩到几乎不可见，是本函数第一版
+  // 写法就踩过的真实 bug）。中心位置只按风向恒速漂移，越界/落地判定也用中心位置
+  // （不用叠加了 sway 抖动的渲染位置——避免 sway 把中心推过边界一点点就误触发重生）。
+  const petalCenterX = new Float32Array(PETAL_COUNT);
+  const petalCenterZ = new Float32Array(PETAL_COUNT);
+  const petalColors = new Float32Array(PETAL_COUNT * 3);
+  const petalSwayFreq = new Float32Array(PETAL_COUNT);
+  const petalSwayPhase = new Float32Array(PETAL_COUNT);
+  const petalSpeed = new Float32Array(PETAL_COUNT);
+
+  /** (Re)spawns petal `i` in place — shared by initial build and every runtime respawn. */
+  function respawnPetal(i: number, pushUpwind: boolean): void {
+    const { x, z } = samplePetalSpawn(pushUpwind);
+    const y = terrain.heightAt(x, z) + PETAL_HEIGHT_MIN + Math.random() * (PETAL_HEIGHT_MAX - PETAL_HEIGHT_MIN);
+    petalCenterX[i] = x;
+    petalCenterZ[i] = z;
+    petalPositions[i * 3] = x;
+    petalPositions[i * 3 + 1] = y;
+    petalPositions[i * 3 + 2] = z;
+    petalSwayFreq[i] = PETAL_SWAY_FREQ_MIN + Math.random() * (PETAL_SWAY_FREQ_MAX - PETAL_SWAY_FREQ_MIN);
+    petalSwayPhase[i] = Math.random() * Math.PI * 2;
+    petalSpeed[i] = PETAL_DRIFT_SPEED_MIN + Math.random() * (PETAL_DRIFT_SPEED_MAX - PETAL_DRIFT_SPEED_MIN);
+    const tint = Math.random() < 0.5 ? PETAL_A : PETAL_B;
+    petalColors[i * 3] = tint[0];
+    petalColors[i * 3 + 1] = tint[1];
+    petalColors[i * 3 + 2] = tint[2];
+  }
+  for (let i = 0; i < PETAL_COUNT; i++) respawnPetal(i, false); // 首次构建不需要强制上风——整批本来就均匀撒在范围内
+
+  const petalGeometry = new THREE.BufferGeometry();
+  const petalPositionAttr = new THREE.BufferAttribute(petalPositions, 3);
+  const petalColorAttr = new THREE.BufferAttribute(petalColors, 3);
+  petalGeometry.setAttribute("position", petalPositionAttr);
+  petalGeometry.setAttribute("color", petalColorAttr);
+  const petalMaterial = new THREE.PointsMaterial({
+    size: PETAL_POINT_SIZE,
+    map: sprite, // 复用既有柔光贴图（brief 原话"soft sprite texture"，不新建资源）
+    vertexColors: true,
+    transparent: true,
+    sizeAttenuation: true,
+    depthWrite: false, // NormalBlending（默认）——花瓣是实体色小片，不发光，同事件粒子池
+  });
+  const petalPoints = new THREE.Points(petalGeometry, petalMaterial);
+  petalPoints.frustumCulled = false; // 持续原地漂移，同萤火/事件池的既有理由
+  scene.add(petalPoints);
 
   // ---- 事件粒子池 Points：初始全部"死"，停在 y=-999 ----
   const positions = new Float32Array(EFFECT_CAPACITY * 3);
@@ -635,6 +797,41 @@ export function createParticles(
     fireflyPositionAttr.needsUpdate = true;
     fireflyColorAttr.needsUpdate = true;
 
+    // M2 A3：飘落物——纯漂移中心（petalCenterX/Z）按固定风向恒速积分；渲染位置
+    // 是中心 + 每帧从 tSec 重新算出的垂直 sway 偏移（有界的 sin，不是逐帧累加的
+    // "速度"，见 petalCenterX 声明处注释为何必须这样分离）；Y 独立缓慢下沉。
+    // 中心越出 PETAL_SPREAD 或渲染高度沉到贴地阈值以内时在上风侧重生
+    // （respawnPetal 内部处理，颜色/摆动相位/漂移速度全部重新随机，同 spawn() 系
+    // "整体覆写，不依赖上一位占用者留下的任何旧值"的既有惯例）。
+    for (let i = 0; i < PETAL_COUNT; i++) {
+      petalCenterX[i]! += PETAL_WIND_DIR_X * petalSpeed[i]! * frameDt;
+      petalCenterZ[i]! += PETAL_WIND_DIR_Z * petalSpeed[i]! * frameDt;
+      const cx = petalCenterX[i]!;
+      const cz = petalCenterZ[i]!;
+      if (Math.abs(cx) > PETAL_SPREAD || Math.abs(cz) > PETAL_SPREAD) {
+        respawnPetal(i, true);
+        continue;
+      }
+      const sway = Math.sin(tSec * petalSwayFreq[i]! + petalSwayPhase[i]!) * PETAL_SWAY_AMP;
+      // sway 沿"垂直于风向"的水平轴（风向 (windX,windZ) 的垂直向量为 (-windZ,windX)）。
+      const x = cx + -PETAL_WIND_DIR_Z * sway;
+      const z = cz + PETAL_WIND_DIR_X * sway;
+      const y = petalPositions[i * 3 + 1]! - PETAL_FALL_SPEED * frameDt;
+      // 贴地判定同样用纯中心 (cx,cz)，不用叠加了 sway 的渲染位置 (x,z)——同上面
+      // 越界判定一致的理由（code review 指出的不一致，已改正）：sway 只是原地
+      // 小幅摆动，用它采样地形高度会让贴地阈值随 sway 相位来回轻微抖动，与本段
+      // 头部注释"中心越出/渲染高度沉到阈值以内时重生"里"中心"这个措辞保持一致。
+      const groundY = terrain.heightAt(cx, cz);
+      if (y - groundY < PETAL_GROUND_CLEARANCE) {
+        respawnPetal(i, true);
+        continue;
+      }
+      petalPositions[i * 3] = x;
+      petalPositions[i * 3 + 1] = y;
+      petalPositions[i * 3 + 2] = z;
+    }
+    petalPositionAttr.needsUpdate = true;
+
     // 事件粒子池：受重力积分位置、按剩余寿命比例把颜色向黑衰减（墨渐渐融入纸面），
     // 寿命耗尽即刻停到 y=-999 并整帧跳过（不再重复搬运/改色）。
     for (let i = 0; i < EFFECT_CAPACITY; i++) {
@@ -666,5 +863,12 @@ export function createParticles(
     spawnCreatureDust: spawnDustN,
     spawnInkSmoke,
     spawnBubble,
+    getPetalPositions: () => {
+      const out: { x: number; y: number; z: number }[] = [];
+      for (let i = 0; i < PETAL_COUNT; i++) {
+        out.push({ x: petalPositions[i * 3]!, y: petalPositions[i * 3 + 1]!, z: petalPositions[i * 3 + 2]! });
+      }
+      return out;
+    },
   };
 }

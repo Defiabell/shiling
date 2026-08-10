@@ -12,6 +12,8 @@ import { createScreenFx } from "./render/screenFx.js";
 import { createKillMarker } from "./render/killMarker.js";
 import { createEvolutionFx } from "./render/evolutionFx.js";
 import { buildScatter } from "./render/scatter.js";
+import { buildGrassField } from "./render/grassField.js";
+import { buildGroundMist } from "./render/groundMist.js";
 import { createPitVisuals } from "./render/pits.js";
 import { buildLandmarks } from "./render/landmarks.js";
 import { createAudio } from "./audio.js";
@@ -60,10 +62,16 @@ mountPaperOverlay();
 // 精确对齐（见 terrainMesh.ts 该参数的头部注释）。
 const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX, seed);
 scene.add(terrainGroup);
-// Patch 3c：地表点缀，地形建好之后一次性构建（静态 InstancedMesh，不逐帧更新）。
-// W2：额外传入 QINGQIU_GRAYBOX（WorldParams）——scatter.ts 需要 hillAmp 算山地 rocky
-// 高度阈值，Terrain 接口本身不暴露它。
-buildScatter(scene, sim.terrain, seed, QINGQIU_GRAYBOX);
+// Patch 3c：地表点缀（岩石/枯树/芦苇），地形建好之后一次性构建（静态
+// InstancedMesh，不逐帧更新）。M2 A3：草丛已移出本调用，见下方 buildGrassField
+// ——scatter.ts 不再需要 hillAmp，签名收窄为 3 参（见该文件 M2 A3 头部注释）。
+buildScatter(scene, sim.terrain, seed);
+// M2 A3（地表精致化，owner feedback「地图不精致」）：风草海——6000 实例十字交叉
+// 叶片、顶点着色器摇摆，替换上面被移除的稀疏圆锥草丛（见 scatter.ts/grassField.ts
+// 头部注释）。render loop 里的 grassField.update(tSec) 每帧只写一个 uTime uniform。
+const grassField = buildGrassField(scene, sim.terrain, seed, QINGQIU_GRAYBOX);
+// M2 A3：贴地流雾——低地/沼泽/水边的柔光雾贴片，夜间/黎明更明显（timeOfDay-gated）。
+const groundMist = buildGroundMist(scene, sim.terrain, seed);
 // M15 P3（山海经地形与地标）：志怪地标（古树/巨石阵/白骨/发光灵芝丛）+ 灵泉可视化，
 // 与 scatter 同一层——地形建好之后一次性构建（大部分是静态 InstancedMesh，只有灵泉
 // 的上浮灵光颗粒需要每帧更新，见渲染循环里的 landmarks.update() 调用点）。
@@ -121,7 +129,10 @@ const hud = createHud();
 // 恒等（createSim 默认就用 QINGQIU_GRAYBOX），但从 terrain 实例自己读，不依赖"默认参数
 // 与这里手动传入的常量保持同步"这条隐含假设（code review 建议）。
 const minimap = createMinimap(sim.terrain, sim.terrain.size);
-const particles = createParticles(scene, sim.terrain);
+// M2 A3：新增第三参 QINGQIU_GRAYBOX（WorldParams）——飘落物常驻氛围的"草甸密度
+// x2"位置加权需要 hillAmp 算 peakMin（Terrain 接口本身不暴露，见 particles.ts
+// 该函数签名头部注释）。
+const particles = createParticles(scene, sim.terrain, QINGQIU_GRAYBOX);
 // M15 P1（反制包）：陷坑视觉，与 particles/screenFx 同层的又一个纯展示消费者——固定
 // 容量池，见该文件头部注释。
 const pitVisuals = createPitVisuals(scene);
@@ -605,6 +616,17 @@ if (import.meta.env.DEV) {
     // 脚本确定性地等待 swap 边沿（poll 直到翻真）再各截一张 procedural/GLB 对照图，
     // 不需要瞎猜一个"应该够了"的超时时长。
     getPropsReady: () => landmarks.isPropsReady(),
+    // M2 A3（地表精致化）verification hook：draw-call 计数直读——供外部 Playwright
+    // 脚本核实"风草场 1 draw call + 贴地流雾 ≤14 + 飘落物 1"这条 perf 预算，而不是
+    // 只信代码审查数出来的账本。`renderer.info.render.calls` 每次 `render()` 调用后
+    // 会被 three.js 自身重置重算，读的是"刚渲染完这一帧"的真实值。
+    getDrawCalls: () => renderer.info.render.calls,
+    // M2 A3 verification hook（镜像 getLandmarkAnchors 既有惯例）：12 片贴地流雾很
+    // 稀疏，外部 Playwright 脚本需要精确坐标才能可靠地把镜头摆到雾团附近取景。
+    getMistAnchors: () => groundMist.anchors,
+    // M2 A3 verification hook（同 getMistAnchors 一样的稀疏氛围坐标探针）：12 颗
+    // 飘落物持续漂移，外部 Playwright 脚本需要它的实时坐标才能可靠取景。
+    getPetalPositions: () => particles.getPetalPositions(),
   };
 }
 
@@ -715,6 +737,11 @@ renderer.setAnimationLoop(() => {
   updateDigSpots(terrainGroup, sim.terrain);
   updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest, sim.state.timeOfDay);
   updateWater(tSec);
+  // M2 A3：风草摇摆（只写一个 uTime uniform）与贴地流雾漂移/呼吸——同 updateWater
+  // 一样的"backdrop 无条件每帧继续吃 tSec/frameDt"惯例，standing 画面在标题/暂停/
+  // 顿帧期间也照常继续"活"。
+  grassField.update(tSec);
+  groundMist.update(tSec, sim.state.timeOfDay);
   // 陷坑视觉（M15 P1）：与 dig spot/家巢标记同一 gate（无条件每帧调用）——state.pits
   // 在 `started` 变真之前恒为空数组（sim.step 从未跑过），提前调用没有任何副作用。
   pitVisuals.update(sim.state);

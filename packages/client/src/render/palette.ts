@@ -70,6 +70,11 @@ export const PALETTE = {
   // 夜间氛围新增两枚 gated 光效（timeOfDay-gated，见 landmarks.ts 的 nightAmount 用法）：
   landmarkDingEmberGlow: 0xe8703d,   // 铜鼎——鼎腹内隐约的余烬暖光，暖橙红
   landmarkSteleShimmer: 0x8fe0e8,    // 石碑——刻纹夜间泛起的幽幽青光，比 springGlowRing 更冷一档，读作"字纹自身在发光"而不是水面反光
+  // M2 A3（地表精致化——owner feedback「地图不精致」）：风草场（grassField.ts）/贴地
+  // 流雾（groundMist.ts）/飘落物（particles.ts 的 petal 常驻氛围槎位）三件专用色。
+  groundMistPale: 0xcfd8d6, // 贴地流雾——不随昼夜变色（只有透明度按 nightAmount 呼吸），固定一种苍白冷灰调，与 PALETTE.fog（随昼夜变色、驱动 scene.fog）刻意区分职责
+  petalPink: 0xe0aebc,  // 飘落物——暖粉，"落花"读法
+  petalAmber: 0xd6a468, // 飘落物——暖琥珀，"落叶"读法，与 petalPink 交替，见 particles.ts 的 spawnPetal
 } as const;
 
 /**

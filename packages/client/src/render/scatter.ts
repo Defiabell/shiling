@@ -1,48 +1,46 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createRng, type Rng, type Terrain } from "@shiling/sim";
-import type { WorldParams } from "@shiling/content";
 import { PALETTE } from "./palette.js";
 
 /**
  * 地表点缀（Patch 3c，playtest feedback: 地面空；W2 追加地貌分层，playtest feedback:
- * 地貌单调）：草丛/岩石/枯树/芦苇四种静态 InstancedMesh（每类一个，共 4 个 draw
+ * 地貌单调）：岩石/枯树/芦苇三种静态 InstancedMesh（每类一个，共 3 个 draw
  * call），main.ts 在地形建好之后调用 `buildScatter` 一次，此后不逐帧更新——与
  * particles.ts 的萤火/事件粒子（每帧重写 position）不同，这里每个实例的变换矩阵/
  * 颜色只在构建时写入一次。
  *
+ * **M2 A3「地表精致化」**（owner feedback「地图不精致」）：原本这里还有第四种——
+ * 稀疏的圆锥草丛（GRASS_COUNT=880，四种类型里最先消耗 rng 流）。整段被摘除并搬到
+ * 新文件 `grassField.ts`（6000 实例的十字交叉叶片风草场，带顶点着色器摇摆动画）——
+ * 不是"新增一层"叠加在旧草丛之上，是彻底替换（owner brief 原话"replace the sparse
+ * cone tufts"）。移除后 rng 流从"grass → rock → wood → reed"缩短为"rock → wood →
+ * reed"——三种类型仍然只消耗这一条 `createRng(seed ^ 0x51ab)`，调用顺序本身仍是
+ * 确定性契约的一部分（不能颠倒），只是不再有 grass 这一段在最前面；`grassField.ts`
+ * 用的是完全独立的另一路 rng（`seed ^` 另一个常数），两个模块互不干扰彼此的抽样序列
+ * （这一点从 M15 P3 起就是既有惯例——`landmarks.ts` 的地标 rng 同样独立于本文件）。
+ * `params: WorldParams` 参数因此一并移除——三种剩余点缀（rock/wood/reed）从未用过
+ * `hillAmp`，只有已删除的 grass 稀疏化用过它。
+ *
  * 位置通过 `createRng(seed ^ 0x51ab)` 在陆地上 rejection-sample（复用 sim 的
  * 世界种子，异或一个跟地形自己 digRng 用的 `^ 0x9e3779b9`（terrain.ts）不同
  * 的常数，避免两路 rng 巧合撞出可疑的重复分布）：同一个世界种子总是长出同一
- * 片点缀，这也是为什么 rng 在本模块内部创建，而不是接一个外部共享实例——
- * 四种类型顺序消耗同一个 rng 流（grass → rock → wood → reed），调用顺序本身就是
- * 确定性的一部分，不能颠倒。
+ * 片点缀，这也是为什么 rng 在本模块内部创建，而不是接一个外部共享实例。
  *
- * W2 地貌分层：草丛在"山地 rocky"高度带（h >= peakMin，与 terrainMesh.ts 的
- * peakMin=hillAmp*0.75 同一公式）按 GRASS_ROCKY_KEEP_PROB 概率稀疏化，读作"高地
- * 植被稀疏"；新增的芦苇只在"沼泽湿度带"（waterLevel < h <= waterLevel+0.9，同样
- * 与 terrainMesh.ts 的 swampMax 同一公式）采样，与地形色的沼泽染色区域在空间上对齐。
- * Terrain 接口本身不暴露 hillAmp，所以这两个公式在这里手动镜像 terrainMesh.ts 的
- * 常量，而不是共享导入——与本文件下面 slopeAt 镜像 terrainMesh.ts 法线坡度算法是
+ * W2 地貌分层：新增的芦苇只在"沼泽湿度带"（waterLevel < h <= waterLevel+0.9，
+ * 与 terrainMesh.ts 的 swampMax 同一公式）采样，与地形色的沼泽染色区域在空间上对齐——
+ * Terrain 接口本身不暴露 hillAmp，这个公式在这里手动镜像 terrainMesh.ts 的常量，
+ * 而不是共享导入——与本文件下面 slopeAt 镜像 terrainMesh.ts 法线坡度算法是
  * 同一种"各自计算层不共享内部实现细节"的既有写法。
  */
 
 const LAND_MARGIN = 0.8; // heightAt > waterLevel + margin
 const MAX_REJECTION_ATTEMPTS = 10_000; // matches sim.ts/terrain.ts's own rejection-sampling loops, same defensive margin for a future water-majority biome
 
-// W2：世界面积 240→480（边长）是 4x，四种点缀数量同比 ×4（旧值 220/40/16，新增芦苇）。
-const GRASS_COUNT = 880;
+// W2：世界面积 240→480（边长）是 4x，点缀数量同比 ×4（旧值 40/16，新增芦苇）。
 const ROCK_COUNT = 160;
 const WOOD_COUNT = 64;
 const REED_COUNT = 240;
-
-const GRASS_HEIGHT = 0.42;
-const GRASS_RADIUS = 0.06;
-const GRASS_SCALE_MIN = 0.7;
-const GRASS_SCALE_MAX = 1.4;
-const GRASS_TILT_JITTER = 0.2; // radians, small organic lean off vertical
-const ROCKY_HEIGHT_FACTOR = 0.75; // 山地 rocky 起点，镜像 terrainMesh.ts 的 peakMin = hillAmp * 0.75
-const GRASS_ROCKY_KEEP_PROB = 0.15; // 山地 rocky 高度带内，草丛按此概率保留——读作"稀疏"
 
 const ROCK_RADIUS = 0.35;
 const ROCK_SCALE_MIN = 0.8;
@@ -103,36 +101,6 @@ function sampleLandPoints(rng: Rng, terrain: Terrain, count: number): LandPoint[
 }
 
 /**
- * Land-point sampler for grass specifically (W2): same LAND_MARGIN rejection
- * as sampleLandPoints, plus a height-based thinning pass once a candidate
- * lands in the 山地 rocky band (h >= peakMin) — a coin flip against
- * GRASS_ROCKY_KEEP_PROB rejects most rocky-band candidates so the resulting
- * point set reads visibly sparser up there, while staying dense everywhere
- * below peakMin (草甸 meadow).
- */
-function sampleGrassPoints(rng: Rng, terrain: Terrain, count: number, peakMin: number): LandPoint[] {
-  const half = terrain.size / 2;
-  const points: LandPoint[] = [];
-  for (let i = 0; i < count; i++) {
-    let placed = false;
-    for (let attempt = 0; attempt < MAX_REJECTION_ATTEMPTS; attempt++) {
-      const x = rng.range(-half, half);
-      const z = rng.range(-half, half);
-      const y = terrain.heightAt(x, z);
-      if (y <= terrain.waterLevel + LAND_MARGIN) continue;
-      if (y >= peakMin && rng.next() > GRASS_ROCKY_KEEP_PROB) continue; // 山地 rocky：高概率跳过，读作稀疏
-      points.push({ x, y, z });
-      placed = true;
-      break;
-    }
-    if (!placed) {
-      throw new Error("scatter: no land position found after max attempts; check WorldParams/terrain");
-    }
-  }
-  return points;
-}
-
-/**
  * Swamp-band sampler for reeds (W2): rejects everything outside
  * (waterLevel, waterLevel + SWAMP_MOISTURE_OFFSET] — the same moisture-proxy
  * band terrainMesh.ts tints toward PALETTE.terrainSwamp — so reeds only ever
@@ -181,13 +149,6 @@ function slopeAt(terrain: Terrain, x: number, z: number): number {
 function jitterColor(rng: Rng, base: THREE.Color): THREE.Color {
   const factor = 1 + (rng.next() * 2 - 1) * COLOR_JITTER;
   return base.clone().multiplyScalar(factor);
-}
-
-/** Single cone standing in for a grass tuft — base translated to local y=0 so instance position lands exactly on the sampled ground point. */
-function buildGrassGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.ConeGeometry(GRASS_RADIUS, GRASS_HEIGHT, 5);
-  geometry.translate(0, GRASS_HEIGHT / 2, 0);
-  return geometry;
 }
 
 /** Low-poly icosahedron — reads as a rough-cut rock, no translate needed (already centered, embedding is handled per-instance via ROCK_EMBED_FACTOR). */
@@ -267,15 +228,6 @@ function buildInstancedScatter(
   return mesh;
 }
 
-function placeGrass(point: LandPoint, rng: Rng, matrix: THREE.Matrix4): void {
-  const scale = GRASS_SCALE_MIN + rng.next() * (GRASS_SCALE_MAX - GRASS_SCALE_MIN);
-  const yaw = rng.next() * Math.PI * 2;
-  const tiltX = (rng.next() * 2 - 1) * GRASS_TILT_JITTER;
-  const tiltZ = (rng.next() * 2 - 1) * GRASS_TILT_JITTER;
-  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(tiltX, yaw, tiltZ, "XYZ"));
-  matrix.compose(new THREE.Vector3(point.x, point.y, point.z), quaternion, new THREE.Vector3(scale, scale, scale));
-}
-
 function placeRock(point: LandPoint, rng: Rng, matrix: THREE.Matrix4): void {
   const scale = ROCK_SCALE_MIN + rng.next() * (ROCK_SCALE_MAX - ROCK_SCALE_MIN);
   const embedY = point.y - ROCK_RADIUS * scale * ROCK_EMBED_FACTOR;
@@ -319,20 +271,15 @@ function placeReed(point: LandPoint, rng: Rng, matrix: THREE.Matrix4): void {
 }
 
 /**
- * Builds and adds all four scatter InstancedMeshes to `scene`. Call once,
- * after `buildTerrainMesh` (needs `terrain` fully built for `heightAt`),
- * with the same seed `createSim` was constructed with — deterministic per
- * world, matching the module doc comment above. `params` supplies `hillAmp`
- * (Terrain itself doesn't expose it) so the grass sparsity threshold can
- * mirror terrainMesh.ts's peakMin formula exactly.
+ * Builds and adds the three remaining scatter InstancedMeshes to `scene`
+ * (grass moved out to `grassField.ts` in M2 A3 — see this file's header
+ * comment). Call once, after `buildTerrainMesh` (needs `terrain` fully built
+ * for `heightAt`), with the same seed `createSim` was constructed with —
+ * deterministic per world, matching the module doc comment above.
  */
-export function buildScatter(scene: THREE.Scene, terrain: Terrain, seed: number, params: WorldParams): void {
+export function buildScatter(scene: THREE.Scene, terrain: Terrain, seed: number): void {
   const rng = createRng(seed ^ 0x51ab);
-  const peakMin = params.hillAmp * ROCKY_HEIGHT_FACTOR;
   const swampMax = terrain.waterLevel + SWAMP_MOISTURE_OFFSET;
-
-  const grassPoints = sampleGrassPoints(rng, terrain, GRASS_COUNT, peakMin);
-  scene.add(buildInstancedScatter(buildGrassGeometry(), PALETTE.scatterGrass, grassPoints, rng, placeGrass));
 
   const rockPoints = sampleLandPoints(rng, terrain, ROCK_COUNT);
   scene.add(

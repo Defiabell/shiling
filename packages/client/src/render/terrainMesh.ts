@@ -123,7 +123,11 @@ function clamp01(v: number): number {
  *   三段线性插值——后半段（High→Peak）本身偏灰，读作"山地 rocky"，配合 scatter.ts
  *   在这个高度带把草丛稀疏化、多摆岩石，视觉上与草甸区分开。
  */
-function terrainBandColor(h: number, waterLevel: number, shoreMax: number, swampMax: number, peakMin: number): THREE.Color {
+// 导出（M2 A3「地表精致化」）：grassField.ts 复用这份分层公式给 6000 株风草上色——
+// 草色要"贴地形色带"，不是另开一套独立的草色渐变。shoreMax/swampMax/peakMin 三个
+// 阈值本身仍按 scatter.ts 头部注释"各自计算层不共享内部实现细节"的既有惯例各自镜像
+// 一份（几行算术不值得共享），只有这个颜色分层函数本身值得共享（真正的复杂度在这里）。
+export function terrainBandColor(h: number, waterLevel: number, shoreMax: number, swampMax: number, peakMin: number): THREE.Color {
   const shore = new THREE.Color(PALETTE.terrainShore);
   if (h <= shoreMax) {
     if (Math.abs(h - waterLevel) < 0.5) {
