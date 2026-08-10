@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { dist2d, DT, type GameState, type Vec3 } from "@shiling/sim";
 import { buildCarcassModel, buildCreatureModel, type CreatureModel } from "./creatureModels.js";
+import { applyOrganVisuals, type OrganVisualHandle } from "./organVisuals.js";
 
 export interface CreatureView {
   /** = model.group. Kept as a top-level field (existing call sites read .mesh.position for the follow camera). */
@@ -33,6 +34,18 @@ export interface CreatureView {
    * doc comment）——bob 完全在这一层（creatureView）叠加，不碰那个 no-op 契约。
    */
   isCarried: boolean;
+  /**
+   * 原始 CreatureModel（M1 B5）：mesh/dispose/animate 都是从它身上摘出来的字段，但
+   * organVisuals.ts 的挂件需要 mounts/parts 才能定位挂点——之前没有任何字段保留这份
+   * 引用，只留了三个摘出来的子字段。只有玩家视图会真正用到（见 syncCreatures 的
+   * organSignature 分支），NPC/carcass 视图持有它但从不读取，与 isCarried 对
+   * `creature:*` 视图恒为 false 的既有惯例（"共享字段，只有部分角色真正用到"）同构。
+   */
+  model: CreatureModel;
+  /** 器官挂件的当前实例（M1 B5，仅玩家视图非 null）——organs diff 时先 dispose 旧的再重建。 */
+  organVisualHandle: OrganVisualHandle | null;
+  /** 上一次用来构建 organVisualHandle 的签名（见下方 organSignature）——dirty-check 基准。 */
+  organSignature: string;
 }
 
 /**
@@ -88,7 +101,23 @@ function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureVi
     locomotion: "walk",
     animate: model.animate,
     isCarried: false,
+    model,
+    organVisualHandle: null,
+    organSignature: "",
   };
+}
+
+/**
+ * 玩家已装备器官的签名（M1 B5）：只反映"哪个槎位装了哪个 organId"这个*集合*，刻意不
+ * 含 temper——temper 每秒都在缓慢变化（tickTemper 的被动/主动增长），若把它也编进签名，
+ * 每次 temper 数值一变就会触发整套挂件 dispose+重建，浪费且毫无必要（挂件的外观只取决
+ * 于装的是哪个器官，不取决于淬炼到几成）。键按槎位名排序，保证同一组装备无论
+ * Object.entries 遍历顺序如何都产出同一个字符串。 */
+export function organSignature(organs: GameState["organs"]): string {
+  return (Object.keys(organs) as (keyof GameState["organs"])[])
+    .sort()
+    .map((slot) => `${slot}:${organs[slot]?.organId ?? ""}`)
+    .join("|");
 }
 
 /**
@@ -128,6 +157,17 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
     // world" semantics as burrowId, just a separate field since it isn't
     // tied to a fixed Terrain.digSpots location).
     view.mesh.visible = c.burrowId === null && c.activity !== "dead" && c.hiddenTicks === 0;
+
+    // M1 B5：只有玩家会装备器官——见 organSignature 的字段注释；NPC 分支这个 if 恒为
+    // false，从不触碰 organVisualHandle（对它们始终留 null，与构造时的默认值一致）。
+    if (c.id === state.playerId) {
+      const sig = organSignature(state.organs);
+      if (sig !== view.organSignature) {
+        view.organVisualHandle?.dispose();
+        view.organVisualHandle = applyOrganVisuals(view.model, c.species, state.organs);
+        view.organSignature = sig;
+      }
+    }
   }
 
   // Part 2（postfix-9）：只有玩家能叼运，且一次只能叼一具——一次性查一遍即可，不必
@@ -153,6 +193,7 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
   for (const [key, view] of views) {
     if (liveKeys.has(key)) continue;
     scene.remove(view.mesh);
+    view.organVisualHandle?.dispose(); // M1 B5：玩家死亡这个理论上唯一会命中的路径——见 organSignature 字段注释
     view.dispose();
     views.delete(key);
   }

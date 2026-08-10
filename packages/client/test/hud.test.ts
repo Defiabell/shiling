@@ -19,6 +19,7 @@ const baseCtx: HudContext = {
   nearWater: false, nearCarcass: false, nearDigSpot: false, nearPrey: false,
   carrying: false, nearNest: false, stash: 0, inOwnBurrow: false, nestBuildPct: 0,
   dormant: false, dormancyEligible: false,
+  essencePct: { zu: 0, lin: 0, xue: 0, meng: 0 },
 };
 
 describe("contextPrompt", () => {

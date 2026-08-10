@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Terrain } from "@shiling/sim";
-import { PALETTE } from "./palette.js";
+import { interpolateDayNight, PALETTE } from "./palette.js";
 import type { SimEvent } from "./simEvents.js";
 
 /**
@@ -151,6 +151,24 @@ const FIREFLY_BOB_FREQ = 0.35;
 const FIREFLY_TWINKLE_BASE = 0.75; // 现在驱动的是逐顶点 alpha（见下），不再是 RGB 亮度倍数
 const FIREFLY_TWINKLE_AMP = 0.25;
 const FIREFLY_TWINKLE_FREQ = 1.8;
+/**
+ * 萤火夜间 gain（M1 B5，plan 原话"夜里萤火 gain 更高，×2"）：不是把 alpha 往上顶到
+ * >1（额定 additive blending 下 alpha>1 只会在饱和处被 GPU 钳到最亮，视觉上没有真正
+ * "更亮"的余地，也没必要冒 alpha 语义溢出的风险），而是反过来——白昼把已经调好的
+ * twinkle 数值打半折，夜晚保持 FIREFLY_TWINKLE_BASE/AMP 原有（早就playtest 调好的）
+ * 亮度不变。这样"夜里是白昼的 2 倍"这个比例关系精确成立（NIGHT_GAIN/DAY_GAIN=2），
+ * 且从不越出 [DAY_GAIN, NIGHT_GAIN] 这个安全区间。nightAmount 来自
+ * palette.ts 的 interpolateDayNight（与 atmosphere.ts 的光照/雾/天穹插值同一套
+ * keyframe 数据，昼夜两头的 gain 因此天然与光照明暗过渡同步）。
+ */
+const FIREFLY_GAIN_DAY = 0.5;
+const FIREFLY_GAIN_NIGHT = 1.0;
+
+/** 导出供 particles.test.ts 直接断言——纯函数，不需要 THREE/DOM。 */
+export function fireflyGainFor(timeOfDay: number): number {
+  const night = interpolateDayNight(timeOfDay).nightAmount;
+  return FIREFLY_GAIN_DAY + (FIREFLY_GAIN_NIGHT - FIREFLY_GAIN_DAY) * night;
+}
 
 // ---- 柔光贴图（Post-fix-1）----
 const SPRITE_TEXTURE_SIZE = 64;
@@ -216,7 +234,12 @@ export function createParticles(
    * 要不要放大爆发，不重新判定"是不是玩家造成"。
    */
   handle(events: SimEvent[], terrain: { waterLevel: number }, killIds: Set<number>): void;
-  update(frameDt: number, tSec: number): void;
+  /**
+   * `timeOfDay`（M1 B5，第三参）：main.ts 直传 `sim.state.timeOfDay`——见
+   * FIREFLY_GAIN_DAY/NIGHT 头部注释，只用于驱动萤火 twinkle 的昼夜 gain，不影响
+   * 事件粒子池的任何行为。
+   */
+  update(frameDt: number, tSec: number, timeOfDay: number): void;
 } {
   const sprite = createGlowSprite();
 
@@ -506,15 +529,16 @@ export function createParticles(
     }
   }
 
-  function update(frameDt: number, tSec: number): void {
+  function update(frameDt: number, tSec: number, timeOfDay: number): void {
     // 萤火：围绕各自 anchor 正弦漂移 + 逐顶点 alpha twinkle（永远存活，颜色
     // RGB 恒定为 PALETTE.lampWarm，只有第 4 分量——透明度——按 sin 明灭）。
+    const gain = fireflyGainFor(timeOfDay);
     for (let i = 0; i < FIREFLY_COUNT; i++) {
       const phase = fireflyPhase[i]!;
       fireflyPositions[i * 3] = fireflyAnchorX[i]! + Math.sin(tSec * FIREFLY_DRIFT_FREQ_X + phase) * FIREFLY_DRIFT_RADIUS;
       fireflyPositions[i * 3 + 1] = fireflyAnchorY[i]! + Math.sin(tSec * FIREFLY_BOB_FREQ + phase * 1.3) * FIREFLY_BOB_AMP;
       fireflyPositions[i * 3 + 2] = fireflyAnchorZ[i]! + Math.cos(tSec * FIREFLY_DRIFT_FREQ_Z + phase) * FIREFLY_DRIFT_RADIUS;
-      const twinkle = FIREFLY_TWINKLE_BASE + FIREFLY_TWINKLE_AMP * Math.sin(tSec * FIREFLY_TWINKLE_FREQ + phase * 2.1);
+      const twinkle = (FIREFLY_TWINKLE_BASE + FIREFLY_TWINKLE_AMP * Math.sin(tSec * FIREFLY_TWINKLE_FREQ + phase * 2.1)) * gain;
       fireflyColors[i * 4 + 3] = twinkle;
     }
     fireflyPositionAttr.needsUpdate = true;

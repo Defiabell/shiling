@@ -1,21 +1,23 @@
 import * as THREE from "three";
 import { createSim, DT, dist2d, getPlayer, isDormancyEligible, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
-import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
+import { QINGQIU_GRAYBOX, SPECIES, TUNING, type EssenceType } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
 import { setModelLibrary } from "./render/creatureModels.js";
 import { loadModelLibrary } from "./render/modelLibrary.js";
-import { setupAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
+import { setupAtmosphere, updateAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
 import { createParticles } from "./render/particles.js";
 import { createScreenFx } from "./render/screenFx.js";
 import { createKillMarker } from "./render/killMarker.js";
+import { createEvolutionFx } from "./render/evolutionFx.js";
 import { buildScatter } from "./render/scatter.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
 import { createHud, type HudContext } from "./hud.js";
 import { createMinimap } from "./minimap.js";
+import { createOrganPanel } from "./organPanel.js";
 import { showTitle } from "./title.js";
 import { createPauseOverlay } from "./pause.js";
 
@@ -70,6 +72,32 @@ function isPlayerBurrowed(): boolean {
   const player = sim.state.creatures.find((c) => c.id === sim.state.playerId);
   return player !== undefined && player.burrowId !== null;
 }
+
+const evolutionFx = createEvolutionFx();
+
+// M1 B5（蜕变演出）：创建 evolutionFx 并在 input.ts 的 keydown 监听器注册*之前*先挂上
+// 这个 KeyE 拦截器——这个顺序是必须的，不是随手放的：两个监听器都挂在 `window` 上，
+// 同一次物理按键触发时按注册顺序依次同步执行；只有本监听器先注册，才能在
+// evolutionFx 处于 holdBlack/ceremony（`isBlockingInput()`）这两个阶段时，用
+// `stopImmediatePropagation()` 彻底拦掉这次事件，不让它传到 input.ts 的监听器——
+// 否则 input.ts 会照常把这次 KeyE 记成 `keys.e=true`，等蜕变演出结束、sim 冻结解除
+// 的第一帧就会被 digging.ts 的出洞边沿检测读到，玩家会在关闭揭示卡的同一次按键里
+// "顺手"出洞（code review 2026-08-10 用真实 Playwright 45 秒蛰伏全流程跑出的真实
+// bug——第一版只在 evolutionFx.ts 内部判断"现在是不是 ceremony 阶段"，没有在事件
+// 层面拦断，结果两次独立的边沿检测在同一物理键上打架，出现了"关闭揭示卡后仍卡在
+// 洞里、再按一次 E 又立刻重新钻回洞"的双重反转）。此后 evolutionFx.dismiss() 内部
+// 仍会自己判断"现在是不是真的在 ceremony"，这里的拦截只负责"不让 input.ts 看到这次
+// 按键"，两层职责不重叠。
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "KeyE") return;
+  if (evolutionFx.isBlockingInput()) {
+    e.preventDefault();
+    e.stopImmediatePropagation(); // 必须在 input.ts 的同 target 监听器之前拦掉，见上方注释
+  }
+  if (e.repeat) return;
+  evolutionFx.dismiss();
+});
+
 const input = createInput(renderer.domElement, isPlayerBurrowed);
 const followCam = createFollowCamera(camera);
 const hud = createHud();
@@ -87,6 +115,9 @@ const killMarker = createKillMarker(camera);
 // no-op（见 audio.ts 头部注释），真正的 AudioContext 创建/resume 延迟到下方
 // showTitle() 的 onEnter 回调（唯一的真实用户手势）才发生。
 const audio = createAudio();
+// M1 B5：器官面板，与 hud/minimap 同层的新增 UI 消费者（evolutionFx 创建于文件更靠前的
+// 位置——见 isPlayerBurrowed() 后那段注释，KeyE 拦截器必须先于 input.ts 注册）。
+const organPanel = createOrganPanel();
 const eventDiffer = createSimEventDiffer();
 
 // ---- 顿帧 hitstop（Part 1，postfix-9 捕食特效强化）----
@@ -192,6 +223,12 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
   // 的筑巢分支）才非零；换算用到的 TUNING.nestBuildSec 留在 main.ts 算好再传给
   // hud.ts（该模块刻意不 import TUNING，见 hud.ts 头部注释）。
   const nestBuildPct = player.nestProgress > 0 ? Math.min(100, (player.nestProgress / TUNING.nestBuildSec) * 100) : 0;
+  // M1 B5（精气 HUD）：换算成 0..100 的百分比再传给 hud.ts——同 nestBuildPct 一样，
+  // 涉及 TUNING 常量的换算集中在这里，hud.ts 本身不 import TUNING（见该文件头部注释）。
+  const essencePct = {} as Record<EssenceType, number>;
+  for (const type of Object.keys(state.essence) as EssenceType[]) {
+    essencePct[type] = Math.min(100, (state.essence[type] / TUNING.essenceThreshold) * 100);
+  }
   return {
     nearWater: nearWater(player.pos, terrain),
     nearCarcass,
@@ -204,6 +241,7 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     nestBuildPct,
     dormant: state.dormancy !== null,
     dormancyEligible: isDormancyEligible(state),
+    essencePct,
   };
 }
 
@@ -282,6 +320,27 @@ window.addEventListener("keydown", (e) => {
   if (e.code !== "KeyM") return;
   if (e.repeat) return;
   audio.toggleMute();
+});
+
+// M1 B5（器官面板）：Tab 开合，与 Esc/M 同一套"独立 edge-detect 监听器"模式——器官面板
+// 是纯客户端展示，不需要 sim 知道这次按键，因此不走 input.ts 的 GAME_KEYS/PlayerInput
+// （那套机制是给 sim 消费的"持续按住"语义键位用的，见 input.ts 头部注释）。preventDefault
+// 拦住浏览器默认的 Tab 焦点切换（否则会把画布的键盘焦点移到页面其它元素上）。
+// evolutionFx.isBlockingInput() 守卫：蜕变揭示卡是全屏仪式性弹层，此刻再叠一层器官面板
+// 会显得混乱，直接吞掉这次按键（与揭示卡本身的 E-关闭不冲突，各自只认自己的键）。
+// code-review 补充：这个守卫只挡住了"揭示卡期间再打开面板"——面板若在蛰伏*开始前*就
+// 已经开着，揭示卡出现时不会自动收起它，见渲染循环里 `lastEvolutionBlocking` 那段的
+// 强制收起逻辑（两处配合才是完整的守卫，不是遗漏，只是分散在两个位置各管一段）。
+let organPanelOpen = false;
+let lastEvolutionBlocking = false;
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "Tab") return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (!started || sim.state.playerDead) return;
+  if (evolutionFx.isBlockingInput()) return;
+  organPanelOpen = !organPanelOpen;
+  organPanel.setVisible(organPanelOpen);
 });
 
 // Post-fix-1 verification hook (Bug 1, A/D 左右相反): dev-only, tree-shaken
@@ -404,6 +463,17 @@ if (import.meta.env.DEV) {
       sim.state.homeNest = { spotId: spot.id, stash };
       Object.assign(sim.state.essence, essence);
     },
+    // M1 B5 verification hook (mirrors warpTo/debugForceNestAndEssence's exact rationale
+    // above): a full day-night cycle is TUNING.dayLengthSec (300) real seconds — waiting
+    // that out in a Playwright session just to compare a "day" vs "night" screenshot is
+    // impractical. This lets an external script jump state.timeOfDay directly to any
+    // point in the cycle so it can screenshot both atmosphere.ts keyframes without
+    // touching sim/content (state.timeOfDay is a plain client-visible number sim.step()
+    // already advances on its own every tick; this hook only ever writes it, exactly
+    // like warpTo only ever writes pos — no new sim/content logic).
+    debugSetTimeOfDay: (t: number) => {
+      sim.state.timeOfDay = t;
+    },
   };
 }
 
@@ -427,10 +497,30 @@ renderer.setAnimationLoop(() => {
   // 攒下的墙钟时间一次性触发多步追赶式 step，读起来像"倒放快进"而不是干净的一次
   // 定格——与 title/pause 两个既有 gate 要避免的坑是同一个（见本文件顶部对应注释）。
   const hitstopped = now < hitstopEndTime;
-  if (started && !paused && !hitstopped) {
+  // M1 B5：蜕变揭示卡的 holdBlack/ceremony 两个阶段与 paused/hitstopped 同一套 gate
+  // 写法——见 evolutionFx.ts 文件头"holdBlack/ceremony 期间 main.ts 会冻结 sim.step()"
+  // 一节的完整论证（只冻结这两个阶段，dormancy 本身继续正常推进，否则蛰伏的 45 秒
+  // 真实时间永远走不完）。读取而非在这里重新判断——evolutionBlocking 反映的是"上一帧
+  // update() 结束时"的阶段，与 paused 由 Esc 监听器异步翻转、本帧顶部只读一次同一个
+  // 非竞态模式。
+  const evolutionBlocking = evolutionFx.isBlockingInput();
+  // M1 B5 code-review 修正：器官面板与蜕变揭示卡都是"全屏仪式性弹层"，Tab 的开启守卫
+  // （见下方 keydown 监听器）只挡住了"揭示卡期间再打开面板"这一条路径——如果面板在
+  // 蛰伏开始*之前*就已经开着（玩家蛰伏前顺手看了眼器官面板，没有主动关掉），揭示卡
+  // 进入 holdBlack/ceremony 时不会自动把它收起：面板 z-index(24) 高于揭示卡(22)，
+  // 会整个盖住这一批次的核心演出画面（器官名/词条/替换说明全部看不见），玩家得再按
+  // 一次 Tab 才能看到。这里在刚进入 blocking 阶段的那一帧强制收起（只在从
+  // false→true 的边沿做一次，不是每帧都写，避免每帧对着已经关闭的面板重复调用
+  // setVisible(false) 的心智负担——虽然该调用本身是幂等的）。
+  if (evolutionBlocking && !lastEvolutionBlocking && organPanelOpen) {
+    organPanelOpen = false;
+    organPanel.setVisible(false);
+  }
+  lastEvolutionBlocking = evolutionBlocking;
+  if (started && !paused && !hitstopped && !evolutionBlocking) {
     acc += frameDt;
   }
-  while (started && !paused && !hitstopped && acc >= DT) {
+  while (started && !paused && !hitstopped && !evolutionBlocking && acc >= DT) {
     snapshotPrev(views);
     lastInput = input.read(followCam.yaw);
     sim.step(lastInput);
@@ -492,12 +582,24 @@ renderer.setAnimationLoop(() => {
   updateDigSpots(terrainGroup, sim.terrain);
   updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest);
   updateWater(tSec);
+  // 昼夜光照（M1 B5）：无条件每帧调用——timeOfDay 只在 sim.step() 推进时变化，暂停/
+  // 标题画面/顿帧/蜕变冻结期间重复写入同一份取值没有副作用，与 particles/killMarker
+  // 同一套"backdrop 无条件继续吃 tSec/frameDt"惯例。
+  updateAtmosphere(sim.state.timeOfDay);
   // 顿帧期间 particles.update()/killMarker.update() 依然无条件执行（brief 明确要求
   // "do NOT gate screenFx/particles update — the burst must play through the
   // freeze"）：爆发特效/浮字要在冻结的这几十毫秒里继续播完，不能被顿帧一起冻住，
   // 否则玩家会先看到"世界定格"而爆发效果却也跟着卡住不动，读起来像卡顿而不是顿帧。
-  particles.update(frameDt, tSec);
+  particles.update(frameDt, tSec, sim.state.timeOfDay);
   killMarker.update(frameDt);
+  // 蜕变演出（M1 B5）：与 audio.update 同一惯例——无条件每帧调用，内部自己按
+  // state.dormancy/state.lastEvolution 的边沿驱动五态机（见 evolutionFx.ts 文件头
+  // 注释）。不用 `started && !paused` 包一层：它的 holdBlack 计时用真实 performance.now()，
+  // 暂停期间若跳过调用，phase 会被"冻住"而计时基准 holdStartMs 却是暂停前的旧值，
+  // 恢复时会立刻判定计时早已到期，出现一次不该有的瞬间跳变（见该文件 update() 的
+  // 调用点设计取舍）；无条件调用则暂停时钟继续流逝这一点与"暂停菜单本来就盖在它上面
+  // 挡住画面"的事实一致，不是漏 gate，是刻意的选择。
+  evolutionFx.update(sim.state, now);
   // 冲刺 FOV 的判据是"冲刺键按住 AND 玩家确实在移动"（brief 原话），不是单看
   // sprint 键——按住 Shift 站着不动/贴墙顶住不该拉 FOV。player.activity==="moving"
   // 是 movement.ts 权威写入的结果（见该文件 moveCreature），比在渲染层重新判断
@@ -586,6 +688,10 @@ renderer.setAnimationLoop(() => {
     // followCam.yaw（镜头朝向，不是玩家朝向）驱动小地图的视野锥——与 HUD 同样按
     // started 冻结，标题画面期间不在小地图上跑动画。
     minimap.update(sim.state, followCam.yaw);
+    // 器官面板（M1 B5）：与 hud/minimap 同一 gate——内容（temper/organId）只在
+    // sim.step() 真正推进时才会变化，暂停期间没有必要重复刷新（不像 evolutionFx 那样
+    // 有基于真实时钟的计时器，没有跳变风险，可以放心按 started&&!paused 冻结）。
+    organPanel.update(sim.state);
   }
   renderer.render(scene, camera);
 });

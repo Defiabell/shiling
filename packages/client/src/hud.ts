@@ -1,4 +1,5 @@
 import { getPlayer, type Creature, type GameState } from "@shiling/sim";
+import type { EssenceType } from "@shiling/content";
 import { PALETTE } from "./render/palette.js";
 import { DEATH_SPREAD_MS } from "./render/screenFx.js";
 
@@ -47,6 +48,13 @@ export interface HudContext {
    * `isDormancyEligible(state)` 算出，不在 client 侧重复精气/stash 阈值判断。
    */
   dormancyEligible: boolean;
+  /**
+   * M1 B5（精气 HUD）：四种精气各自的填充百分比（0..100，已按
+   * `essence/TUNING.essenceThreshold` 换算并 clamp——与 nestBuildPct 同一惯例，main.ts
+   * 算好换算后的百分比再传进来，hud.ts 本身不 import TUNING，见本文件头部注释）。
+   * ≥100 时对应的精气珠触发柔光脉冲（呼应"已达蛰伏门槎"）。
+   */
+  essencePct: Record<EssenceType, number>;
 }
 
 export interface Hud {
@@ -96,6 +104,28 @@ const ACCENT = {
   lowGlow: "rgba(224, 69, 43, 0.55)",
 } as const;
 
+/**
+ * M1 B5（精气 HUD）：四种精气各自的强调色——足/鳞两项 plan 给的数值恰好与
+ * ACCENT.hunger/thirst 完全相同（同一色相复用，直接引用而不是抄一份重复字面量），
+ * 穴/猛两项是新增。
+ */
+const ESSENCE_ACCENT: Record<EssenceType, string> = {
+  zu: ACCENT.hunger, // #e8b45f
+  lin: ACCENT.thirst, // #7fd4e8
+  xue: "#c9a06a",
+  meng: "#d96a5f",
+} as const;
+
+const ESSENCE_LABEL: Record<EssenceType, string> = {
+  zu: "足",
+  lin: "鳞",
+  xue: "穴",
+  meng: "猛",
+} as const;
+
+/** 四种精气固定展示顺序——与 ESSENCE_ACCENT/ESSENCE_LABEL 的键集合一致，遍历顺序稳定。 */
+const ESSENCE_ORDER: EssenceType[] = ["zu", "lin", "xue", "meng"];
+
 /** 情境 pill 切换/淡入动画时长（brief：opacity+translateY 4px，160ms，不要弹跳）。 */
 const PROMPT_FADE_MS = 160;
 
@@ -107,11 +137,18 @@ const PROMPT_FADE_MS = 160;
 // Font split (unchanged rule, carried over from the previous restyle): the
 // base #hud font-family is the system thin/regular stack — variant C's own
 // "克制" directive doubles down on this (font-weight 300 default). Ma Shan
-// Zheng (still vendored at public/fonts/mashanzheng.woff2, subset unchanged
-// — see Task 8/9 history for how that 41-glyph subset was built) stays
-// opted into by exactly the same two elements as before: `.hud-death-title`
-// here (身死) and title.ts's `.title-main` (食灵). No other string this HUD
-// renders touches the custom font, so no font-subset regeneration is needed.
+// Zheng (vendored at public/fonts/mashanzheng.woff2) is opted into by
+// `.hud-death-title` here (身死). M1 B5 re-vendored this file: evolutionFx.ts's
+// `.evofx-card-name` (揭示卡器官名, up to 12 possible organ names) is now a
+// THIRD consumer alongside this one and title.ts's `.title-main` (食灵) — the
+// subset was rebuilt from the exact union of all three call sites' literal
+// rendered text (身死 + 食灵 + the 12 organ names in @shiling/content's
+// ORGANS table), not by hand-enumerating characters (see the Task 8/9 history
+// of repeatedly missing a stray punctuation glyph that way). fontTools'
+// getBestCmap() confirms the new woff2's cmap is a bidirectional exact match
+// against that 28-character union (Google's font API additionally always
+// keeps a U+0020 space glyph regardless of the `text=` filter — expected,
+// harmless, not a missed character).
 const HUD_CSS = `
 @font-face {
   font-family: "Ma Shan Zheng";
@@ -196,6 +233,54 @@ const HUD_CSS = `
 @keyframes hud-ring-glow-pulse {
   0%, 100% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 0 0 rgba(224, 69, 43, 0); }
   50% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 16px 4px ${ACCENT.lowGlow}; }
+}
+
+/* ---- 精气珠（M1 B5）：三环右侧，同一玻璃语言的缩小版，无独立卡片底 ---- */
+.hud-essence {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-left: 8px; /* 与三环之间留一点点缝隙，读作"另一组"而不是无缝续在环后面 */
+}
+.hud-orb {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: ${GLASS.ring};
+  backdrop-filter: blur(${GLASS.blurRing});
+  -webkit-backdrop-filter: blur(${GLASS.blurRing});
+  box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset;
+}
+.hud-orb-fill {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  transition: --pct 150ms linear;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  background: conic-gradient(var(--orb-color) 0% var(--pct), ${GLASS.track} var(--pct) 100%);
+}
+.hud-orb-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 300;
+  color: ${TEXT.primary};
+  letter-spacing: 0.04em;
+}
+/* 达到蛰伏门槎（essencePct>=100）：柔光脉冲——与 .hud-ring.hud-low 同一手法（只呼吸
+   外发光，不碰 fill 透明度），发光色用该精气自己的强调色（每珠各自的 --orb-glow）。 */
+.hud-orb.hud-orb-ready {
+  animation: hud-orb-ready-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hud-orb-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 1px ${GLASS.hairlineRing} inset, 0 0 12px 3px var(--orb-glow); }
 }
 
 /* ---- 中下：情境提示玻璃胶囊（键帽 + 动作词，末字 amber 强调） ---- */
@@ -335,7 +420,7 @@ const HUD_CSS = `
 }
 .hud-death.hud-visible { display: flex; }
 .hud-death-title {
-  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 唯二书法字体用点之一 */
+  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 三处书法字体用点之一（另两处：title.ts 的 .title-main、M1 B5 新增的 evolutionFx.ts 的 .evofx-card-name） */
   font-size: 48px;
   font-weight: 400;
   color: #ffffff;
@@ -437,6 +522,59 @@ function updateRing(handle: RingHandle, value: number): void {
   if (low !== handle.lastLow) {
     handle.ringEl.classList.toggle("hud-low", low);
     handle.lastLow = low;
+  }
+}
+
+interface OrbHandle {
+  orbEl: HTMLDivElement;
+  fillEl: HTMLDivElement;
+  lastPct: number;
+  lastReady: boolean;
+}
+
+/** hex → "r, g, b, a" 用于 --orb-glow（box-shadow 需要一个真正的颜色值，不能直接复用 conic-gradient 用的 --orb-color 十六进制字符串本身）。 */
+function cssColorToGlow(cssColor: string): string {
+  // 本文件里的 ESSENCE_ACCENT 全是 "#rrggbb" 字面量（没有别的形式），直接手动拆分够用，
+  // 不需要引入完整的 CSS 颜色解析。
+  const hex = cssColor.replace("#", "");
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.6)`;
+}
+
+/** 精气珠：与 buildRing 同一结构缩小版，中心显示精气单字（足/鳞/穴/猛）而非需求环的饥/渴/疲。 */
+function buildOrb(type: EssenceType): { el: HTMLDivElement; handle: OrbHandle } {
+  const orbEl = document.createElement("div");
+  orbEl.className = "hud-orb";
+  orbEl.style.setProperty("--orb-color", ESSENCE_ACCENT[type]);
+  orbEl.style.setProperty("--orb-glow", cssColorToGlow(ESSENCE_ACCENT[type]));
+
+  const fillEl = document.createElement("div");
+  fillEl.className = "hud-orb-fill";
+  fillEl.style.setProperty("--pct", "0%");
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "hud-orb-label";
+  labelEl.textContent = ESSENCE_LABEL[type];
+
+  orbEl.appendChild(fillEl);
+  orbEl.appendChild(labelEl);
+
+  return { el: orbEl, handle: { orbEl, fillEl, lastPct: -1, lastReady: false } };
+}
+
+/** ≥100（已经在 essencePct 里 clamp 过，这里恒定用 100 判等）触发柔光脉冲——与 updateRing 同一 dirty-check 写法。 */
+function updateOrb(handle: OrbHandle, value: number): void {
+  const p = pct(value);
+  if (p !== handle.lastPct) {
+    handle.fillEl.style.setProperty("--pct", `${p}%`);
+    handle.lastPct = p;
+  }
+  const ready = p >= 100;
+  if (ready !== handle.lastReady) {
+    handle.orbEl.classList.toggle("hud-orb-ready", ready);
+    handle.lastReady = ready;
   }
 }
 
@@ -607,6 +745,19 @@ export function createHud(): Hud {
   ringsEl.appendChild(hunger.el);
   ringsEl.appendChild(thirst.el);
   ringsEl.appendChild(fatigue.el);
+
+  // 精气珠（M1 B5）：紧接在三环之后同一个 flex 容器里，用一个 .hud-essence 子容器
+  // 撑开一点间隙——"三环右侧"因此天然成立，不需要另外算一份绝对定位坐标。
+  const essenceEl = document.createElement("div");
+  essenceEl.className = "hud-essence";
+  const orbs = new Map<EssenceType, OrbHandle>();
+  for (const type of ESSENCE_ORDER) {
+    const orb = buildOrb(type);
+    essenceEl.appendChild(orb.el);
+    orbs.set(type, orb.handle);
+  }
+  ringsEl.appendChild(essenceEl);
+
   root.appendChild(ringsEl);
 
   // 叼运中提示胶囊（Part 2，postfix-9）：紧贴三环上方，随 ctx.carrying 切换可见性。
@@ -686,6 +837,10 @@ export function createHud(): Hud {
       updateRing(hunger.handle, player.needs.hunger);
       updateRing(thirst.handle, player.needs.thirst);
       updateRing(fatigue.handle, player.needs.fatigue);
+
+      for (const type of ESSENCE_ORDER) {
+        updateOrb(orbs.get(type)!, ctx.essencePct[type]);
+      }
 
       const nextPrompt = contextPrompt(ctx, player);
       const nextWord = nextPrompt?.word ?? "";

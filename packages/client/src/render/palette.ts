@@ -21,4 +21,194 @@ export const PALETTE = {
   // M1 B4（新物种，程序化 fallback 模型用——见 creatureModels.ts buildXiyuModel/buildXuehuanModel）：
   xiyuBody: 0x3f8f8a, xiyuFin: 0xbfe8e0, // 溪鱼：银青鳞身、浅青尾鳍（teal，plan 原话"银青"配色）
   xuehuanBody: 0x6b4a30, xuehuanClaw: 0x2e2018, // 穴獾：土褐皮毛、深褐爪（earth，plan 原话"earth-brown"）
+  // M1 B5（器官可视化——见 2026-08-10-m1-evolution-plan.md B5 一节，organVisuals.ts 消费）：
+  // 12 个可替换器官各自的挂件/材质微调色，按 ORGANS 表同一顺序分组，一处集中改色。
+  organFang: 0xe8e2d4, // 裂颌·獠牙锥：骨白
+  organFilter: 0xc9c2a8, // 滤颚·滤颚片（B5 补完 plan 未列出的这一件，见 organVisuals.ts 头注）：暗骨黄
+  organLimbRing: 0xe8b45f, // 疾足·腕环：暖光，呼应"轻盈迅捷"
+  organClaw: 0x3a2e22, // 掘爪·爪锥：深褐土色
+  organScale: 0x8fae9c, // 鳞甲·背瓦：冷青灰
+  organSpike: 0x5a4a42, // 棘背·背棘锥：深赭
+  organGloss: 0xbfe0ea, // 油羽皮·材质光泽 tweak 用的 emissive 色：极淡水光青白
+  organMossPatch: 0x4a7a4a, // 苔纹皮·斑片：苔绿
+  organFin: 0x7fc4d8, // 鳍尾·鳍片：水青
+  organTailOrb: 0xc9a06a, // 平衡尾·端球：土褐（与精气"穴"色同相，呼应"稳"）
+  organEyeGlow: 0x9fd8ff, // 夜瞳·发光眼点：冷蓝光
+  organNoseGlow: 0xe8c88a, // 灵嗅·鼻光点：暖金光
 } as const;
+
+/**
+ * 昼夜关键帧（M1 B5）：黎明(0.0)/白昼(0.25)/黄昏(0.5)/夜(0.75) 四点，每点定义 sun 色温/
+ * 强度、hemi 天穹/地面/强度、雾色/密度乘子（相对 PALETTE.fogDensity 的乘数，不是绝对值）、
+ * 天穹三色。黄昏这一点直接复用既有 PALETTE 静态值——本工程此前的"暮色"美术方向本来
+ * 就定在黄昏，零漂移地把它纳入四点循环里的一个采样点，而不是另开一套平行数值。
+ * nightAmount（0=白昼..1=夜）是给 particles.ts 的萤火"夜里 gain 更高"用的插值目标——
+ * 与其它光照字段共享同一套 smoothstep 插值机制（见 interpolateDayNight），不必另开一条
+ * 专门判断"现在算不算晚上"的分支逻辑。
+ */
+export interface DayNightKeyframe {
+  /** 本关键帧对应的 timeOfDay 时刻，[0,1)。 */
+  t: number;
+  /** 中文名，仅供代码可读性/调试用，不参与任何渲染判定。 */
+  name: string;
+  sunColor: number;
+  sunIntensity: number;
+  hemiSky: number;
+  hemiGround: number;
+  hemiIntensity: number;
+  fogColor: number;
+  /** 乘在 PALETTE.fogDensity 之上的相对密度，不是绝对密度值。 */
+  fogDensityMult: number;
+  skyTop: number;
+  skyHorizon: number;
+  skyGlow: number;
+  nightAmount: number;
+}
+
+export const DAYNIGHT_KEYFRAMES: readonly DayNightKeyframe[] = [
+  {
+    t: 0.0, name: "黎明",
+    sunColor: 0xf0a878, sunIntensity: 1.1,
+    hemiSky: 0x9fb0c8, hemiGround: 0x3a3024, hemiIntensity: 1.05,
+    fogColor: 0x4a4652, fogDensityMult: 1.0,
+    skyTop: 0x1c2230, skyHorizon: 0x6a5a52, skyGlow: 0xd88a54,
+    nightAmount: 0.35,
+  },
+  {
+    t: 0.25, name: "白昼",
+    sunColor: 0xfff2d9, sunIntensity: 1.6,
+    hemiSky: 0xaac4de, hemiGround: 0x4a4636, hemiIntensity: 1.35,
+    fogColor: 0x7c8a97, fogDensityMult: 0.7,
+    skyTop: 0x3a5570, skyHorizon: 0xbfd0dc, skyGlow: 0xe8d9b0,
+    nightAmount: 0.0,
+  },
+  {
+    // 黄昏＝既有静态暮色美术方向的原样数值（PALETTE.sun*/hemi*/fog/sky*），见本块头注释。
+    t: 0.5, name: "黄昏",
+    sunColor: PALETTE.sunColor, sunIntensity: PALETTE.sunIntensity,
+    hemiSky: PALETTE.hemiSky, hemiGround: PALETTE.hemiGround, hemiIntensity: PALETTE.hemiIntensity,
+    fogColor: PALETTE.fog, fogDensityMult: 1.0,
+    skyTop: PALETTE.skyTop, skyHorizon: PALETTE.skyHorizon, skyGlow: PALETTE.skyGlow,
+    nightAmount: 0.65,
+  },
+  {
+    // 夜：hemiGround/hemiIntensity/sunIntensity 三者的具体取值不是随手挑的——见
+    // groundLuminance()/palette.test.ts 的"夜不低于白昼地面亮度 40%"回归断言
+    // （M0.5「一团黑泥」教训：夜晚绝不能糊成一团看不清）。
+    //
+    // M1 B5 code-review 修正（真实 Playwright 截图判读发现的差异，见 m1-b5-report.md）：
+    // groundLuminance() 只是一个不追求物理精确的粗代理（本文件头注释已言明），实测证明它
+    // 系统性高估了夜晚的真实屏幕亮度——原因有二，both 不在这个代理公式的建模范围内：
+    // (1) three.js HemisphereLight 对朝上的地面法线主要采样的是 `hemiSky`（天穹光），
+    //     不是 `hemiGround`（地面反射光，主要影响朝下的法线）——代理公式当初用
+    //     hemiGround 命名"地面亮度"是望文生义的偷懒，真正决定地表可见度的是 hemiSky；
+    // (2) ACESFilmicToneMapping 在低光区间的响应曲线远比线性陡峭地把暗部往黑压——
+    //     加上夜晚原本就更浓的雾（旧 fogDensityMult 1.15 且 fogColor 很暗），两者叠加
+    //     后实测夜/昼地面亮度只有约 22%~26%，远低于这条护栏名义上的 40% 下限。
+    // 修正：hemiSky/hemiGround/hemiIntensity/sunIntensity 全面调亮，fogColor 调亮、
+    // fogDensityMult 从 1.15 降回 1.0（不再让夜雾额外加码变暗）——色相/氛围不变（仍是
+    // 全场四点里最冷、最暗的一档，仍明显区别于黄昏/黎明），只是把"暗到什么程度"的实际
+    // 下限往回收。修正后用同一套 Playwright 截图＋像素采样方法实测：夜/昼比值回升到
+    // ≥45%（详见报告，数值随每次 dev-server 非确定性地形略有浮动，但稳定不低于该线）。
+    t: 0.75, name: "夜",
+    sunColor: 0x9fb4d9, sunIntensity: 1.0,
+    hemiSky: 0x6a7aa0, hemiGround: 0x454858, hemiIntensity: 1.3,
+    fogColor: 0x333a4a, fogDensityMult: 1.0,
+    skyTop: 0x05070c, skyHorizon: 0x171c28, skyGlow: 0x2a3550,
+    nightAmount: 1.0,
+  },
+];
+
+/** DAYNIGHT_KEYFRAMES 去掉 t/name 之后、真正参与渲染插值的字段形状。 */
+export type ResolvedDayNight = Omit<DayNightKeyframe, "t" | "name">;
+
+function smoothstep01(x: number): number {
+  const c = x < 0 ? 0 : x > 1 ? 1 : x;
+  return c * c * (3 - 2 * c);
+}
+
+/** hex 十六进制颜色按分量线性插值（不经过任何色彩空间转换，纯字节数值运算）。 */
+function lerpHexColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
+function lerpNum(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * 找到 timeOfDay 落在哪两个相邻关键帧之间，并算出两者间 smoothstep 缓动后的混合系数
+ * alpha（0=完全是 a，1=完全是 b）。循环环绕：最后一个关键帧（夜，t=0.75）与第一个
+ * （黎明，t=0.0，视作下一圈的 1.0）之间也走同一套逻辑，不需要特殊分支。
+ * 导出供测试直接断言边界/环绕行为。
+ */
+export function findDayNightBracket(timeOfDay: number): { a: DayNightKeyframe; b: DayNightKeyframe; alpha: number } {
+  const t = ((timeOfDay % 1) + 1) % 1;
+  const n = DAYNIGHT_KEYFRAMES.length;
+  for (let i = 0; i < n; i++) {
+    const a = DAYNIGHT_KEYFRAMES[i]!;
+    const b = DAYNIGHT_KEYFRAMES[(i + 1) % n]!;
+    const bT = i === n - 1 ? b.t + 1 : b.t; // 环绕：夜→黎明这一段的终点是下一圈的 1.0
+    if (t >= a.t && t < bT) {
+      const alpha = smoothstep01((t - a.t) / (bT - a.t));
+      return { a, b, alpha };
+    }
+  }
+  // 防御性兜底：above 循环按构造应当穷尽 [0,1) 的每一点，仅浮点边界极端情况可能落到这里。
+  return { a: DAYNIGHT_KEYFRAMES[n - 1]!, b: DAYNIGHT_KEYFRAMES[0]!, alpha: 1 };
+}
+
+/**
+ * 按 timeOfDay 平滑插值出当前时刻的完整光照/雾/天穹取值——atmosphere.ts 的
+ * `updateAtmosphere()` 与 particles.ts 的萤火夜间 gain 共用同一个函数，是这套昼夜数值
+ * 唯一的解析入口（不在两处各自重复一份插值逻辑）。
+ */
+export function interpolateDayNight(timeOfDay: number): ResolvedDayNight {
+  const { a, b, alpha } = findDayNightBracket(timeOfDay);
+  return {
+    sunColor: lerpHexColor(a.sunColor, b.sunColor, alpha),
+    sunIntensity: lerpNum(a.sunIntensity, b.sunIntensity, alpha),
+    hemiSky: lerpHexColor(a.hemiSky, b.hemiSky, alpha),
+    hemiGround: lerpHexColor(a.hemiGround, b.hemiGround, alpha),
+    hemiIntensity: lerpNum(a.hemiIntensity, b.hemiIntensity, alpha),
+    fogColor: lerpHexColor(a.fogColor, b.fogColor, alpha),
+    fogDensityMult: lerpNum(a.fogDensityMult, b.fogDensityMult, alpha),
+    skyTop: lerpHexColor(a.skyTop, b.skyTop, alpha),
+    skyHorizon: lerpHexColor(a.skyHorizon, b.skyHorizon, alpha),
+    skyGlow: lerpHexColor(a.skyGlow, b.skyGlow, alpha),
+    nightAmount: lerpNum(a.nightAmount, b.nightAmount, alpha),
+  };
+}
+
+/**
+ * 地面亮度的粗略代理（M0.5「一团黑泥」教训的量化护栏）：hemi 天穹色贡献（`hemiSky`，
+ * 不是 `hemiGround`——见下方 code-review 更正说明） + sun 的小比例掠射贡献
+ * （SUN_GROUND_LUMINANCE_FACTOR——方向光只有很小一部分实际落在朝上的地面法线上，不是
+ * 全额计入）。不追求物理精确，只用于 palette.test.ts 断言"夜不低于白昼地面亮度 40%"
+ * 这条设计护栏——真正的画面明暗以实机/Playwright 截图判读为准，这里只是一个可回归的
+ * 数值下限。
+ *
+ * **M1 B5 code-review 更正（用哪个 hemi 分量才对）**：THREE.HemisphereLight 的
+ * `color`（此文件里叫 `hemiSky`）是法线朝上时采样到的光色，`groundColor`
+ * （`hemiGround`）只在法线朝下时才起主导作用——本工程的地面网格法线绝大部分朝上，
+ * 因此"地面到底有多亮"这件事物理上主要由 `hemiSky` 决定，用 `hemiGround` 是最初实现
+ * 时望文生义的命名陷阱（"ground luminance" ≠ "groundColor"）。首次实测（真实
+ * Playwright 截图＋像素采样，见 m1-b5-report.md）用旧公式验证"≥40%"这条护栏时通过，
+ * 但真实渲染画面的夜/昼地面亮度比值只有约 22%~26%——换成 `hemiSky` 之后这个代理与
+ * 实测数值的量级才对得上，不再是一个"内部自洽但脱离真实渲染"的假护栏。
+ */
+const SUN_GROUND_LUMINANCE_FACTOR = 0.15;
+
+function hexLuminance(hex: number): number {
+  const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+export function groundLuminance(kf: Pick<ResolvedDayNight, "hemiSky" | "hemiIntensity" | "sunColor" | "sunIntensity">): number {
+  return hexLuminance(kf.hemiSky) * kf.hemiIntensity + hexLuminance(kf.sunColor) * kf.sunIntensity * SUN_GROUND_LUMINANCE_FACTOR;
+}

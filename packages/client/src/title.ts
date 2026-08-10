@@ -36,10 +36,11 @@ const GLASS_HAIRLINE = "rgba(255, 255, 255, 0.16)";
 const GLOW_CYAN = "rgba(127, 212, 232, 0.55)"; // #7fd4e8，与 hud.ts ACCENT.thirst 同一色相
 
 /**
- * 字体子集不变（restyle 决策，见 hud.ts 头部同一条注释的说明）：本次改动只碰
- * 样式，不碰文案——标题「食灵」、副题「山海之间，吞灵化形」、按钮「入　山」三处
- * 文字与此前完全一致，Ma Shan Zheng 仍然只用在标题一处，字形覆盖范围不变，不需要
- * 重新请求/裁剪 `public/fonts/mashanzheng.woff2`。
+ * 字体子集：本文件自身的文案不变——标题「食灵」、副题「山海之间，吞灵化形」、按钮
+ * 「入　山」三处文字与此前完全一致，Ma Shan Zheng 仍然只用在标题一处。共享的
+ * `public/fonts/mashanzheng.woff2` 文件本身在 M1 B5 被重新裁剪过——不是因为这个文件
+ * 的文案变了，而是因为 evolutionFx.ts 新增了第三个使用同一字体的消费者（揭示卡器官名），
+ * 见 hud.ts 头部同一条注释的完整说明。
  */
 const FONT_CSS = `
 @font-face {
@@ -84,7 +85,7 @@ ${FONT_CSS}
 .title-main {
   writing-mode: vertical-rl;
   margin: 0;
-  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 唯二书法字体用点之一（另一处见 hud.ts 的 .hud-death-title） */
+  font-family: "Ma Shan Zheng", "STKaiti", "KaiTi", serif; /* 三处书法字体用点之一（另两处：hud.ts 的 .hud-death-title、M1 B5 新增的 evolutionFx.ts 的 .evofx-card-name） */
   font-size: 120px;
   font-weight: 400;
   letter-spacing: 0.15em;
@@ -208,7 +209,8 @@ export function showTitle(modelsReady: Promise<unknown>, onEnter: () => void): v
   // 不留其一遗漏（这里仍是一句精简提示，不逐字复述 pause 面板的完整说明）。
   // M1 postfix N3（程序化音效）：追加 M 静音——同一套"两处都要同步更新"的惯例。
   // M1 B3（蛰伏蜕变）：追加 V 蛰伏——同一套惯例，插在 C 之后。
-  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　C 叼运　V 蛰伏　Esc 暂停　M 静音";
+  // M1 B5（器官面板）：追加 Tab 器官——同一套惯例，插在 V 之后。
+  hint.textContent = "WASD 移动　Shift 冲刺　J 撕咬　E 互动　C 叼运　V 蛰伏　Tab 器官　Esc 暂停　M 静音";
 
   overlay.append(main, sub, button, hint);
   document.body.appendChild(overlay);

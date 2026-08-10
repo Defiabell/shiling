@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PALETTE } from "./palette.js";
+import { interpolateDayNight, PALETTE } from "./palette.js";
 
 // 天空穹顶：足够大以完整包住场景。W2 世界边长 240→480、相机 far 500→700 之后重新核算过：
 // 世界对角线半程 ~339.4m（size/2 的对角线），相机绕玩家的最大轨道半径 14m，相机离原点
@@ -67,19 +67,44 @@ function buildSkyDome(): THREE.Mesh {
 }
 
 /**
+ * 昼夜插值需要在每帧写入的三处引用（M1 B5）：sky dome 的 shader 材质（已经是 uniform-
+ * driven——见 buildSkyDome，只是此前只在创建时写一次，现在改为每帧由 updateAtmosphere
+ * 重写）、hemi/sun 两个光源、scene.fog。模块级变量而不是让 setupAtmosphere 返回一个
+ * handle 对象——沿用 creatureModels.ts 的 `modelLibrary` 同一惯例（setModelLibrary 之后
+ * 各处 buildCreatureModel 调用点不需要显式传引用），main.ts 只需 import
+ * `{ setupAtmosphere, updateAtmosphere }` 两个函数，不需要在自己的作用域里额外持有一个
+ * atmosphere handle 变量。初值 null——updateAtmosphere 在 setupAtmosphere 之前被调用
+ * （理论上不会发生，main.ts 严格按顺序调用）时安全 no-op，而不是抛异常。
+ */
+let hemiLightRef: THREE.HemisphereLight | null = null;
+let sunLightRef: THREE.DirectionalLight | null = null;
+let skyMaterialRef: THREE.ShaderMaterial | null = null;
+let sceneRef: THREE.Scene | null = null;
+
+/**
  * 接入整套暮色氛围：天空穹顶 + 指数雾 + 双光源 + 色调映射/输出色彩空间。
  * 调用方（main.ts）负责把旧的 HemisphereLight/DirectionalLight/Fog/背景色代码删掉，
  * 这里是唯一的替代入口。
+ *
+ * M1 B5：这里构造的 hemi/sun/fog/sky 只是"容器"，具体取值改由 updateAtmosphere() 每帧
+ * 按 timeOfDay 写入——构造时仍传 PALETTE 的静态值（对应昼夜循环里的黄昏那一点）作初值，
+ * 保证在 updateAtmosphere 首次被调用之前场景也不是全黑/未初始化状态。
  */
 export function setupAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
-  scene.add(buildSkyDome());
+  const skyDome = buildSkyDome();
+  scene.add(skyDome);
+  skyMaterialRef = skyDome.material as THREE.ShaderMaterial;
+  sceneRef = scene;
 
   scene.fog = new THREE.FogExp2(PALETTE.fog, PALETTE.fogDensity);
 
-  scene.add(new THREE.HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, PALETTE.hemiIntensity));
+  const hemi = new THREE.HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, PALETTE.hemiIntensity);
+  scene.add(hemi);
+  hemiLightRef = hemi;
   const sun = new THREE.DirectionalLight(PALETTE.sunColor, PALETTE.sunIntensity);
   sun.position.set(...PALETTE.sunPos);
   scene.add(sun);
+  sunLightRef = sun;
 
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // Patch 3a (playtest feedback: 画面太暗太糊): 1.05 → 1.18, paired with
@@ -87,6 +112,38 @@ export function setupAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRendere
   // lifts shadows/mids off near-black.
   renderer.toneMappingExposure = 1.18;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+}
+
+/**
+ * 昼夜光照每帧入口（M1 B5，main.ts 渲染循环无条件每帧调用一次——timeOfDay 本身只在
+ * sim.step() 推进时变化，暂停/标题画面期间重复调用只是把同一份取值再写一遍，无副作用）。
+ * 写光源/雾用默认色彩管理（与 setupAtmosphere 构造时传字面量给 HemisphereLight/
+ * DirectionalLight/FogExp2 构造函数完全同一套颜色空间语义，setHex 不传第二个参数即可）；
+ * sky dome 的 uniform 沿用 buildSkyDome 当初的 rawColor()/NoColorSpace 写法（手写
+ * ShaderMaterial 不会自动跑 three.js 内置的 colorspace_fragment 收尾 chunk，见文件头
+ * rawColor() 的注释），因此这里改用 `.setHex(hex, THREE.NoColorSpace)`。
+ */
+export function updateAtmosphere(timeOfDay: number): void {
+  if (!hemiLightRef || !sunLightRef || !skyMaterialRef || !sceneRef) return; // 防御性：理论上 setupAtmosphere 总是先调用
+
+  const kf = interpolateDayNight(timeOfDay);
+
+  hemiLightRef.color.setHex(kf.hemiSky);
+  hemiLightRef.groundColor.setHex(kf.hemiGround);
+  hemiLightRef.intensity = kf.hemiIntensity;
+
+  sunLightRef.color.setHex(kf.sunColor);
+  sunLightRef.intensity = kf.sunIntensity;
+
+  const fog = sceneRef.fog;
+  if (fog instanceof THREE.FogExp2) {
+    fog.color.setHex(kf.fogColor);
+    fog.density = PALETTE.fogDensity * kf.fogDensityMult;
+  }
+
+  (skyMaterialRef.uniforms.uSkyTop!.value as THREE.Color).setHex(kf.skyTop, THREE.NoColorSpace);
+  (skyMaterialRef.uniforms.uSkyHorizon!.value as THREE.Color).setHex(kf.skyHorizon, THREE.NoColorSpace);
+  (skyMaterialRef.uniforms.uSkyGlow!.value as THREE.Color).setHex(kf.skyGlow, THREE.NoColorSpace);
 }
 
 const PAPER_ID = "shiling-paper-overlay";
