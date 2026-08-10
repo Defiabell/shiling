@@ -54,6 +54,15 @@ export const PALETTE = {
   landmarkMushroomCap: 0x3d6b5c,  // 发光灵芝——伞盖本体（未受光基色）
   landmarkMushroomGlow: 0x6fe8b8, // 发光灵芝——emissive/加色贴图发光色，青绿灵光
   springGlowRing: 0x7fd4e8,       // 灵泉——水面光环+上浮的灵光颗粒，冷青色（呼应 minimap.ts cardGlow 同一色相）
+  // M2 A1（生物动效灵体化——器官灵光，见 organVisuals.ts 的四精气色映射）：每个已装备
+  // 器官挂点上那层薄加色光晕的基色，按 organ.affinity 里权重最高的精气类型选取。
+  // 与 organ* 系列（挂件本体材质色）刻意区分——灵光是叠加在挂件之上的独立氛围层，不是
+  // 挂件颜色本身。
+  essenceZuGlow: 0xe8b45f,   // 足·暖橙金
+  essenceLinGlow: 0x6fd8e8,  // 鳞·青蓝
+  essenceXueGlow: 0x9a7a4a,  // 穴·土棕
+  essenceMengGlow: 0xd9432a, // 猛·赤朱
+  newOrganShimmer: 0xf5e2a0, // 新生器官尚带神辉（蜕变后 30s 内）——比任一精气色都更亮更金的统一强调色
 } as const;
 
 /**

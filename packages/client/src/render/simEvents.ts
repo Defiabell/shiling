@@ -10,6 +10,7 @@ export type SimEvent =
   | { kind: "death"; id: number; species: string; pos: Vec3 } // creature 从列表消失（或玩家 playerDead 边沿）
   | { kind: "splash"; id: number; pos: Vec3 } // locomotion walk→swim 或 swim→walk
   | { kind: "digTick"; pos: Vec3 } // 玩家 activity==="digging"（每 0.4s 节流）
+  | { kind: "eatingTick"; pos: Vec3 } // M2 A1：玩家 activity==="eating"（每 1s 节流，镜像 digTick）
   | { kind: "drink"; pos: Vec3 } // 玩家 activity 变为 "drinking" 边沿
   | { kind: "carcassGone"; id: number; pos: Vec3 } // 尸体消失（吃光）
   | { kind: "burrowToggle"; entered: boolean; pos: Vec3 } // 玩家 burrowId null↔非 null
@@ -18,6 +19,7 @@ export type SimEvent =
   | { kind: "adrenaline"; pos: Vec3 }; // M15 P1：玩家 adrenalineTicks 0→>0（濒死爆发触发边沿）
 
 const DIG_TICK_INTERVAL_SEC = 0.4;
+const EATING_TICK_INTERVAL_SEC = 1; // M2 A1：进食节奏碎屑，"1/s"（brief 原话）
 
 /** walk<->swim 之间的往返视为一次落水/上岸 splash；不含 burrow。 */
 function isSplashTransition(prev: Locomotion, curr: Locomotion): boolean {
@@ -64,6 +66,7 @@ function isSplashTransition(prev: Locomotion, curr: Locomotion): boolean {
  */
 export function createSimEventDiffer(): (prev: GameState | null, curr: GameState, dtSec: number) => SimEvent[] {
   let digAccum = 0; // digTick 节流累加器，只在这个 differ 实例内持续
+  let eatAccum = 0; // M2 A1：eatingTick 节流累加器，与 digAccum 同一写法、独立计数（两个 activity 互斥，但仍各自留一份状态，不复用同一个变量）
 
   return (prev, curr, dtSec) => {
     if (prev === null) return [];
@@ -139,6 +142,17 @@ export function createSimEventDiffer(): (prev: GameState | null, curr: GameState
         }
       } else {
         digAccum = 0;
+      }
+
+      // M2 A1：进食节奏碎屑——镜像上面 digTick 的写法，同一节流手法，独立累加器/间隔。
+      if (currPlayer.activity === "eating") {
+        eatAccum += dtSec;
+        if (eatAccum >= EATING_TICK_INTERVAL_SEC) {
+          eatAccum -= EATING_TICK_INTERVAL_SEC;
+          events.push({ kind: "eatingTick", pos: { ...currPlayer.pos } });
+        }
+      } else {
+        eatAccum = 0;
       }
 
       if (currPlayer.activity === "drinking" && prevPlayer?.activity !== "drinking") {

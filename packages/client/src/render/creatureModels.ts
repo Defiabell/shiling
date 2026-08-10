@@ -34,6 +34,14 @@ export interface AnimateCtx {
   speedHint: number;
   /** Monotonic seconds (wall-clock derived) — the sole phase source for every sin/spring below. */
   tSec: number;
+  /**
+   * M2 A1（生物动效灵体化）：玩家 state.adrenalineTicks>0 直传，default false —
+   * creatureView 只对玩家自己的 view 会写真值（见该文件 syncCreatures 的
+   * organSignature 姊妹分支），NPC/carcass 视图恒为 false，与 isCarried 对
+   * `creature:*` 视图恒为 false 同一惯例。目前唯一消费者是幼兽的肾上腺素速度线
+   * （见 buildYoushouRig/wrapYoushouExtras）。
+   */
+  adrenaline?: boolean;
 }
 
 export interface CreatureModel {
@@ -69,12 +77,109 @@ export interface CreatureModel {
   dispose(): void;
 }
 
+// ---------------------------------------------------------------------------
+// 生物动效灵体化（M2 A1）：粒子/音效侧的少量“效果请求”出口 —— 这个文件本身不持有
+// scene/particles/AudioContext 引用（保持 sim-agnostic 之外，也保持渲染引擎无关的
+// 既有边界），所以采用与下方 `modelLibrary` 完全同构的“模块级单例 + setter”模式：
+// main.ts 在创建好 particles/audio 之后调用一次 `setCreatureFx()`，此后
+// createLivingAnimate 的各物种分支直接调用 `creatureFx.xxx()`。默认的 NOOP 实现
+// 保证任何在 main.ts 完成布线之前（含单测环境，从不调用 setCreatureFx）调用
+// animate() 的路径都是安全的空操作，不会抛错。
+// ---------------------------------------------------------------------------
+export interface CreatureFx {
+  /** 复用挖洞尘土配方在指定世界坐标喷 `count` 颗尘土粒子——苓鼠落地噗尘用 3、穴獾遁地颤抖用更大的数值。 */
+  dust(x: number, y: number, z: number, count: number): void;
+  /** 单颗深色、缓慢上升的墨烟粒子（潭狩尾迹）。 */
+  inkSmoke(x: number, y: number, z: number): void;
+  /** 单颗浅色、缓慢上浮的气泡粒子（溪鱼）。 */
+  bubble(x: number, y: number, z: number): void;
+  /** 极轻的落地“嗒”声（苓鼠跳跃落地）。 */
+  hopTick(): void;
+}
+
+const NOOP_CREATURE_FX: CreatureFx = {
+  dust: () => {},
+  inkSmoke: () => {},
+  bubble: () => {},
+  hopTick: () => {},
+};
+
+let creatureFx: CreatureFx = NOOP_CREATURE_FX;
+
+/** 由 main.ts 在创建好 particles/audio 控制器之后调用一次——见文件头注释，同 setModelLibrary 同一模式。 */
+export function setCreatureFx(fx: CreatureFx): void {
+  creatureFx = fx;
+}
+
+// ---- 苓鼠·跳跃 ----
+const LINGSHU_HOP_PERIOD_SPEED_FACTOR = 0.9; // period = clamp(此值/speedHint, MIN, MAX)
+const LINGSHU_HOP_PERIOD_MIN = 0.25;
+const LINGSHU_HOP_PERIOD_MAX = 0.6;
+const LINGSHU_HOP_HEIGHT = 0.25;
+const LINGSHU_SQUASH_AT_LAND = 0.85; // scale.y 系数（乘 baseBodyScaleY），落地瞬间
+const LINGSHU_STRETCH_AT_APEX = 1.1; // 顶点瞬间
+const LINGSHU_HOP_DUST_COUNT = 3;
+const LINGSHU_IDLE_SIT_LIFT = 0.02; // "sits taller"——静止时躯干略微抬高
+const LINGSHU_EAR_BREATH_FREQ_HZ = 0.9;
+const LINGSHU_EAR_BREATH_AMP = 0.04;
+
+// ---- 潭狩·低伏潜行 ----
+const TANSHOU_CROUCH_OFFSET = -0.04; // baseY −8%（CAPSULE_BODY.tanshou.radius=0.5 的 8%）——"灵体"半陷地面的刻意风格化，见 buildTanshouModel 头部注释
+const TANSHOU_SWAY_FREQ_HZ = 0.8;
+const TANSHOU_SWAY_AMP = 0.03;
+const TANSHOU_INK_RATE_HZ = 2; // 2/s，狩猎中 ×2
+// "狩猎"在客户端无法读到 aiState（sim-agnostic），用速度阈值当代理——tanshou.walkSpeed=5.2，
+// 巡逻/绕后很少长时间跑到这么快，追猎才会持续贴着上限跑，见 brief 原话"use speedHint >
+// walkSpeed threshold as proxy"。刻意写成本地字面量而不是 import @shiling/content 的
+// SPECIES.tanshou.walkSpeed——这个模块的既有边界是不认识 sim/content 的具体数值契约，
+// 只认识"某个速度阈值"这个抽象，与下方 buildTanshouModel 的眼睛脉冲共用同一个常量。
+const TANSHOU_HUNT_SPEED_PROXY = 4.6;
+const TANSHOU_INK_REAR_OFFSET_Z = 0.9; // 尾迹喷出点——躯干后方
+
+/**
+ * 潭狩"是否在狩猎"的唯一判据入口——createLivingAnimate 的尾迹 ×2 分支与
+ * buildTanshouModel 的眼睛脉冲各自要用同一个布尔量，抽成一个函数而不是各自重复
+ * `ctx.speedHint > TANSHOU_HUNT_SPEED_PROXY` 字面表达式，未来调阈值只需改这一处。
+ */
+function isTanshouHunting(ctx: AnimateCtx): boolean {
+  return ctx.activity === "moving" && ctx.speedHint > TANSHOU_HUNT_SPEED_PROXY;
+}
+const TANSHOU_EYE_PULSE_FREQ_HZ = 3;
+
+// ---- 幼兽·小跑 ----
+const YOUSHOU_LEAN_MAX_RAD = 0.06; // 冲刺时的最大前倾
+const YOUSHOU_SPRINT_SPEED_PROXY = 6; // m/s——walkSpeed(4.5)×sprintMultiplier(1.85)≈8.3 的保守下界代理，AnimateCtx 不携带真实 sprint 布尔量（同 tanshou 狩猎 proxy 同一惯例）
+const YOUSHOU_SPRINT_DUST_COUNT = 3;
+
+// ---- 溪鱼·游曳 ----
+const XIYU_ROLL_AMP = 0.15;
+const XIYU_ROLL_BASE_FREQ_HZ = 1.2;
+const XIYU_DART_STRETCH = 1.15;
+const XIYU_DART_DURATION_SEC = 0.25;
+const XIYU_DART_PERIOD_SEC = 5; // 平均每 ~5s 一次冲刺
+const XIYU_BUBBLE_RATE_HZ = 2;
+
+// ---- 穴獾·拱地/遁地 ----
+const XUEHUAN_WADDLE_AMP = 0.08;
+const XUEHUAN_WADDLE_FREQ_HZ = 3;
+const XUEHUAN_CHANNEL_SHAKE_AMP = 0.05;
+const XUEHUAN_CHANNEL_SHAKE_FREQ_HZ = 18;
+const XUEHUAN_CHANNEL_DUST_RATE_HZ = 3.5; // "heavy dust burst"——比苓鼠落地噗尘密得多的持续喷发
+const XUEHUAN_CHANNEL_DUST_COUNT = 10;
+
+/** 通用 clamp——多个物种的速度→周期/振幅换算都要用。 */
+function clamp(v: number, min: number, max: number): number {
+  return v < min ? min : v > max ? max : v;
+}
+
 /**
  * Shared `animate` implementation for every living species (youshou/lingshu/
- * tanshou): the M0.5 Task 4 formulas only ever touch `group` and
- * `parts.body`/`head`/`tail`, which every living builder provides in the same
- * shape, so one generic closure covers all three instead of copy-pasted
- * per-species logic.
+ * tanshou/xiyu/xuehuan): the attack-lunge spring / eating head-nod / tail-wag
+ * formulas below are identical across every species that has the relevant
+ * part, so they stay unconditional; the *locomotion* block (bob/roll/scale,
+ * M2 A1's per-species profiles) is the one part that now branches on
+ * `species` — see the per-species case bodies below for each profile's own
+ * reasoning (mirrors the constants block immediately above this function).
  *
  * Baseline `body` rotation/scale are captured once here — called as the last
  * step of each builder, after that builder has finished orienting `body`
@@ -84,16 +189,19 @@ export interface CreatureModel {
  * locomotion isn't "swim" (rotation.x) or activity isn't idle/eating
  * (scale.y).
  *
- * Attack-spring state (`attackPitch`) and `lastTSec` (for frameDt) live in
- * this closure, one instance per model — creatureView no longer writes
- * `group.rotation.x` itself (Task 4 moved 100% ownership here), so there is
- * nothing to read back off the object; the spring's "current value" has to be
- * remembered somewhere, and a closure variable scoped to this one model
- * instance is the simplest place.
+ * Attack-spring state (`attackPitch`), `lastTSec` (for frameDt), and every
+ * species-specific phase/throttle accumulator (hop phase, ink-trail/bubble
+ * emission accumulators, dart timers, ...) live in this closure, one instance
+ * per model — creatureView no longer writes `group.rotation.x` itself (Task 4
+ * moved 100% ownership here), so there is nothing to read back off the
+ * object; each spring/phase's "current value" has to be remembered somewhere,
+ * and a closure variable scoped to this one model instance is the simplest
+ * place (consistent with the original attackPitch/lastTSec precedent).
  */
 function createLivingAnimate(
   group: THREE.Group,
   parts: { head?: THREE.Object3D; tail?: THREE.Object3D; body: THREE.Object3D },
+  species: string,
 ): CreatureModel["animate"] {
   const { body, head, tail } = parts;
   const baseBodyRotX = body.rotation.x;
@@ -103,43 +211,171 @@ function createLivingAnimate(
   let attackPitch = 0;
   let lastTSec: number | null = null;
 
+  // 每个物种分支只会用到下面这批闭包状态里的一部分，其余物种恒不触碰——与
+  // fleeTime/hiddenTicks 等"通用字段，只有部分角色真正用到"的 sim 侧既有惯例同构。
+  let lingshuPrevPhase = 0;
+  let inkAccumSec = 0;
+  let bubbleAccumSec = 0;
+  let xiyuDartRemainingSec = 0;
+  let xiyuDartTimerSec = Math.random() * XIYU_DART_PERIOD_SEC; // 随机初始相位，避免全体溪鱼同步冲刺
+  let channelDustAccumSec = 0;
+
   return (ctx: AnimateCtx) => {
-    // First call has no prior sample to diff against — 0 keeps the attack
-    // spring from jumping on the very first frame instead of racing toward
-    // its target using a bogus (huge, or negative on a clock hiccup) dt.
+    // First call has no prior sample to diff against — 0 keeps every spring/
+    // accumulator below from jumping on the very first frame instead of
+    // racing/over-accumulating using a bogus (huge, or negative on a clock
+    // hiccup) dt.
     const frameDt = lastTSec === null ? 0 : Math.max(0, ctx.tSec - lastTSec);
     lastTSec = ctx.tSec;
 
     const swimming = ctx.locomotion === "swim";
-    const bobFreq = 4 + ctx.speedHint * 2;
-    const bobAmp = Math.min(0.08, ctx.speedHint * 0.02) * (swimming ? 0.5 : 1);
-    // += : relies on creatureView.applyInterp having just written this
-    // frame's fresh interpolated position.y immediately before calling
-    // animate() — see CreatureModel.animate's doc comment.
-    group.position.y += Math.abs(Math.sin(ctx.tSec * bobFreq)) * bobAmp;
-    // Same frequency as the bob, per spec ("同频微滚") — a fixed ±0.04 roll
-    // regardless of speed, only its rate follows speedHint.
-    body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * bobFreq) * 0.04;
+    const moving = ctx.activity === "moving";
+    let forwardLean = 0; // 只有幼兽冲刺时非零——见下方 youshou 分支；与 attackPitch 相加而非互斥覆盖。
+
+    switch (species) {
+      case "lingshu": {
+        body.rotation.z = baseBodyRotZ; // 苓鼠不用同频微滚（跳跃本身已经是垂直方向的强读法）——显式重置，不依赖"反正没人写它"，同 tanshou 分支同一惯例。
+        if (moving && ctx.speedHint > 0.01) {
+          const period = clamp(LINGSHU_HOP_PERIOD_SPEED_FACTOR / ctx.speedHint, LINGSHU_HOP_PERIOD_MIN, LINGSHU_HOP_PERIOD_MAX);
+          const phase = (((ctx.tSec / period) % 1) + 1) % 1; // 0..1，落地=0/1，顶点=0.5
+          const arc = Math.sin(phase * Math.PI); // 0 落地 → 1 顶点 → 0 落地
+          // += ：与 CreatureModel.animate 文档同一前提——这一帧刚被 applyInterp 写过一次 position.y。
+          group.position.y += arc * LINGSHU_HOP_HEIGHT;
+          body.scale.y = baseBodyScaleY * (LINGSHU_SQUASH_AT_LAND + (LINGSHU_STRETCH_AT_APEX - LINGSHU_SQUASH_AT_LAND) * arc);
+          if (phase < lingshuPrevPhase) {
+            // phase 从接近 1 绕回接近 0——这一帧刚发生了一次落地。
+            creatureFx.dust(group.position.x, group.position.y, group.position.z, LINGSHU_HOP_DUST_COUNT);
+            creatureFx.hopTick();
+          }
+          lingshuPrevPhase = phase;
+        } else {
+          lingshuPrevPhase = 0; // 停止移动后清零相位，下次起跳从落地姿态重新开始，不残留上次的跳跃相位
+          group.position.y += LINGSHU_IDLE_SIT_LIFT; // "sits taller"
+          body.scale.y = baseBodyScaleY + Math.sin(ctx.tSec * 2.2) * 0.02; // 保留原有的静止呼吸
+          if (head) head.scale.setScalar(1 + Math.sin(ctx.tSec * LINGSHU_EAR_BREATH_FREQ_HZ * Math.PI * 2) * LINGSHU_EAR_BREATH_AMP);
+        }
+        break;
+      }
+      case "tanshou": {
+        group.position.y += TANSHOU_CROUCH_OFFSET; // 低伏——"灵体"半陷地面的刻意风格化
+        body.rotation.y = Math.sin(ctx.tSec * TANSHOU_SWAY_FREQ_HZ * Math.PI * 2) * TANSHOU_SWAY_AMP; // 叠在 yaw 之上的蛇行摆荡（body 是 group 的子节点，不影响真实行进方向）
+        body.rotation.z = baseBodyRotZ; // 潭狩不用同频微滚（低伏体型本就贴地，滚动读法不适用）
+        if (moving) {
+          inkAccumSec += frameDt * (isTanshouHunting(ctx) ? 2 : 1);
+          const inkInterval = 1 / TANSHOU_INK_RATE_HZ;
+          while (inkAccumSec >= inkInterval) {
+            inkAccumSec -= inkInterval;
+            const yaw = group.rotation.y;
+            creatureFx.inkSmoke(
+              group.position.x - Math.sin(yaw) * TANSHOU_INK_REAR_OFFSET_Z,
+              group.position.y + 0.15,
+              group.position.z - Math.cos(yaw) * TANSHOU_INK_REAR_OFFSET_Z,
+            );
+          }
+        } else {
+          inkAccumSec = 0;
+        }
+        break;
+      }
+      case "youshou": {
+        const bobFreq = 4 + ctx.speedHint * 2;
+        // 游泳时振幅减半——沿用 M0.5 Task 4 的原始行为（水中不该有陆地小跑那么大的起伏）。
+        const bobAmp = Math.min(0.08, ctx.speedHint * 0.02) * (swimming ? 0.5 : 1);
+        group.position.y += Math.abs(Math.sin(ctx.tSec * bobFreq)) * bobAmp;
+        body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * bobFreq) * 0.04;
+        const sprinting = ctx.speedHint > YOUSHOU_SPRINT_SPEED_PROXY;
+        forwardLean = clamp(ctx.speedHint / YOUSHOU_SPRINT_SPEED_PROXY, 0, 1) * YOUSHOU_LEAN_MAX_RAD;
+        if (sprinting) {
+          // 落地尘：复用同一个 bob 相位，在其谷底（sin≈0，且刚从正值转过来）触发一次——
+          // 与苓鼠跳跃的"phase 绕回"判据同一手法，只是这里判的是 |sin| 的谷底穿越。
+          const bobPhase = Math.abs(Math.sin(ctx.tSec * bobFreq));
+          const prevBobPhase = Math.abs(Math.sin((ctx.tSec - Math.max(frameDt, 1e-4)) * bobFreq));
+          if (bobPhase < 0.05 && prevBobPhase >= 0.05) {
+            creatureFx.dust(group.position.x, group.position.y, group.position.z, YOUSHOU_SPRINT_DUST_COUNT);
+          }
+        }
+        break;
+      }
+      case "xiyu": {
+        body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * (XIYU_ROLL_BASE_FREQ_HZ + ctx.speedHint * 0.3)) * XIYU_ROLL_AMP;
+        if (xiyuDartRemainingSec > 0) {
+          xiyuDartRemainingSec = Math.max(0, xiyuDartRemainingSec - frameDt);
+          const t = xiyuDartRemainingSec / XIYU_DART_DURATION_SEC; // 1→0
+          body.scale.z = 1 + (XIYU_DART_STRETCH - 1) * Math.sin(t * Math.PI); // 冲入/冲出都平滑，不是硬切
+        } else {
+          body.scale.z = 1;
+          xiyuDartTimerSec -= frameDt;
+          if (xiyuDartTimerSec <= 0) {
+            xiyuDartTimerSec = XIYU_DART_PERIOD_SEC * (0.7 + Math.random() * 0.6); // 带随机抖动的周期，不是严格等间隔
+            xiyuDartRemainingSec = XIYU_DART_DURATION_SEC;
+          }
+        }
+        if (moving || swimming) {
+          bubbleAccumSec += frameDt;
+          const bubbleInterval = 1 / XIYU_BUBBLE_RATE_HZ;
+          while (bubbleAccumSec >= bubbleInterval) {
+            bubbleAccumSec -= bubbleInterval;
+            creatureFx.bubble(group.position.x, group.position.y + 0.1, group.position.z);
+          }
+        } else {
+          bubbleAccumSec = 0;
+        }
+        break;
+      }
+      case "xuehuan": {
+        const channeling = ctx.activity === "digging"; // 遁地 channel——见 ai.ts tickBurrowEvader，非玩家专属的同一 activity 字面量
+        if (channeling) {
+          body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * XUEHUAN_CHANNEL_SHAKE_FREQ_HZ) * XUEHUAN_CHANNEL_SHAKE_AMP;
+          body.rotation.x = baseBodyRotX + Math.cos(ctx.tSec * XUEHUAN_CHANNEL_SHAKE_FREQ_HZ * 1.3) * XUEHUAN_CHANNEL_SHAKE_AMP * 0.6;
+          channelDustAccumSec += frameDt;
+          const dustInterval = 1 / XUEHUAN_CHANNEL_DUST_RATE_HZ;
+          while (channelDustAccumSec >= dustInterval) {
+            channelDustAccumSec -= dustInterval;
+            creatureFx.dust(group.position.x, group.position.y, group.position.z, XUEHUAN_CHANNEL_DUST_COUNT);
+          }
+        } else {
+          channelDustAccumSec = 0;
+          body.rotation.x = baseBodyRotX;
+          body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * (XUEHUAN_WADDLE_FREQ_HZ + ctx.speedHint * 0.5)) * XUEHUAN_WADDLE_AMP;
+        }
+        break;
+      }
+      default: {
+        // 防御性兜底（理论上不会命中——buildCreatureModel 的 5 个 case 已经穷尽当前
+        // 全部物种）：保留 M0.5 Task 4 原始的通用 bob/roll 公式，不静默地什么都不画。
+        const bobFreq = 4 + ctx.speedHint * 2;
+        const bobAmp = Math.min(0.08, ctx.speedHint * 0.02) * (swimming ? 0.5 : 1);
+        group.position.y += Math.abs(Math.sin(ctx.tSec * bobFreq)) * bobAmp;
+        body.rotation.z = baseBodyRotZ + Math.sin(ctx.tSec * bobFreq) * 0.04;
+      }
+    }
 
     body.scale.y =
-      ctx.activity === "idle" || ctx.activity === "eating"
-        ? baseBodyScaleY + Math.sin(ctx.tSec * 2.2) * 0.02
-        : baseBodyScaleY;
+      species === "lingshu"
+        ? body.scale.y // 苓鼠已经在上面的分支里把 scale.y 设成了 squash-stretch/静止呼吸，这里不再覆盖
+        : ctx.activity === "idle" || ctx.activity === "eating"
+          ? baseBodyScaleY + Math.sin(ctx.tSec * 2.2) * 0.02
+          : baseBodyScaleY;
 
-    body.rotation.x = baseBodyRotX + (swimming ? Math.sin(ctx.tSec * 3) * 0.08 : 0);
+    body.rotation.x = species === "xuehuan" ? body.rotation.x : baseBodyRotX + (swimming ? Math.sin(ctx.tSec * 3) * 0.08 : 0);
 
     // Spring always runs (target flips 0.35↔0 on the activity edge) so the
     // lunge eases back out on exit instead of snapping — not gated to only
-    // execute "while attacking".
+    // execute "while attacking". forwardLean (幼兽冲刺前倾) adds on top rather
+    // than replacing it — the two are independent cosmetic offsets on the same axis.
     const targetPitch = ctx.activity === "attacking" ? 0.35 : 0;
     attackPitch += (targetPitch - attackPitch) * Math.min(1, 10 * frameDt);
-    group.rotation.x = attackPitch;
+    group.rotation.x = attackPitch + forwardLean;
 
     if (head) {
       head.rotation.x = ctx.activity === "eating" ? 0.4 + Math.sin(ctx.tSec * 5) * 0.15 : 0;
     }
     if (tail) {
-      tail.rotation.y = Math.sin(ctx.tSec * (2 + ctx.speedHint * 3)) * 0.3;
+      // 尾摆频率随速度线性增长（原有行为不变）；幅度也随速度线性增长再封顶
+      // （M2 A1 修正——原实现只让频率跟速度走，幅度是写死的常数，不满足"tail wag
+      // amplitude scales with speed"这条要求）。
+      const wagAmp = Math.min(0.45, 0.2 + ctx.speedHint * 0.04);
+      tail.rotation.y = Math.sin(ctx.tSec * (2 + ctx.speedHint * 3)) * wagAmp;
     }
   };
 }
@@ -353,14 +589,18 @@ function buildYoushouModel(): CreatureModel {
   tail.position.set(0, 0.1, -0.14);
   attach(tailMount, tail);
 
+  // M2 A1：颌部挂点——撕咬墨斩弧的锚点（见 wrapYoushouExtras），略靠前于头部中心。
+  // 只是一个空 anchor（不建任何几何体），与 head/tail 两个既有 mount 同一惯例。
+  const jawMount = makeMount(group, 0, BODY_Y + 0.05, 1.05);
+
   group.add(buildGroundShadow(shadowRadiusFor("youshou")));
 
   const parts = { head: headMount, tail: tailMount, body };
   return {
     group,
-    mounts: { head: headMount, tail: tailMount },
+    mounts: { head: headMount, tail: tailMount, jaw: jawMount },
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate: createLivingAnimate(group, parts, "youshou"),
     dispose: () => disposeTree(group),
   };
 }
@@ -429,7 +669,7 @@ function buildLingshuModel(): CreatureModel {
     group,
     mounts: { head: headMount, tail: tailMount },
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate: createLivingAnimate(group, parts, "lingshu"),
     dispose: () => disposeTree(group),
   };
 }
@@ -477,11 +717,28 @@ function buildTanshouModel(): CreatureModel {
   group.add(buildGroundShadow(shadowRadiusFor("tanshou")));
 
   const parts = { head: headMount, tail: tailMount, body };
+  const baseAnimate = createLivingAnimate(group, parts, "tanshou");
+
+  // M2 A1：狩猎中眼睛脉冲更亮——直接引用 eyeL/eyeR 材质本身的 THREE.Color 实例，
+  // 逐帧 lerp 回基色再往白色推一截，从不新建 Color/克隆材质（零分配）。只有 GLB
+  // 变体没有这两枚独立网格可以调（见 buildGlbCreatureModel 头部注释同一类"降级但
+  // 不崩"取舍），procedural fallback 专属加成。
+  const eyeLMat = eyeL.material as THREE.MeshBasicMaterial;
+  const eyeRMat = eyeR.material as THREE.MeshBasicMaterial;
+  const eyeBaseColor = eyeLMat.color.clone(); // eyeL/eyeR 用同一个 PALETTE 常量建材质，基色相同
+  const eyeBrightColor = new THREE.Color(0xffffff);
+  function animate(ctx: AnimateCtx): void {
+    baseAnimate(ctx);
+    const pulse = isTanshouHunting(ctx) ? 0.4 + 0.3 * Math.sin(ctx.tSec * TANSHOU_EYE_PULSE_FREQ_HZ * Math.PI * 2) : 0;
+    eyeLMat.color.copy(eyeBaseColor).lerp(eyeBrightColor, pulse);
+    eyeRMat.color.copy(eyeBaseColor).lerp(eyeBrightColor, pulse);
+  }
+
   return {
     group,
     mounts: { head: headMount, tail: tailMount, back: backMount },
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate,
     dispose: () => disposeTree(group),
   };
 }
@@ -531,7 +788,7 @@ function buildXiyuModel(): CreatureModel {
     group,
     mounts: { head: headMount, tail: tailMount },
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate: createLivingAnimate(group, parts, "xiyu"),
     dispose: () => disposeTree(group),
   };
 }
@@ -580,7 +837,7 @@ function buildXuehuanModel(): CreatureModel {
     group,
     mounts: { head: headMount },
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate: createLivingAnimate(group, parts, "xuehuan"),
     dispose: () => disposeTree(group),
   };
 }
@@ -658,16 +915,22 @@ function buildGlbCreatureModel(species: string, entry: LibraryEntry): CreatureMo
   const headMount = makeMount(group, 0, entry.bbox.max.y * 0.8, entry.bbox.max.z);
   const backMount = makeMount(group, 0, entry.bbox.max.y, (entry.bbox.max.z + entry.bbox.min.z) / 2);
   const tailMount = makeMount(group, 0, entry.bbox.max.y * 0.3, entry.bbox.min.z);
+  // M2 A1：颌部挂点，同 buildYoushouModel 的 jawMount 同一语义（略靠前于头部）——只有
+  // youshou 用得到（wrapYoushouExtras 的撕咬墨斩弧锚点），其余物种的 GLB 模型不建这个
+  // mount，与procedural builders"只建自己用得到的挂点"同一惯例。
+  const jawMount = species === "youshou" ? makeMount(group, 0, entry.bbox.max.y * 0.6, entry.bbox.max.z) : undefined;
 
   const shadow = buildGroundShadow(shadowRadiusFor(species));
   group.add(shadow);
 
   const parts = { body: pivot };
+  const mounts: Record<string, THREE.Object3D> = { head: headMount, back: backMount, tail: tailMount };
+  if (jawMount) mounts.jaw = jawMount;
   return {
     group,
-    mounts: { head: headMount, back: backMount, tail: tailMount },
+    mounts,
     parts,
-    animate: createLivingAnimate(group, parts),
+    animate: createLivingAnimate(group, parts, species),
     dispose: () => {
       // entry.geometry/entry.livingMaterial are library-owned — never
       // disposed here, that would break every other living instance of this
@@ -678,9 +941,107 @@ function buildGlbCreatureModel(species: string, entry: LibraryEntry): CreatureMo
   };
 }
 
+// ---------------------------------------------------------------------------
+// 幼兽专属额外装饰（M2 A1）：撕咬墨斩弧 + 肾上腺素速度线——两者都需要直接持有
+// 自建的 sprite 引用，且要覆盖到 GLB 与 procedural 两条路径（GLB 是实际最常见的
+// 那条——三个 GLB 一旦加载成功就是默认外观），所以不放进任一具体 builder 内部，
+// 而是在 buildCreatureModel 里对 youshou 统一后处理：两个 builder 都已各自建好
+// 一个 `mounts.jaw`（见上方两处 jawMount），这里只需要这一个共同的锚点。
+// ---------------------------------------------------------------------------
+const SLASH_ARC_LIFE_SEC = 0.15;
+const SPEED_LINE_COUNT = 3;
+
+interface YoushouRig {
+  slash: THREE.Mesh;
+  slashMaterial: THREE.MeshBasicMaterial;
+  speedLines: THREE.Mesh[];
+  speedLineMaterials: THREE.MeshBasicMaterial[];
+}
+
+/** 预建（不可见，opacity=0）撕咬弧 sprite + 3 条速度线 streak——wrapYoushouExtras 逐帧只切换 opacity/position，零分配。 */
+function buildYoushouRig(group: THREE.Group, jawMount: THREE.Object3D): YoushouRig {
+  const slashMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.outlineInk,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const slash = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.22), slashMaterial);
+  slash.rotation.x = -Math.PI / 2.6; // 略朝前下方的弧面读法，不追求真正弯曲几何体
+  jawMount.add(slash); // 无 outline（attach() 不适用——这是纯特效 sprite，不是"生物身体部件"）
+
+  const speedLines: THREE.Mesh[] = [];
+  const speedLineMaterials: THREE.MeshBasicMaterial[] = [];
+  for (let i = 0; i < SPEED_LINE_COUNT; i++) {
+    const material = new THREE.MeshBasicMaterial({
+      color: PALETTE.cinnabar,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const streak = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 0.5), material);
+    // group-space 固定偏移（不挂在任何随呼吸/攻击摆动的 mount 下）——读作"身后拖出的
+    // 几道红色速度线"，不需要跟着 body 的呼吸缩放一起抖。
+    streak.position.set((i - (SPEED_LINE_COUNT - 1) / 2) * 0.18, 0.3, -0.5);
+    group.add(streak);
+    speedLines.push(streak);
+    speedLineMaterials.push(material);
+  }
+  return { slash, slashMaterial, speedLines, speedLineMaterials };
+}
+
+/** 撞见 youshou 时统一后处理（procedural 与 GLB 两条路径都会调用，见上方段落头注释）：包一层 animate，读 mounts.jaw 建特效 rig。model.mounts.jaw 不存在时（防御性，理论不会发生）整体跳过，不抛错。 */
+function wrapYoushouExtras(model: CreatureModel): void {
+  const jaw = model.mounts.jaw;
+  if (!jaw) return;
+  const rig = buildYoushouRig(model.group, jaw);
+  const baseAnimate = model.animate;
+  let wasAttacking = false;
+  let slashRemainingSec = 0;
+  let lastTSec: number | null = null;
+
+  model.animate = (ctx: AnimateCtx) => {
+    baseAnimate(ctx);
+    const frameDt = lastTSec === null ? 0 : Math.max(0, ctx.tSec - lastTSec);
+    lastTSec = ctx.tSec;
+
+    // 撕咬墨斩弧：idle→attacking 边沿触发一次，0.15s 线性淡出（一次攻击只闪一次，
+    // 长按/持续 attacking 状态不会重复重触发——只在 false→true 的那一帧点火）。
+    // 触发帧本身不参与衰减（else-if，不是紧跟着再减一次 frameDt）——否则点火那一帧就已经
+    // 被扣掉将近一帧的时长，读起来永远到不了满亮，"刚咬中"这一拍的视觉分量会被削弱。
+    const attacking = ctx.activity === "attacking";
+    const justTriggered = attacking && !wasAttacking;
+    if (justTriggered) {
+      slashRemainingSec = SLASH_ARC_LIFE_SEC;
+    } else if (slashRemainingSec > 0) {
+      slashRemainingSec = Math.max(0, slashRemainingSec - frameDt);
+    }
+    wasAttacking = attacking;
+    rig.slashMaterial.opacity = slashRemainingSec / SLASH_ARC_LIFE_SEC;
+
+    // 肾上腺素速度线：冲刺 proxy（同 createLivingAnimate 的 YOUSHOU_SPRINT_SPEED_PROXY）
+    // 且濒死爆发窗口内才显示——两个条件都要满足，不是"随便跑起来就有红色线"。
+    const showSpeedLines = (ctx.adrenaline ?? false) && ctx.speedHint > YOUSHOU_SPRINT_SPEED_PROXY;
+    for (let i = 0; i < rig.speedLineMaterials.length; i++) {
+      rig.speedLineMaterials[i]!.opacity = showSpeedLines
+        ? 0.25 + 0.25 * Math.abs(Math.sin(ctx.tSec * 8 + i * 1.3))
+        : 0;
+    }
+  };
+}
+
 export function buildCreatureModel(species: string): CreatureModel {
   const entry = modelLibrary[species];
-  if (entry) return buildGlbCreatureModel(species, entry);
+  const model = entry ? buildGlbCreatureModel(species, entry) : buildProceduralCreatureModel(species);
+  if (species === "youshou") wrapYoushouExtras(model);
+  return model;
+}
+
+function buildProceduralCreatureModel(species: string): CreatureModel {
   switch (species) {
     case "youshou":
       return buildYoushouModel();

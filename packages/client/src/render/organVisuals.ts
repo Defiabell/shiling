@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { GameState } from "@shiling/sim";
-import type { OrganSlot } from "@shiling/content";
+import { ORGANS, type EssenceType, type OrganSlot } from "@shiling/content";
 import { PALETTE } from "./palette.js";
 import { bodyFootprintLength, type CreatureModel } from "./creatureModels.js";
 
@@ -341,24 +341,183 @@ function disposeVisualTree(root: THREE.Object3D): void {
 
 export interface OrganVisualHandle {
   dispose(): void;
+  /**
+   * M2 A1（器官灵光）：每帧调用一次——`tSec` 驱动全体灵光的 1.2Hz 呼吸脉冲；
+   * `evolvedSlot`/`evolvedAgeSec` 驱动"新生器官尚带神辉"（30s 内的额外金色光效）——
+   * 见下方 AURA_* 常量与 buildAura/updateAuras 的实现。NPC/carcass 视图恒为 null，
+   * 从不调用这个方法，与 organVisualHandle 字段本身"只有玩家非 null"同一惯例。
+   */
+  update(tSec: number, evolvedSlot: OrganSlot | "innate" | null, evolvedAgeSec: number): void;
+}
+
+// ---------------------------------------------------------------------------
+// 器官灵光（M2 A1）：每个已装备器官挂点上一层薄加色光晕 + 新生器官额外的金色环绕流光。
+// ---------------------------------------------------------------------------
+const AURA_PULSE_FREQ_HZ = 1.2;
+const AURA_PULSE_BASE_OPACITY = 0.25;
+const AURA_PULSE_AMPLITUDE = 0.1; // opacity 0.25±0.1
+const AURA_GLOW_RADIUS = 0.05;
+const AURA_GLOW_Y_OFFSET = 0.05; // 略高于挂件本体，避免完全重合看不出独立的一层光
+
+const NEW_ORGAN_SHIMMER_SEC = 30; // "lastEvolution within 30s"（brief 原话）
+const NEW_ORGAN_SHIMMER_HALO_RADIUS = 0.09;
+const NEW_ORGAN_SHIMMER_HALO_BASE_OPACITY = 0.5;
+const NEW_ORGAN_SPARK_COUNT = 4;
+const NEW_ORGAN_SPARK_RADIUS_GEOM = 0.02;
+const NEW_ORGAN_SPARK_ORBIT_RADIUS = 0.14;
+const NEW_ORGAN_SPARK_ORBIT_SPEED = 2.4; // rad/s
+const NEW_ORGAN_SPARK_BOB_FREQ_HZ = 1.6;
+const NEW_ORGAN_SPARK_BOB_AMP = 0.05;
+const NEW_ORGAN_SPARK_BASE_OPACITY = 0.9;
+
+const ESSENCE_GLOW: Record<EssenceType, number> = {
+  zu: PALETTE.essenceZuGlow,
+  lin: PALETTE.essenceLinGlow,
+  xue: PALETTE.essenceXueGlow,
+  meng: PALETTE.essenceMengGlow,
+};
+
+/**
+ * 某个 organId "权重最高"的精气类型——ORGANS[organId].affinity 是 Partial<Record
+ * <EssenceType, number>> 点积权重表（B3 开奖用的同一份数据），这里只取 argmax，不做
+ * 归一化/加权混合——brief 原话"色 = 该器官的主属精气"，单一主色即可，不需要按比例
+ * 混两种颜色。找不到定义（防御性，理论不会发生——12 个已注册 builder 的 organId 与
+ * ORGANS 表逐一对应，同 buildCeremonyContent 的防御性兜底同一惯例）时返回 null，
+ * 调用方据此回退到中性色。
+ */
+function dominantEssence(organId: string): EssenceType | null {
+  const def = ORGANS[organId];
+  if (!def) return null;
+  let best: EssenceType | null = null;
+  let bestWeight = -Infinity;
+  for (const [essence, weight] of Object.entries(def.affinity) as [EssenceType, number | undefined][]) {
+    if ((weight ?? 0) > bestWeight) {
+      bestWeight = weight ?? 0;
+      best = essence;
+    }
+  }
+  return best;
+}
+
+/** 一枚由 buildAura 建好的灵光——update() 逐帧只改 opacity/position，从不重建几何体/材质（零分配）。 */
+interface OrganAura {
+  slot: OrganSlot | "innate";
+  glowMaterial: THREE.MeshBasicMaterial;
+  shimmerMaterial: THREE.MeshBasicMaterial;
+  sparks: THREE.Mesh[];
+  sparkMaterials: THREE.MeshBasicMaterial[];
+}
+
+/**
+ * 为一个已装备的器官建一整套灵光挂件（薄光晕 + 常驻但常态不可见的金色光环/流光点），
+ * 挂在 `anchor` 下（`anchor` 的局部原点即"这份挂件的位置"——见调用点：优先用该器官
+ * builder 产出的第一个 THREE.Object3D，没有产出任何几何体的器官——目前只有油羽皮
+ * youyupi 的材质 tweak——回退到 model.parts.body）。所有新建对象都 push 进
+ * `objectsOut`（供 applyOrganVisuals 统一 dispose），不在这个函数内部持有任何跨调用
+ * 状态——那部分状态（呼吸相位/新生窗口）完全由 tSec/evolvedAgeSec 参数每帧重新算出。
+ *
+ * 已知的良性重复（不是遗漏）：当 anchor 恰好是该器官自己的第一个网格（`built.
+ * objects[0]`，已经在 `objectsOut` 里）时，dispose() 遍历到 anchor 那一条会顺着
+ * `traverse()` 连带清理它的这些子节点，随后遍历到子节点自己那一条时会对同一份
+ * geometry/material 再调一次 `.dispose()`——THREE.js 的 dispose() 是幂等的（已实测
+ * 验证：重复调用不抛错，只是多发一次 'dispose' 事件），这里为了让 anchor=fallback
+ * (model.parts.body，永久保留，绝不能被这套 dispose 摸到）与 anchor=自身挂件网格
+ * 两种情形共用同一段清理代码，接受这份轻微的重复调用成本。
+ */
+function buildAura(anchor: THREE.Object3D, slot: OrganSlot | "innate", organId: string, objectsOut: THREE.Object3D[]): OrganAura {
+  const essence = dominantEssence(organId);
+  const glowColor = essence !== null ? ESSENCE_GLOW[essence] : PALETTE.organGloss;
+
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: glowColor, transparent: true, opacity: AURA_PULSE_BASE_OPACITY,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(AURA_GLOW_RADIUS, 8, 6), glowMaterial);
+  glow.position.y = AURA_GLOW_Y_OFFSET;
+  anchor.add(glow);
+  objectsOut.push(glow);
+
+  // 新生器官光环——常驻创建，常态 opacity=0（update() 里按 evolvedSlot/evolvedAgeSec
+  // 决定是否点亮），同事件粒子池"预创建、逐帧 toggle"的既有零分配惯例。
+  const shimmerMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.newOrganShimmer, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const shimmerHalo = new THREE.Mesh(new THREE.SphereGeometry(NEW_ORGAN_SHIMMER_HALO_RADIUS, 8, 6), shimmerMaterial);
+  shimmerHalo.position.y = AURA_GLOW_Y_OFFSET;
+  anchor.add(shimmerHalo);
+  objectsOut.push(shimmerHalo);
+
+  const sparks: THREE.Mesh[] = [];
+  const sparkMaterials: THREE.MeshBasicMaterial[] = [];
+  for (let i = 0; i < NEW_ORGAN_SPARK_COUNT; i++) {
+    const sparkMaterial = new THREE.MeshBasicMaterial({
+      color: PALETTE.newOrganShimmer, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const spark = new THREE.Mesh(new THREE.SphereGeometry(NEW_ORGAN_SPARK_RADIUS_GEOM, 6, 4), sparkMaterial);
+    anchor.add(spark);
+    objectsOut.push(spark);
+    sparks.push(spark);
+    sparkMaterials.push(sparkMaterial);
+  }
+
+  return { slot, glowMaterial, shimmerMaterial, sparks, sparkMaterials };
+}
+
+/** 逐帧驱动全体灵光——见 OrganVisualHandle.update 的字段注释。 */
+function updateAuras(auras: readonly OrganAura[], tSec: number, evolvedSlot: OrganSlot | "innate" | null, evolvedAgeSec: number): void {
+  const pulse = AURA_PULSE_BASE_OPACITY + AURA_PULSE_AMPLITUDE * Math.sin(tSec * AURA_PULSE_FREQ_HZ * Math.PI * 2);
+  for (const aura of auras) {
+    aura.glowMaterial.opacity = pulse;
+
+    const isFresh = aura.slot === evolvedSlot && evolvedAgeSec < NEW_ORGAN_SHIMMER_SEC;
+    if (!isFresh) {
+      aura.shimmerMaterial.opacity = 0;
+      for (const m of aura.sparkMaterials) m.opacity = 0;
+      continue;
+    }
+    const fade = 1 - evolvedAgeSec / NEW_ORGAN_SHIMMER_SEC; // 1→0，"渐渐褪去"
+    aura.shimmerMaterial.opacity = NEW_ORGAN_SHIMMER_HALO_BASE_OPACITY * fade;
+    for (let i = 0; i < aura.sparks.length; i++) {
+      const angle = tSec * NEW_ORGAN_SPARK_ORBIT_SPEED + (i / aura.sparks.length) * Math.PI * 2;
+      const bob = Math.sin(tSec * NEW_ORGAN_SPARK_BOB_FREQ_HZ + i) * NEW_ORGAN_SPARK_BOB_AMP;
+      aura.sparks[i]!.position.set(
+        Math.cos(angle) * NEW_ORGAN_SPARK_ORBIT_RADIUS,
+        AURA_GLOW_Y_OFFSET + bob,
+        Math.sin(angle) * NEW_ORGAN_SPARK_ORBIT_RADIUS,
+      );
+      aura.sparkMaterials[i]!.opacity = NEW_ORGAN_SPARK_BASE_OPACITY * fade;
+    }
+  }
 }
 
 /**
  * 主入口（creatureView.ts 在检测到玩家 state.organs 的 organId 集合变化时整体重建调用，
  * 见该文件 organSignature 的 dirty-check 注释）：遍历当前已装备的每个槎位，按 organId
  * 查表构建挂件，未登记的 organId（目前只有 "shenzhong"）直接跳过——无可视化是刻意的。
+ *
+ * M2 A1：额外为每个成功建出挂件的器官叠一层灵光（buildAura）——挂在该器官 builder
+ * 产出的第一个对象下（没有产出任何几何体的器官——目前只有 youyupi——回退到
+ * model.parts.body）。灵光的呼吸/新生窗口衰减完全由 update() 驱动，本函数只负责
+ * 一次性建好全部灵光对象。
  */
 export function applyOrganVisuals(model: CreatureModel, species: string, organs: GameState["organs"]): OrganVisualHandle {
   const objects: THREE.Object3D[] = [];
   const disposers: (() => void)[] = [];
+  const auras: OrganAura[] = [];
 
-  for (const equipped of Object.values(organs)) {
+  for (const slotKey of Object.keys(organs) as (keyof GameState["organs"])[]) {
+    const equipped = organs[slotKey];
     if (!equipped) continue;
     const builder = ORGAN_VISUAL_BUILDERS[equipped.organId];
-    if (!builder) continue; // shenzhong（本命）及任何未登记的 organId：无可视化
+    if (!builder) continue; // shenzhong（本命）及任何未登记的 organId：无可视化，也无灵光
     const built = builder(model, species);
     objects.push(...built.objects);
     if (built.dispose) disposers.push(built.dispose);
+
+    const anchor = built.objects[0] ?? model.parts.body;
+    auras.push(buildAura(anchor, slotKey, equipped.organId, objects));
   }
 
   return {
@@ -368,6 +527,9 @@ export function applyOrganVisuals(model: CreatureModel, species: string, organs:
         disposeVisualTree(obj);
       }
       for (const d of disposers) d();
+    },
+    update(tSec: number, evolvedSlot: OrganSlot | "innate" | null, evolvedAgeSec: number): void {
+      updateAuras(auras, tSec, evolvedSlot, evolvedAgeSec);
     },
   };
 }

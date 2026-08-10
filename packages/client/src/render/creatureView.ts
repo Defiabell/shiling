@@ -35,6 +35,14 @@ export interface CreatureView {
    */
   isCarried: boolean;
   /**
+   * M2 A1（生物动效灵体化）：玩家 state.adrenalineTicks>0 直传——syncCreatures 每帧
+   * 重写，只有玩家自己的 view 会写真值（与 organVisualHandle 只在 `c.id ===
+   * state.playerId` 分支才非 null 同一惯例），NPC/carcass 视图恒为 false。applyInterp
+   * 把它塞进 AnimateCtx.adrenaline，唯一消费者是幼兽的肾上腺素速度线（见
+   * creatureModels.ts 的 wrapYoushouExtras）。
+   */
+  adrenaline: boolean;
+  /**
    * 原始 CreatureModel（M1 B5）：mesh/dispose/animate 都是从它身上摘出来的字段，但
    * organVisuals.ts 的挂件需要 mounts/parts 才能定位挂点——之前没有任何字段保留这份
    * 引用，只留了三个摘出来的子字段。只有玩家视图会真正用到（见 syncCreatures 的
@@ -101,6 +109,7 @@ function newView(model: CreatureModel, groundPos: Vec3, yaw: number): CreatureVi
     locomotion: "walk",
     animate: model.animate,
     isCarried: false,
+    adrenaline: false,
     model,
     organVisualHandle: null,
     organSignature: "",
@@ -167,6 +176,8 @@ export function syncCreatures(scene: THREE.Scene, state: GameState, views: Creat
         view.organVisualHandle = applyOrganVisuals(view.model, c.species, state.organs);
         view.organSignature = sig;
       }
+      // M2 A1：肾上腺素速度线的唯一数据源——见 adrenaline 字段注释。
+      view.adrenaline = state.adrenalineTicks > 0;
     }
   }
 
@@ -243,14 +254,26 @@ function lerpAngle(a: number, b: number, t: number): number {
  * carcass 永远是 no-op）之后再叠加一个小幅度的 bob——见 CARRY_BOB_* 常量的头部
  * 注释。同样是 `+=`，同样依赖"这一帧刚被 lerp 写过一次 position.y"这个前提，与
  * `createLivingAnimate` 自己那处 `+=` 的安全性论证完全一致（不会跨帧累积）。
+ *
+ * M2 A1（生物动效灵体化）：新增第四参 `state`——两个新消费者都要读它：(1)
+ * `AnimateCtx.adrenaline`（玩家肾上腺素速度线，直读 view.adrenaline，syncCreatures
+ * 已经按 state.adrenalineTicks 写好，这里不重新判定）；(2) `view.organVisualHandle.
+ * update()`（器官灵光的"新生器官"30s 窗口，需要 state.lastEvolution.slot + 用
+ * state.tick/DT 换算出的已过秒数——tick-based 而不是 wall-clock tSec，是刻意的：
+ * 暂停/顿帧/蜕变冻结期间 state.tick 不前进，灵光的新生窗口天然跟着"冻住"，与游戏
+ * 世界本身的冻结语义一致；若改用 tSec，暂停期间灵光会继续悄悄褪色）。evolvedSlot/
+ * evolvedAgeSec 只依赖 state，与具体 view 无关，提到循环外算一次即可。
  */
-export function applyInterp(views: CreatureViews, alpha: number, tSec: number): void {
+export function applyInterp(views: CreatureViews, alpha: number, tSec: number, state: GameState): void {
   const t = Math.max(0, Math.min(1, alpha));
+  const evolvedSlot = state.lastEvolution?.slot ?? null;
+  const evolvedAgeSec = state.lastEvolution ? (state.tick - state.lastEvolution.tick) * DT : Infinity;
   for (const view of views.values()) {
     view.mesh.position.lerpVectors(view.prevPos, view.currPos, t);
     view.mesh.rotation.y = lerpAngle(view.prevYaw, view.currYaw, t);
     const speedHint = dist2d(view.prevPos, view.currPos) / DT;
-    view.animate({ activity: view.activity, locomotion: view.locomotion, speedHint, tSec });
+    view.animate({ activity: view.activity, locomotion: view.locomotion, speedHint, tSec, adrenaline: view.adrenaline });
+    view.organVisualHandle?.update(tSec, evolvedSlot, evolvedAgeSec);
     if (view.isCarried) {
       const bobFreq = CARRY_BOB_FREQ_BASE + speedHint * CARRY_BOB_FREQ_SPEED_SCALE;
       const bobAmp = Math.min(CARRY_BOB_AMP_CAP, speedHint * CARRY_BOB_AMP_SPEED_SCALE);

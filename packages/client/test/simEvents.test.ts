@@ -56,6 +56,26 @@ describe("createSimEventDiffer", () => {
     expect(count).toBeGreaterThanOrEqual(2);
     expect(count).toBeLessThanOrEqual(3);   // 1s / 0.4s ≈ 2.5
   });
+  // M2 A1：进食节奏碎屑——镜像上面的 digging 节流测试，只是间隔改成 1s。
+  it("eating throttles to ~1s cadence", () => {
+    const diff = createSimEventDiffer();
+    const eating = mkState({ playerId: 1, creatures: [mkCreature({ id: 1, activity: "eating" })] });
+    let count = 0;
+    let prev: GameState | null = null;
+    for (let i = 0; i < 40; i++) { count += diff(prev, eating, 0.05).filter(e => e.kind === "eatingTick").length; prev = eating; }
+    expect(count).toBeGreaterThanOrEqual(1);
+    expect(count).toBeLessThanOrEqual(2); // 2s / 1s ≈ 2
+  });
+  it("eating accumulator resets when activity leaves eating (no leftover tick on re-entry)", () => {
+    const diff = createSimEventDiffer();
+    const eating = mkState({ playerId: 1, creatures: [mkCreature({ id: 1, activity: "eating" })] });
+    const idle = mkState({ playerId: 1, creatures: [mkCreature({ id: 1, activity: "idle" })] });
+    diff(null, eating, 0.05);
+    diff(eating, eating, 0.9); // 累积到接近阈值但不越过
+    expect(diff(eating, idle, 0.05).some((e) => e.kind === "eatingTick")).toBe(false);
+    // 重新进食后必须从 0 重新累积，不能沿用离开前攒下的 0.95s。
+    expect(diff(idle, eating, 0.05).some((e) => e.kind === "eatingTick")).toBe(false);
+  });
   it("carcass eaten away emits carcassGone", () => {
     const diff = createSimEventDiffer();
     const a = mkState({ carcasses: [{ id: 7, species: "lingshu", pos: { x: 1, y: 0, z: 1 }, meat: 2 }] });

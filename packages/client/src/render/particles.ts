@@ -124,6 +124,39 @@ const CARCASS_RISE_SPEED_MAX = 1.0;
 const CARCASS_JITTER = 0.3; // 水平抖动幅度（不是径直上升，带一点飘散感）
 const CARCASS_SIZE = 0.3;
 
+// ---- M2 A1（生物动效灵体化）：苓鼠落地噗尘 / 穴獾遁地颤抖尘暴 ----
+// 两者都是"复用挖洞尘土配方"（brief 原话），不新开一套抛洒参数——见下方 spawnDustN，
+// spawnDust（既有 digTick/pitSnare 消费者）与 creatureModels.ts 的 CreatureFx.dust()
+// 现在共用同一个底层函数，只是传入的粒子数不同。
+const CREATURE_DUST_LIFE = DIG_LIFE;
+const CREATURE_DUST_GRAVITY = DIG_GRAVITY;
+const CREATURE_DUST_SPEED_MIN = DIG_SPEED_MIN;
+const CREATURE_DUST_SPEED_MAX = DIG_SPEED_MAX;
+const CREATURE_DUST_CONE_HALF_ANGLE = DIG_CONE_HALF_ANGLE;
+const CREATURE_DUST_SIZE = DIG_SIZE;
+
+// ---- M2 A1：潭狩墨烟尾迹 ----
+const INK_SMOKE_LIFE = 1.2; // "larger size"/"slow rise"，寿命也比事件粒子池的其它效果更长
+const INK_SMOKE_RISE_SPEED = 0.4;
+const INK_SMOKE_DRIFT = 0.15; // 很小的水平漂移，读作"烟"而不是笔直上升的柱子
+const INK_SMOKE_SIZE = 0.45; // 比 DIG_SIZE(0.25) 更大——brief 原话"larger size"
+
+// ---- M2 A1：溪鱼气泡 ----
+const BUBBLE_LIFE = 0.9;
+const BUBBLE_RISE_SPEED_MIN = 0.6;
+const BUBBLE_RISE_SPEED_MAX = 1.0;
+const BUBBLE_DRIFT = 0.08;
+const BUBBLE_SIZE = 0.14; // "tiny"——比 DRINK_SIZE(0.2) 还小一档
+
+// ---- M2 A1：进食节奏碎屑（玩家 activity==="eating" 节流事件，见 simEvents.ts 的 eatingTick）----
+const EAT_CRUMB_COUNT = 4;
+const EAT_CRUMB_LIFE = 0.3;
+const EAT_CRUMB_GRAVITY = -9;
+const EAT_CRUMB_SPEED_MIN = 0.4;
+const EAT_CRUMB_SPEED_MAX = 0.9;
+const EAT_CRUMB_CONE_HALF_ANGLE = (70 * Math.PI) / 180; // 很宽的低抛——"碎屑"往下前方零星掉落，不是喷泉
+const EAT_CRUMB_SIZE = 0.2;
+
 // ---- burrowToggle（尘土环）----
 const BURROW_RING_COUNT = 14;
 const BURROW_RING_LIFE = 0.5;
@@ -240,6 +273,15 @@ export function createParticles(
    * 事件粒子池的任何行为。
    */
   update(frameDt: number, tSec: number, timeOfDay: number): void;
+  /**
+   * M2 A1（生物动效灵体化）：三个供 creatureModels.ts 的 `CreatureFx`（见该文件
+   * setCreatureFx）直接调用的世界坐标特效——不经过 SimEvent diff，因为它们的触发
+   * 时机（跳跃落地相位、持续移动中的节流累积）是渲染层procedural动画自己算出来的，
+   * GameState 从头到尾没有变化可供 differ 比对。
+   */
+  spawnCreatureDust(pos: { x: number; y: number; z: number }, count: number): void;
+  spawnInkSmoke(pos: { x: number; y: number; z: number }): void;
+  spawnBubble(pos: { x: number; y: number; z: number }): void;
 } {
   const sprite = createGlowSprite();
 
@@ -454,10 +496,41 @@ export function createParticles(
     }
   }
 
+  /** 挖洞尘土配方的通用底层——`count` 可变，供 digTick/pitSnare（固定 DIG_COUNT）与 M2 A1 的
+   *  苓鼠落地噗尘/穴獾遁地尘暴（各自不同的 count）共用同一份抛洒参数，不重复一套速度/生命周期常量。 */
+  function spawnDustN(pos: { x: number; y: number; z: number }, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const v = coneVelocity(CREATURE_DUST_SPEED_MIN, CREATURE_DUST_SPEED_MAX, CREATURE_DUST_CONE_HALF_ANGLE);
+      spawn(pos.x, pos.y, pos.z, v.vx, v.vy, v.vz, DUST[0], DUST[1], DUST[2], CREATURE_DUST_LIFE, CREATURE_DUST_SIZE, CREATURE_DUST_GRAVITY);
+    }
+  }
+
   function spawnDust(pos: { x: number; y: number; z: number }): void {
-    for (let i = 0; i < DIG_COUNT; i++) {
-      const v = coneVelocity(DIG_SPEED_MIN, DIG_SPEED_MAX, DIG_CONE_HALF_ANGLE);
-      spawn(pos.x, pos.y, pos.z, v.vx, v.vy, v.vz, DUST[0], DUST[1], DUST[2], DIG_LIFE, DIG_SIZE, DIG_GRAVITY);
+    spawnDustN(pos, DIG_COUNT);
+  }
+
+  /** M2 A1：潭狩尾迹墨烟——单颗深色、缓慢上升、带轻微水平漂移的粒子。 */
+  function spawnInkSmoke(pos: { x: number; y: number; z: number }): void {
+    const angle = Math.random() * Math.PI * 2;
+    const vx = Math.cos(angle) * INK_SMOKE_DRIFT;
+    const vz = Math.sin(angle) * INK_SMOKE_DRIFT;
+    spawn(pos.x, pos.y, pos.z, vx, INK_SMOKE_RISE_SPEED, vz, INK[0], INK[1], INK[2], INK_SMOKE_LIFE, INK_SMOKE_SIZE, 0);
+  }
+
+  /** M2 A1：溪鱼气泡——单颗浅色、缓慢上浮的小粒子。 */
+  function spawnBubble(pos: { x: number; y: number; z: number }): void {
+    const angle = Math.random() * Math.PI * 2;
+    const vx = Math.cos(angle) * BUBBLE_DRIFT;
+    const vz = Math.sin(angle) * BUBBLE_DRIFT;
+    const vy = BUBBLE_RISE_SPEED_MIN + Math.random() * (BUBBLE_RISE_SPEED_MAX - BUBBLE_RISE_SPEED_MIN);
+    spawn(pos.x, pos.y, pos.z, vx, vy, vz, WATER[0], WATER[1], WATER[2], BUBBLE_LIFE, BUBBLE_SIZE, 0);
+  }
+
+  /** M2 A1：进食节奏碎屑——玩家 activity==="eating" 每秒一次的小碎屑，复用 CARCASS 色（同一份"肉/尸体"语义）。 */
+  function spawnEatCrumb(pos: { x: number; y: number; z: number }): void {
+    for (let i = 0; i < EAT_CRUMB_COUNT; i++) {
+      const v = coneVelocity(EAT_CRUMB_SPEED_MIN, EAT_CRUMB_SPEED_MAX, EAT_CRUMB_CONE_HALF_ANGLE);
+      spawn(pos.x, pos.y, pos.z, v.vx, v.vy, v.vz, CARCASS[0], CARCASS[1], CARCASS[2], EAT_CRUMB_LIFE, EAT_CRUMB_SIZE, EAT_CRUMB_GRAVITY);
     }
   }
 
@@ -514,6 +587,10 @@ export function createParticles(
           break;
         case "burrowToggle":
           spawnBurrowRing(e.pos);
+          break;
+        case "eatingTick":
+          // M2 A1：进食节奏碎屑——镜像 digTick 的写法，见 simEvents.ts 该事件的节流注释。
+          spawnEatCrumb(e.pos);
           break;
         case "death":
           // 无独立视觉：simEvents.ts 的 death 分支里，非玩家死亡永远和一条 lethal
@@ -583,5 +660,11 @@ export function createParticles(
     updateKillRings(frameDt);
   }
 
-  return { handle, update };
+  return {
+    handle,
+    update,
+    spawnCreatureDust: spawnDustN,
+    spawnInkSmoke,
+    spawnBubble,
+  };
 }

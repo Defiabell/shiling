@@ -159,6 +159,18 @@ const BURROW_HIGH_HZ = 1500;
 const BURROW_GAIN = 0.28;
 
 // ---------------------------------------------------------------------------
+// M2 A1：苓鼠跳跃落地"嗒"声
+// ---------------------------------------------------------------------------
+// 极轻、偏低音的短促单音——落地跳跃本身没有 SimEvent 可挂（跳跃相位是渲染层
+// procedural 动画自己算出来的，见 creatureModels.ts 的 CreatureFx.hopTick），因此
+// 这是本文件唯一一个不经过 handle()/update() 的 SimEvent 消费路径、而是直接暴露成
+// AudioController 的公开方法（见文件底部 AudioController 接口与 createAudio 的
+// 实现）——main.ts 通过 setCreatureFx() 把它接到 creatureModels.ts。
+const HOP_TICK_FREQ_HZ = 180;
+const HOP_TICK_DECAY_SEC = 0.05;
+const HOP_TICK_GAIN = 0.08; // "soft low tick, quiet"（brief 原话）——比 CHIRP_GAIN(0.07) 略高一点，仍明显比大多数一次性音效轻
+
+// ---------------------------------------------------------------------------
 // M1 B6：溪鱼水花变体 / 穴獾遁地闷响 / 蛰伏入眠 / 觉醒揭示和弦
 // ---------------------------------------------------------------------------
 // 溪鱼水花——复用通用 splash 的"白噪声+lowpass 下滑"配方，音调更高、时长更短
@@ -602,6 +614,11 @@ function playDigTick(g: AudioGraph): void {
   });
 }
 
+/** M2 A1：苓鼠跳跃落地"嗒"声——见文件头常量区注释。 */
+function playHopTickSound(g: AudioGraph): void {
+  playTone(g.ctx, g.sfxGain, { type: "sine", freqStart: HOP_TICK_FREQ_HZ, durationSec: HOP_TICK_DECAY_SEC, peak: HOP_TICK_GAIN });
+}
+
 function playCarcassGone(g: AudioGraph): void {
   playTone(g.ctx, g.sfxGain, {
     type: "sine", freqStart: CARCASS_GONE_FREQ1_START, freqEnd: CARCASS_GONE_FREQ1_END,
@@ -708,6 +725,12 @@ export interface AudioController {
   unlock(): void;
   handle(events: SimEvent[], state: GameState, playerId: number): void;
   update(frameDt: number, ctx: AudioUpdateContext): void;
+  /**
+   * M2 A1：唯一一个不经过 handle()/update() 的公开播放方法——跳跃落地是渲染层
+   * procedural 动画自己算出来的相位边沿，没有 SimEvent 可挂（见文件头常量区注释）。
+   * 由 main.ts 通过 creatureModels.ts 的 `setCreatureFx()` 接到这里。
+   */
+  playHopTick(): void;
   /** M 键——切换静音并持久化到 localStorage，返回切换后的状态。 */
   toggleMute(): boolean;
   /** 静音开关的当前值（不需要 AudioContext 已创建）。 */
@@ -796,6 +819,11 @@ export function createAudio(): AudioController {
           break;
         case "digTick":
           playDigTick(g);
+          break;
+        case "eatingTick":
+          // M2 A1：刻意不响——brief 只要求"进食"这个动作强化视觉侧的节奏碎屑
+          // （particles.ts 消费同一事件），未提及新增音效；这里的 case 只是满足 SimEvent
+          // 穷尽性检查，不是遗漏（若以后要加咀嚼音再回来补）。
           break;
         case "carcassGone":
           playCarcassGone(g);
@@ -965,10 +993,16 @@ export function createAudio(): AudioController {
     return muted;
   }
 
+  function playHopTick(): void {
+    if (!graph) return;
+    playHopTickSound(graph);
+  }
+
   return {
     unlock,
     handle,
     update,
+    playHopTick,
     toggleMute,
     isMuted: () => muted,
     getMasterGainValue: () => (graph ? graph.masterGain.gain.value : 0),

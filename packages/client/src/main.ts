@@ -3,7 +3,7 @@ import { createSim, DT, dist2d, getModifiers, getPlayer, isDormancyEligible, mou
 import { QINGQIU_GRAYBOX, SPECIES, TUNING, type EssenceType } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
-import { setModelLibrary } from "./render/creatureModels.js";
+import { setCreatureFx, setModelLibrary } from "./render/creatureModels.js";
 import { loadModelLibrary } from "./render/modelLibrary.js";
 import { setupAtmosphere, updateAtmosphere, mountPaperOverlay } from "./render/atmosphere.js";
 import { createSimEventDiffer } from "./render/simEvents.js";
@@ -132,6 +132,17 @@ const killMarker = createKillMarker(camera);
 // no-op（见 audio.ts 头部注释），真正的 AudioContext 创建/resume 延迟到下方
 // showTitle() 的 onEnter 回调（唯一的真实用户手势）才发生。
 const audio = createAudio();
+// M2 A1（生物动效灵体化）：把 particles/audio 接进 creatureModels.ts 的 CreatureFx 单例——
+// 见该文件 setCreatureFx 的头部注释（同 setModelLibrary 同一"模块级单例+setter"模式）。
+// 必须在这里调用一次，且要早于任何 buildCreatureModel() 调用（首次调用点是下方
+// modelLibraryPromise.then() 里的 syncCreatures，在文件更靠后的位置）——否则那之前
+// 建出的模型会绑死 NOOP_CREATURE_FX（模型只在构造时读一次闭包变量，之后不会重新读取）。
+setCreatureFx({
+  dust: (x, y, z, count) => particles.spawnCreatureDust({ x, y, z }, count),
+  inkSmoke: (x, y, z) => particles.spawnInkSmoke({ x, y, z }),
+  bubble: (x, y, z) => particles.spawnBubble({ x, y, z }),
+  hopTick: () => audio.playHopTick(),
+});
 // M1 B5：器官面板，与 hud/minimap 同层的新增 UI 消费者（evolutionFx 创建于文件更靠前的
 // 位置——见 isPlayerBurrowed() 后那段注释，KeyE 拦截器必须先于 input.ts 注册）。
 const organPanel = createOrganPanel();
@@ -696,7 +707,7 @@ renderer.setAnimationLoop(() => {
   // reuses this same tSec, hence hoisting it out here instead of computing
   // it inline in either call.
   const tSec = now / 1000;
-  applyInterp(views, acc / DT, tSec);
+  applyInterp(views, acc / DT, tSec, sim.state);
   updateDigSpots(terrainGroup, sim.terrain);
   updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest, sim.state.timeOfDay);
   updateWater(tSec);
