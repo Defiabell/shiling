@@ -6,7 +6,7 @@ import { SLOT_LABELS } from "./organVisuals.js";
 /**
  * 蜕变演出（M1 B5，见 2026-08-10-m1-evolution-plan.md B5 一节）：V 触发蛰伏 → 缓黑 +
  * 「蛰伏中……」呼吸文字 + 漂浮星点 → 蛰伏结束若真的开了奖（lastEvolution.tick 变化）→
- * 持黑 0.5s → 揭示卡（器官名书法体大字 + 志怪词条 + 槎位 + 替换说明）→ E 关闭 → 带一次
+ * 持黑 0.5s → 揭示卡（器官名书法体大字 + 志怪词条 + 槽位 + 替换说明）→ E 关闭 → 带一次
  * 暖光脉冲淡回游戏。全程由 update(state, now) 内部的一个五态机驱动，纯读 GameState，
  * 从不 mutate 任何 sim 字段。
  *
@@ -67,7 +67,10 @@ export function buildCeremonyContent(evo: { organId: string; slot: OrganSlot; re
 
 type Phase = "idle" | "dormant" | "holdBlack" | "ceremony" | "fadeOut";
 
-const HOLD_BLACK_MS = 500;
+// 导出（M1 B6）：audio.ts 的觉醒和弦要"当揭示卡出现时"响起，而不是"开奖那一刻"——两者
+// 之间正是这段持黑停顿。与其在 audio.ts 里另开一个数值相同但独立声明的常量（容易改一处
+// 忘另一处，读起来也看不出两者其实在描述同一段时间），直接导出复用同一个数字。
+export const HOLD_BLACK_MS = 500;
 const FADE_OUT_MS = 700;
 const FADE_OPACITY = 0.97; // "近黑"而非纯黑（plan 原话），也顺带让 HUD 在这层遮罩下彻底不可读
 

@@ -1,6 +1,8 @@
 import { dist2d, type GameState, type Locomotion, type Vec3 } from "@shiling/sim";
 import { SPECIES } from "@shiling/content";
 import type { SimEvent } from "./render/simEvents.js";
+import { interpolateDayNight } from "./render/palette.js";
+import { HOLD_BLACK_MS } from "./render/evolutionFx.js";
 
 /**
  * 程序化 Web Audio 音效（M1 postfix N3）——游戏此前完全无声，这是补上的第一层声音。
@@ -61,6 +63,24 @@ import type { SimEvent } from "./render/simEvents.js";
  * 既有三个消费者相同的判据、不额外收紧（收紧需要往命中事件里塞攻击者 id 之类的
  * 新字段，牵动 simEvents.ts 的契约），把它当作这一批次接受的已知简化，留给以后
  * 真的在实机 playtest 里被注意到"背景战斗也会响起奖励音"时再回来加攻击者归属。
+ *
+ * **M1 B6 追加（进化系统收尾音效＋昼夜氛围联动）**：
+ * - 蛰伏入眠（`playDormancyDrone`）＋蛰伏中的呼吸声长层（`dormancyBreathGain`，独立持续
+ *   源，同 windGain/swimGain 惯例）＋环境层 duck（`computeAmbientTarget`）：三者都是边沿/
+ *   状态跟随，不吃任何 SimEvent——蛰伏的开始/结束不产出离散事件，只能在 `update()` 里对比
+ *   逐帧传入的 `ctx.dormant` 才能检测。
+ * - 觉醒揭示和弦（`playAwakenChord`）：hook 用 `ctx.lastEvolutionTick` 边沿（`state.
+ *   lastEvolution?.tick` 的变化），与 evolutionFx.ts 判断"是否真的开奖了"同一个字段——
+ *   但故意延后 `HOLD_BLACK_MS`（从该文件导入，唯一数值来源）才响，让和弦大致落在揭示卡
+ *   淡入的那一刻，而不是蛰伏刚结束、屏幕还是纯黑的那一帧。
+ * - 溪鱼水花变体（`playFishSplash`）／穴獾遁地闷响（`playBurrowVanish`）：分别挂在既有
+ *   `"hit"` 事件（按受害者 species 是否为 xiyu 追加判断，见 `findVictimSpecies`）与新增的
+ *   `"vanish"` 事件（`simEvents.ts` 的 hiddenTicks 0→>0 边沿，见该文件对应注释）上，与既有
+ *   splash/digTick 两个消费者同一套"读 events[]，按 kind 分支"写法。
+ * - 昼夜氛围联动：虫鸣间隔（`nextChirpDelaySec` 新增的 `nightAmount` 参数）与风声基准音量
+ *   （`computeWindBaseGain`）都按 `interpolateDayNight(ctx.timeOfDay).nightAmount` 缩放——
+ *   复用 palette.ts 现成的昼夜插值，不在这个文件里另开一套"现在算不算晚上"的阈值判断
+ *   （与 particles.ts 的 `fireflyGainFor` 同一惯例）。
  */
 
 // ---------------------------------------------------------------------------
@@ -137,6 +157,58 @@ const BURROW_SWEEP_DURATION_SEC = 0.28;
 const BURROW_LOW_HZ = 220;
 const BURROW_HIGH_HZ = 1500;
 const BURROW_GAIN = 0.28;
+
+// ---------------------------------------------------------------------------
+// M1 B6：溪鱼水花变体 / 穴獾遁地闷响 / 蛰伏入眠 / 觉醒揭示和弦
+// ---------------------------------------------------------------------------
+// 溪鱼水花——复用通用 splash 的"白噪声+lowpass 下滑"配方，音调更高、时长更短
+// （小鱼的水花，不是玩家整个人下水那种量级）。
+const FISH_SPLASH_START_HZ = SPLASH_START_HZ * 1.5;
+const FISH_SPLASH_END_HZ = SPLASH_END_HZ * 1.5;
+const FISH_SPLASH_DURATION_SEC = 0.16;
+const FISH_SPLASH_GAIN = 0.2;
+
+// 穴獾遁地——"existing digTick recipe ×3 quick + lowpass down sweep"（brief 原话）：
+// 三连快速刮擦直接复用 DIGTICK_* 三个常量（同一份配方，只是错开时间连播三次），
+// 尾部再叠一段更闷、更低的下滑噪声，读作"一下子钻没了"。
+const BURROW_VANISH_SCRAPE_COUNT = 3;
+const BURROW_VANISH_SCRAPE_GAP_SEC = 0.06;
+const BURROW_VANISH_SWEEP_START_HZ = 500;
+const BURROW_VANISH_SWEEP_END_HZ = 90;
+const BURROW_VANISH_SWEEP_DURATION_SEC = 0.32;
+const BURROW_VANISH_SWEEP_GAIN = 0.22;
+
+// 蛰伏入眠——下滑纯音，soft attack，2 秒里从 120Hz 沉到 50Hz。
+const DORMANCY_DRONE_START_HZ = 120;
+const DORMANCY_DRONE_END_HZ = 50;
+const DORMANCY_DRONE_DURATION_SEC = 2;
+const DORMANCY_DRONE_ATTACK_SEC = 0.3; // "soft"——比其余一次性音效的默认 attack（几毫秒）明显更慢
+const DORMANCY_DRONE_GAIN = 0.2;
+
+// 蛰伏中的呼吸声长层——极慢噪声 swell，~0.25Hz（4 秒一个完整涨落周期）。
+const DORMANCY_BREATH_LOWPASS_HZ = 260;
+const DORMANCY_BREATH_FREQ_HZ = 0.25;
+const DORMANCY_BREATH_GAIN = 0.035; // 比 WIND_BASE_GAIN(0.05) 更轻——"very quiet"（brief 原话）
+
+// 环境层 duck（蛰伏中）——"duck 不是 mute"，与 PAUSE_DUCK_GAIN 同一设计语言，只是这里
+// 只 duck ambientGain（风声/虫鸣/呼吸），不动 sfxGain/masterGain。
+const DORMANCY_AMBIENT_DUCK_MULT = 0.55;
+
+// 觉醒揭示和弦——C 大调五声音阶（与既有 REWARD_CHIME_NOTES 同一套音阶体系）里升序的三个音
+// C5/E5/G5，轻柔错开起奏（"rising"三音，不是同时砸下去的柱式和弦）。
+const AWAKEN_CHORD_NOTES: readonly [number, number, number] = [523.25, 659.25, 783.99];
+const AWAKEN_CHORD_NOTE_SEC = 0.55;
+const AWAKEN_CHORD_STAGGER_SEC = 0.16;
+const AWAKEN_CHORD_ATTACK_SEC = 0.05;
+const AWAKEN_CHORD_GAIN = 0.14;
+/** 觉醒和弦相对"开奖那一刻"（lastEvolution.tick 变化）的延后——对齐 evolutionFx.ts 的持黑
+ *  停顿，让和弦落在揭示卡真正淡入的那一帧，见文件头 M1 B6 段落。 */
+const AWAKEN_CHORD_DELAY_SEC = HOLD_BLACK_MS / 1000;
+
+// 昼夜氛围联动——虫鸣/风声都按 nightAmount∈[0,1] 缩放，公式与既有 fireflyGainFor 同一套
+// "复用 palette.ts 的插值结果，不另开阈值判断"惯例。
+const NIGHT_CHIRP_RATE_MULT_MIN = 0.6; // 满夜时虫鸣间隔压到白天基准的 60%（更频繁）
+const NIGHT_WIND_GAIN_MULT_MIN = 0.55; // 满夜时风声基准音量降到白天基准的 55%（更静、更紧张）
 
 // ---------------------------------------------------------------------------
 // 持续层：环境风声 / 游泳 / 虫鸣 / 心跳 / 饮水 tick / 死亡淡出
@@ -237,9 +309,42 @@ export function computeHeartbeatGainScale(hpRatio: number): number {
   return HEARTBEAT_MIN_SCALE + (1 - HEARTBEAT_MIN_SCALE) * t;
 }
 
-/** 下一次虫鸣的等待秒数，均匀分布在 [CHIRP_MIN_SEC, CHIRP_MAX_SEC)。 */
-export function nextChirpDelaySec(rng: () => number = Math.random): number {
-  return CHIRP_MIN_SEC + rng() * (CHIRP_MAX_SEC - CHIRP_MIN_SEC);
+/**
+ * 下一次虫鸣的等待秒数，均匀分布在 [CHIRP_MIN_SEC, CHIRP_MAX_SEC) 之后再按 `nightAmount`
+ * 压缩（M1 B6，昼夜氛围联动）：`nightAmount` 默认 0（白天基准，向后兼容——原有调用点/
+ * 测试都只传一个参数）；越接近 1（满夜）间隔越短，下限是基准的 NIGHT_CHIRP_RATE_MULT_MIN
+ * 倍，不会无限提速。
+ */
+export function nextChirpDelaySec(rng: () => number = Math.random, nightAmount = 0): number {
+  const clamped = Math.min(1, Math.max(0, nightAmount));
+  const mult = 1 - clamped * (1 - NIGHT_CHIRP_RATE_MULT_MIN);
+  return (CHIRP_MIN_SEC + rng() * (CHIRP_MAX_SEC - CHIRP_MIN_SEC)) * mult;
+}
+
+/**
+ * 环境风声的基准音量（M1 B6）——按 `nightAmount` 从 WIND_BASE_GAIN 降到它的
+ * NIGHT_WIND_GAIN_MULT_MIN 倍，update() 里的 LFO 呼吸值仍叠加在这个基准之上（呼吸深度
+ * WIND_LFO_DEPTH 本身不随昼夜变化，只有基准线降低——夜里更静，不是"呼吸幅度更小"）。
+ */
+export function computeWindBaseGain(nightAmount: number): number {
+  const clamped = Math.min(1, Math.max(0, nightAmount));
+  return WIND_BASE_GAIN * (1 - clamped * (1 - NIGHT_WIND_GAIN_MULT_MIN));
+}
+
+/** 蛰伏中的环境层（风声/虫鸣/呼吸，均挂在 ambientGain 下）目标音量——"duck 不是 mute"，同
+ *  computeMasterTarget 的设计语言，只是这里 duck 的是 ambientGain 而不是 masterGain。 */
+export function computeAmbientTarget(dormant: boolean): number {
+  return dormant ? AMBIENT_BUS_GAIN * DORMANCY_AMBIENT_DUCK_MULT : AMBIENT_BUS_GAIN;
+}
+
+/**
+ * "这次命中的受害者是不是溪鱼"（M1 B6，溪鱼水花变体的判据）：非致命命中时受害者仍在
+ * state.creatures 里；致命命中时非玩家受害者已被 killCreature 移进 state.carcasses（同一
+ * tick 内完成，见 needs.ts 的 killCreature）——两处都查一遍，覆盖两种情形。找不到（理论上
+ * 不会发生）时返回 undefined，调用方按"不是鱼"处理。
+ */
+export function findVictimSpecies(state: GameState, id: number): string | undefined {
+  return state.creatures.find((c) => c.id === id)?.species ?? state.carcasses.find((c) => c.id === id)?.species;
 }
 
 /**
@@ -297,6 +402,9 @@ interface NoiseBurstOptions {
   /** 传入时在 filter 之后串一个 WaveShaperNode——用于"受击方是玩家自己"的轻微失真。 */
   distortionCurve?: Float32Array<ArrayBuffer>;
   rng?: () => number;
+  /** M1 B6：镜像 ToneOptions 的同名字段——穴獾遁地闷响需要把 digTick recipe 连播三次、
+   *  彼此错开一点点才听得出"连续刮擦"而不是一次更响的突发，见 playBurrowVanish。 */
+  startDelaySec?: number;
 }
 
 /**
@@ -306,7 +414,7 @@ interface NoiseBurstOptions {
  * 可闻重复感（对<0.5s 的突发几乎不花额外成本）。
  */
 function playNoiseBurst(ctx: AudioContext, destination: AudioNode, buffer: AudioBuffer, opts: NoiseBurstOptions): void {
-  const t0 = ctx.currentTime;
+  const t0 = ctx.currentTime + (opts.startDelaySec ?? 0);
   const src = ctx.createBufferSource();
   src.buffer = buffer;
 
@@ -361,6 +469,8 @@ interface AudioGraph {
   windGain: GainNode;
   /** 游泳环境音的独立 Gain——update() 里按 locomotion==="swim" 平滑 ramp。 */
   swimGain: GainNode;
+  /** M1 B6：蛰伏中的呼吸声长层，独立 Gain——update() 里按 state.dormancy 与 0.25Hz swell 驱动。 */
+  dormancyBreathGain: GainNode;
 }
 
 function buildGraph(ctx: AudioContext, muted: boolean): AudioGraph {
@@ -412,7 +522,20 @@ function buildGraph(ctx: AudioContext, muted: boolean): AudioGraph {
   swimSrc.connect(swimFilter).connect(swimGain).connect(ambientGain);
   swimSrc.start();
 
-  return { ctx, masterGain, sfxGain, ambientGain, whiteBuffer, brownBuffer, windGain, swimGain };
+  // 蛰伏呼吸——同 windSrc/swimSrc 一样永久存活循环源，音量常态为 0，只在 update() 里
+  // state.dormancy!==null 时被驱动出一段极慢的 swell（M1 B6）。
+  const dormancyBreathSrc = ctx.createBufferSource();
+  dormancyBreathSrc.buffer = brownBuffer;
+  dormancyBreathSrc.loop = true;
+  const dormancyBreathFilter = ctx.createBiquadFilter();
+  dormancyBreathFilter.type = "lowpass";
+  dormancyBreathFilter.frequency.value = DORMANCY_BREATH_LOWPASS_HZ;
+  const dormancyBreathGain = ctx.createGain();
+  dormancyBreathGain.gain.value = 0;
+  dormancyBreathSrc.connect(dormancyBreathFilter).connect(dormancyBreathGain).connect(ambientGain);
+  dormancyBreathSrc.start();
+
+  return { ctx, masterGain, sfxGain, ambientGain, whiteBuffer, brownBuffer, windGain, swimGain, dormancyBreathGain };
 }
 
 // ---------------------------------------------------------------------------
@@ -483,6 +606,48 @@ function playBurrowToggle(g: AudioGraph, entered: boolean): void {
   });
 }
 
+/** 溪鱼水花变体（M1 B6）——playSplash 的高音调、短时长版本，见文件头常量注释。 */
+function playFishSplash(g: AudioGraph): void {
+  playNoiseBurst(g.ctx, g.sfxGain, g.whiteBuffer, {
+    filterType: "lowpass", freqStart: FISH_SPLASH_START_HZ, freqEnd: FISH_SPLASH_END_HZ,
+    durationSec: FISH_SPLASH_DURATION_SEC, peak: FISH_SPLASH_GAIN, attackSec: 0.008,
+  });
+}
+
+/** 穴獾遁地闷响（M1 B6）——digTick 配方连播三次（错开 BURROW_VANISH_SCRAPE_GAP_SEC）
+ *  再叠一段更闷更低的下滑噪声，见文件头常量注释。 */
+function playBurrowVanish(g: AudioGraph): void {
+  for (let i = 0; i < BURROW_VANISH_SCRAPE_COUNT; i++) {
+    playNoiseBurst(g.ctx, g.sfxGain, g.brownBuffer, {
+      filterType: "lowpass", freqStart: DIGTICK_LOWPASS_HZ, durationSec: DIGTICK_DURATION_SEC,
+      peak: DIGTICK_GAIN, attackSec: 0.002, startDelaySec: i * BURROW_VANISH_SCRAPE_GAP_SEC,
+    });
+  }
+  playNoiseBurst(g.ctx, g.sfxGain, g.brownBuffer, {
+    filterType: "lowpass", freqStart: BURROW_VANISH_SWEEP_START_HZ, freqEnd: BURROW_VANISH_SWEEP_END_HZ,
+    durationSec: BURROW_VANISH_SWEEP_DURATION_SEC, peak: BURROW_VANISH_SWEEP_GAIN, attackSec: 0.02,
+    startDelaySec: BURROW_VANISH_SCRAPE_COUNT * BURROW_VANISH_SCRAPE_GAP_SEC,
+  });
+}
+
+/** 蛰伏入眠（M1 B6）——2 秒的下滑纯音，soft attack，见文件头常量注释。 */
+function playDormancyDrone(g: AudioGraph): void {
+  playTone(g.ctx, g.sfxGain, {
+    type: "sine", freqStart: DORMANCY_DRONE_START_HZ, freqEnd: DORMANCY_DRONE_END_HZ,
+    durationSec: DORMANCY_DRONE_DURATION_SEC, peak: DORMANCY_DRONE_GAIN, attackSec: DORMANCY_DRONE_ATTACK_SEC,
+  });
+}
+
+/** 觉醒揭示和弦（M1 B6）——五声音阶三音升序错开起奏，见文件头常量注释。 */
+function playAwakenChord(g: AudioGraph): void {
+  AWAKEN_CHORD_NOTES.forEach((freq, i) => {
+    playTone(g.ctx, g.sfxGain, {
+      type: "sine", freqStart: freq, durationSec: AWAKEN_CHORD_NOTE_SEC, peak: AWAKEN_CHORD_GAIN,
+      attackSec: AWAKEN_CHORD_ATTACK_SEC, startDelaySec: AWAKEN_CHORD_DELAY_SEC + i * AWAKEN_CHORD_STAGGER_SEC,
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 公开类型
 // ---------------------------------------------------------------------------
@@ -497,6 +662,12 @@ export interface AudioUpdateContext {
   drinking: boolean;
   paused: boolean;
   started: boolean;
+  /** M1 B6：state.dormancy!==null 直传——驱动入眠边沿/呼吸声长层/环境层 duck，见文件头 M1 B6 段落。 */
+  dormant: boolean;
+  /** M1 B6：state.lastEvolution?.tick ?? null——与 evolutionFx.ts 同一个"读后不清除，按 tick 判新"字段，驱动觉醒和弦边沿。 */
+  lastEvolutionTick: number | null;
+  /** M1 B6：state.timeOfDay 直传——驱动昼夜氛围联动（虫鸣/风声），见文件头 M1 B6 段落。 */
+  timeOfDay: number;
 }
 
 export interface AudioController {
@@ -538,6 +709,14 @@ export function createAudio(): AudioController {
   let heartbeatPhaseSec = 0;
   let drinkTickTimer = 0;
   let deathFadePlayed = false;
+  // M1 B6：蛰伏/觉醒边沿检测——同 deathFadePlayed 的写法，只在 `started` 门闩之后才被
+  // update() 触碰（见该函数早退分支），标题画面/音频未解锁期间不会误判"边沿"。
+  let wasDormant = false;
+  let dormancyBreathPhaseSec = 0;
+  // 初值 null（不是 -1）：state.lastEvolution 从未开奖过时恰好也是 null，两者语义对齐，
+  // 第一次真正的开奖（tick 变成一个具体数字）才会被判定为"边沿"，不会在游戏刚开始时
+  // 误触发。
+  let lastEvolutionTickSeen: number | null = null;
 
   function applyMasterTarget(g: AudioGraph): void {
     const target = computeMasterTarget(muted, lastPaused);
@@ -578,6 +757,9 @@ export function createAudio(): AudioController {
         case "hit":
           if (e.id === playerId) playVictimHit(g);
           else if (isPlayerCausedHit(state, playerId, e.pos, PLAYER_ATTACK_RANGE)) playAttackHit(g, e.lethal);
+          // M1 B6：溪鱼水花变体——独立于上面两支判据（不管这一击是不是玩家造成的），
+          // 只要受害者是溪鱼就叠一层水花，见 findVictimSpecies 头部注释。
+          if (findVictimSpecies(state, e.id) === "xiyu") playFishSplash(g);
           break;
         case "splash":
           playSplash(g);
@@ -590,6 +772,10 @@ export function createAudio(): AudioController {
           break;
         case "burrowToggle":
           playBurrowToggle(g, e.entered);
+          break;
+        case "vanish":
+          // M1 B6：穴獾遁地隐匿——见 simEvents.ts 的 hiddenTicks 0→>0 判据注释。
+          playBurrowVanish(g);
           break;
         case "drink":
           // 刻意忽略：饮水音由 update() 里的 ctx.drinking 门控循环驱动，不吃这个边沿
@@ -616,6 +802,10 @@ export function createAudio(): AudioController {
     const g = graph;
     applyMasterTarget(g);
     if (!uctx.started) return;
+
+    // M1 B6：昼夜氛围联动的唯一插值入口——风声基准/虫鸣间隔都从这一个数字派生，
+    // 不在本文件里另开一套"现在算不算晚上"的阈值判断（见文件头 M1 B6 段落）。
+    const nightAmount = interpolateDayNight(uctx.timeOfDay).nightAmount;
 
     // ---- 死亡边沿 + 心跳（互斥：死亡时心跳停摆，只留一声低沉淡出） ----
     const dead = uctx.playerHp <= 0;
@@ -659,17 +849,47 @@ export function createAudio(): AudioController {
       SWIM_RAMP_TIME_CONSTANT,
     );
 
-    // ---- 环境风声呼吸：极慢 LFO，逐帧直接写值（周期~17s，60fps 阶梯量化听不出来） ----
+    // ---- 蛰伏入眠边沿 + 呼吸声长层 + 环境层 duck（M1 B6） ----
+    // 入眠边沿只可能发生在 sim 真正 step 过的那一帧（V 触发蛰伏需要 sim.step 消费
+    // input.dormant），而 sim.step 只在 !paused 时才跑（见 main.ts 渲染循环）——因此
+    // 这里不需要像虫鸣那样额外套一层 `!uctx.paused` 才安全，边沿本身已经隐含了这个前提。
+    if (uctx.dormant && !wasDormant) {
+      playDormancyDrone(g);
+    }
+    // 呼吸相位持续推进（不在退出蛰伏时清零，同 windPhaseSec 的写法——都是"从不重置的
+    // 连续相位"，不是"倒计时累加器"，重置与否不影响下一次进入蛰伏时听起来是否自然）。
+    dormancyBreathPhaseSec += frameDt;
+    const breathSwell = uctx.dormant
+      ? DORMANCY_BREATH_GAIN * (0.5 + 0.5 * Math.sin(dormancyBreathPhaseSec * DORMANCY_BREATH_FREQ_HZ * Math.PI * 2))
+      : 0;
+    // setTargetAtTime（不是直接写 .value）：呼吸声在蛰伏边沿需要平滑起落，避免非蛰伏
+    // 状态下这层突然从 0 跳变或跳回 0 产生咔哒声；GAIN_RAMP_TIME_CONSTANT(0.12s) 远小于
+    // 呼吸周期（4s），不会把 swell 本身削平。
+    g.dormancyBreathGain.gain.setTargetAtTime(breathSwell, g.ctx.currentTime, GAIN_RAMP_TIME_CONSTANT);
+    g.ambientGain.gain.setTargetAtTime(computeAmbientTarget(uctx.dormant), g.ctx.currentTime, GAIN_RAMP_TIME_CONSTANT);
+    wasDormant = uctx.dormant;
+
+    // ---- 觉醒揭示和弦边沿（M1 B6）：见文件头常量区 AWAKEN_CHORD_DELAY_SEC 的注释——
+    // playAwakenChord 内部已经把延后叠进每个音符的 startDelaySec，这里只管边沿检测
+    // 本身，不需要额外 setTimeout。 ----
+    if (uctx.lastEvolutionTick !== null && uctx.lastEvolutionTick !== lastEvolutionTickSeen) {
+      lastEvolutionTickSeen = uctx.lastEvolutionTick;
+      playAwakenChord(g);
+    }
+
+    // ---- 环境风声呼吸：极慢 LFO，逐帧直接写值（周期~17s，60fps 阶梯量化听不出来）；
+    // 基准音量按 nightAmount 缩放（M1 B6，昼夜氛围联动——夜里更静更紧张）。 ----
     windPhaseSec += frameDt;
-    g.windGain.gain.value = WIND_BASE_GAIN + Math.sin(windPhaseSec * WIND_LFO_FREQ_HZ * Math.PI * 2) * WIND_LFO_DEPTH;
+    g.windGain.gain.value = computeWindBaseGain(nightAmount) + Math.sin(windPhaseSec * WIND_LFO_FREQ_HZ * Math.PI * 2) * WIND_LFO_DEPTH;
 
     // ---- 虫鸣：只在 !paused 时推进倒计时——暂停="世界冻结"，不该冒出新的离散事件
     // （与心跳/风声的选择不同：这两个是持续存在的氛围底噪，虫鸣是主动触发的新事件，
-    // brief 原文明确写了 "only when !paused && started" 挂在这一条上）。
+    // brief 原文明确写了 "only when !paused && started" 挂在这一条上）。间隔按
+    // nightAmount 压缩（M1 B6）——夜里虫鸣更频繁。
     if (!uctx.paused) {
       chirpTimer -= frameDt;
       if (chirpTimer <= 0) {
-        chirpTimer = nextChirpDelaySec();
+        chirpTimer = nextChirpDelaySec(Math.random, nightAmount);
         const freq = CHIRP_FREQ_MIN_HZ + Math.random() * (CHIRP_FREQ_MAX_HZ - CHIRP_FREQ_MIN_HZ);
         playTone(g.ctx, g.ambientGain, { type: "sine", freqStart: freq, durationSec: CHIRP_DURATION_SEC, peak: CHIRP_GAIN, attackSec: 0.01 });
       }

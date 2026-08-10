@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createSim, DT, dist2d, getPlayer, isDormancyEligible, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
+import { createSim, DT, dist2d, getModifiers, getPlayer, isDormancyEligible, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING, type EssenceType } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
@@ -474,6 +474,14 @@ if (import.meta.env.DEV) {
     debugSetTimeOfDay: (t: number) => {
       sim.state.timeOfDay = t;
     },
+    // M1 B6（端到端联调验证）：器官效果数值直接 probe——getModifiers 是 @shiling/sim
+    // 唯一的效果聚合入口（movement/eating/digging/ai 内部消费的同一份函数，见 sim/src/
+    // organs.ts 头部 JSDoc），这里原样转发返回值，不重新实现任何聚合逻辑。存在的意义：
+    // 蛰伏开奖是随机的（roll 用注入 rng，但 client 边界的种子来自 Date.now()，不可控），
+    // 外部 Playwright 脚本没法预先断言"会开出哪个器官"，只能开奖之后读 getOrgans() 看
+    // 实际结果，再用这个 probe 验证"这份效果数值确实按 temper 缩放公式生效"——比反过来
+    // 靠"实测移动速度differences"这种带渲染帧率/网络噪声的间接验证更精确、更少 flaky。
+    getModifiers: () => getModifiers(sim.state),
   };
 }
 
@@ -621,6 +629,12 @@ renderer.setAnimationLoop(() => {
     drinking: player.activity === "drinking",
     paused,
     started,
+    // M1 B6：三个新字段都是 sim.state 的直传（同 computeHudContext 的 dormant/timeOfDay
+    // 读法一致），audio.ts 内部自己做边沿检测/插值，main.ts 这里不做任何派生计算——
+    // 与本文件其余"只搬运，不决策"的既有惯例一致。
+    dormant: sim.state.dormancy !== null,
+    lastEvolutionTick: sim.state.lastEvolution?.tick ?? null,
+    timeOfDay: sim.state.timeOfDay,
   });
   // Post-fix-6（code review 抓到的真实 bug）：screenFx.update() 必须同样按
   // `!paused` 冻结——它内部用真实 frameDt 推进震屏指数衰减 + 冲刺 FOV 弹簧，并

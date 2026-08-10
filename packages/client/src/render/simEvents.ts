@@ -12,7 +12,8 @@ export type SimEvent =
   | { kind: "digTick"; pos: Vec3 } // 玩家 activity==="digging"（每 0.4s 节流）
   | { kind: "drink"; pos: Vec3 } // 玩家 activity 变为 "drinking" 边沿
   | { kind: "carcassGone"; id: number; pos: Vec3 } // 尸体消失（吃光）
-  | { kind: "burrowToggle"; entered: boolean; pos: Vec3 }; // 玩家 burrowId null↔非 null
+  | { kind: "burrowToggle"; entered: boolean; pos: Vec3 } // 玩家 burrowId null↔非 null
+  | { kind: "vanish"; id: number; pos: Vec3 }; // hiddenTicks 0→>0（M1 B6，目前只有穴獾遁地会命中）
 
 const DIG_TICK_INTERVAL_SEC = 0.4;
 
@@ -81,6 +82,14 @@ export function createSimEventDiffer(): (prev: GameState | null, curr: GameState
       }
       if (isSplashTransition(p.locomotion, c.locomotion)) {
         events.push({ kind: "splash", id, pos: { ...c.pos } });
+      }
+      // M1 B6：hiddenTicks 0→>0——与 creatureView.ts 的可见性判定同一字段（见该文件
+      // `view.mesh.visible = ... && c.hiddenTicks === 0`），这里只是把同一次视觉消失
+      // 翻译成一个可供 audio.ts 消费的离散事件。隐匿的生物仍留在 state.creatures 里
+      // （不像死亡那样被移除），所以走的是这条"prev/curr 都存在"的分支，不是下面的
+      // death 分支。
+      if (p.hiddenTicks === 0 && c.hiddenTicks > 0) {
+        events.push({ kind: "vanish", id, pos: { ...c.pos } });
       }
     }
 

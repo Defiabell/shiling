@@ -58,4 +58,18 @@ describe("createSimEventDiffer", () => {
     const b = mkState({});
     expect(diff(a, b, 0.05)).toContainEqual(expect.objectContaining({ kind: "carcassGone", id: 7 }));
   });
+  // M1 B6：hiddenTicks 0→>0（穴獾遁地隐匿开始）emits vanish once.
+  it("hiddenTicks 0→>0 emits vanish", () => {
+    const diff = createSimEventDiffer();
+    const a = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 0 })] });
+    const b = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 80 })] });
+    expect(diff(a, b, 0.05)).toContainEqual(expect.objectContaining({ kind: "vanish", id: 1 }));
+    expect(diff(b, b, 0.05)).toEqual([]); // 持续隐匿中不重复触发
+  });
+  it("hiddenTicks counting down to 0 (reappear) does not emit vanish", () => {
+    const diff = createSimEventDiffer();
+    const a = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 1 })] });
+    const b = mkState({ creatures: [mkCreature({ id: 1, species: "xuehuan", hiddenTicks: 0 })] });
+    expect(diff(a, b, 0.05).some((e) => e.kind === "vanish")).toBe(false);
+  });
 });

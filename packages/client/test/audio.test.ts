@@ -6,14 +6,26 @@ import {
   HEARTBEAT_HP_RATIO_THRESHOLD,
   MASTER_BASE_GAIN,
   PAUSE_DUCK_GAIN,
+  computeAmbientTarget,
   computeHeartbeatGainScale,
   computeMasterTarget,
+  computeWindBaseGain,
   createAudio,
+  findVictimSpecies,
   generateBrownNoiseSamples,
   generateWhiteNoiseSamples,
   isPlayerCausedHit,
   nextChirpDelaySec,
 } from "../src/audio.js";
+
+/** M1 B6：update() 除既有字段外新增的三个字段（dormant/lastEvolutionTick/timeOfDay）
+ *  的"日间、未蛰伏、从未开奖过"基线值——大多数既有测试场景不关心这三者，集中在这里
+ *  定义一次，逐条 spread 覆盖需要的字段，不在每个测试里重复敲三行。 */
+const BASE_UPDATE_CTX = {
+  playerHunger: 80, playerThirst: 80, playerHp: 60, maxHp: 60,
+  locomotion: "walk" as const, drinking: false, paused: false, started: true,
+  dormant: false, lastEvolutionTick: null, timeOfDay: 0.25,
+};
 
 /** 与 test/simEvents.test.ts 同一套最小 Creature/GameState 字面量惯例。 */
 function mkCreature(over: Partial<Creature>): Creature {
@@ -95,6 +107,49 @@ describe("nextChirpDelaySec", () => {
       expect(v).toBeLessThan(CHIRP_MAX_SEC);
     }
   });
+
+  // M1 B6：昼夜氛围联动——nightAmount 默认 0（向后兼容上面三条既有测试的调用惯例）。
+  describe("nightAmount (M1 B6)", () => {
+    it("nightAmount=0 matches the pre-B6 day baseline exactly", () => {
+      expect(nextChirpDelaySec(() => 0, 0)).toBe(nextChirpDelaySec(() => 0));
+      expect(nextChirpDelaySec(() => 0.999999, 0)).toBeCloseTo(nextChirpDelaySec(() => 0.999999), 5);
+    });
+    it("nightAmount=1 shortens the interval to the day baseline's floor", () => {
+      const day = nextChirpDelaySec(() => 0.5, 0);
+      const night = nextChirpDelaySec(() => 0.5, 1);
+      expect(night).toBeLessThan(day);
+    });
+    it("clamps defensively for out-of-range nightAmount", () => {
+      expect(nextChirpDelaySec(() => 0.5, 2)).toBeCloseTo(nextChirpDelaySec(() => 0.5, 1), 5);
+      expect(nextChirpDelaySec(() => 0.5, -1)).toBeCloseTo(nextChirpDelaySec(() => 0.5, 0), 5);
+    });
+  });
+});
+
+describe("computeWindBaseGain (M1 B6)", () => {
+  it("nightAmount=0 (day) vs nightAmount=1 (night): night is quieter", () => {
+    const day = computeWindBaseGain(0);
+    const night = computeWindBaseGain(1);
+    expect(night).toBeLessThan(day);
+    expect(night).toBeGreaterThan(0); // duck，不是 mute
+  });
+  it("monotonically decreases as nightAmount rises", () => {
+    expect(computeWindBaseGain(0.2)).toBeGreaterThan(computeWindBaseGain(0.6));
+    expect(computeWindBaseGain(0.6)).toBeGreaterThan(computeWindBaseGain(1));
+  });
+  it("clamps defensively for out-of-range input", () => {
+    expect(computeWindBaseGain(2)).toBeCloseTo(computeWindBaseGain(1), 5);
+    expect(computeWindBaseGain(-1)).toBeCloseTo(computeWindBaseGain(0), 5);
+  });
+});
+
+describe("computeAmbientTarget (M1 B6)", () => {
+  it("ducks (but does not mute) the ambient bus while dormant", () => {
+    const awake = computeAmbientTarget(false);
+    const dormant = computeAmbientTarget(true);
+    expect(dormant).toBeLessThan(awake);
+    expect(dormant).toBeGreaterThan(0);
+  });
 });
 
 describe("isPlayerCausedHit", () => {
@@ -108,6 +163,21 @@ describe("isPlayerCausedHit", () => {
   });
   it("false when the player cannot be found (defensive)", () => {
     expect(isPlayerCausedHit(state, 999, { x: 0, y: 0, z: 0 }, 2.3)).toBe(false);
+  });
+});
+
+describe("findVictimSpecies (M1 B6)", () => {
+  it("finds a still-alive (non-lethal hit) creature in state.creatures", () => {
+    const state = mkState({ creatures: [mkCreature({ id: 5, species: "xiyu" })] });
+    expect(findVictimSpecies(state, 5)).toBe("xiyu");
+  });
+  it("falls back to state.carcasses for a lethal hit (killCreature already moved it there)", () => {
+    const state = mkState({ carcasses: [{ id: 5, species: "xiyu", pos: { x: 0, y: 0, z: 0 }, meat: 15 }] });
+    expect(findVictimSpecies(state, 5)).toBe("xiyu");
+  });
+  it("returns undefined when the id is in neither list (defensive)", () => {
+    const state = mkState({});
+    expect(findVictimSpecies(state, 999)).toBeUndefined();
   });
 });
 
@@ -158,12 +228,12 @@ describe("createAudio() before unlock()", () => {
     const audio = createAudio();
     const state = mkState({ playerId: 1, creatures: [mkCreature({ id: 1 })] });
     expect(() => audio.handle([{ kind: "splash", id: 1, pos: { x: 0, y: 0, z: 0 } }], state, 1)).not.toThrow();
-    expect(() =>
-      audio.update(0.016, {
-        playerHunger: 80, playerThirst: 80, playerHp: 60, maxHp: 60,
-        locomotion: "walk", drinking: false, paused: false, started: true,
-      }),
-    ).not.toThrow();
+    expect(() => audio.update(0.016, BASE_UPDATE_CTX)).not.toThrow();
+  });
+  it("handle() is a safe no-op for the M1 B6 vanish event too", () => {
+    const audio = createAudio();
+    const state = mkState({ playerId: 1, creatures: [mkCreature({ id: 1 })] });
+    expect(() => audio.handle([{ kind: "vanish", id: 1, pos: { x: 0, y: 0, z: 0 } }], state, 1)).not.toThrow();
   });
   it("toggleMute() flips state and its return value matches isMuted()", () => {
     const audio = createAudio();

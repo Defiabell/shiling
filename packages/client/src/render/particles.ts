@@ -521,6 +521,11 @@ export function createParticles(
           // 上面 hit 分支的 36 墨+2 朱砂已经覆盖了"死亡"这个视觉节拍；玩家死亡
           // （playerDead 边沿）目前也不额外加粒子——HUD 的死亡遮罩负责那一拍。
           break;
+        case "vanish":
+          // 无独立视觉（M1 B6 范围只加音效——见 audio.ts 的 playBurrowVanish）：穴獾
+          // 遁地本身已经是"瞬间消失"，creatureView.ts 的可见性判定当帧就把它的 mesh
+          // 隐藏掉了，不需要再叠一层粒子来强调这次消失。
+          break;
         default: {
           const _exhaustive: never = e;
           void _exhaustive;
