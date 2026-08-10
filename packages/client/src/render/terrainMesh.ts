@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { Terrain } from "@shiling/sim";
 import type { WorldParams } from "@shiling/content";
-import { PALETTE } from "./palette.js";
+import { PALETTE, interpolateDayNight } from "./palette.js";
 
 // 标记略高于地表，避免与地形网格 z-fighting。
 const MARKER_Y_OFFSET = 0.05;
@@ -27,12 +27,50 @@ const DUG_HOLE_RADIUS = 1.0;
 const DUG_OUTER_RING_RADIUS = 1.3;
 const DUG_OUTER_RING_OPACITY = 0.15;
 
-// ---- 家巢标记（Part 2，postfix-9）：石/骨围成一圈 + 一点暖光萤火色的光点 ----
-const HOME_NEST_STONE_COUNT = 6;
-const HOME_NEST_STONE_RADIUS = 1.5; // 略大于 DUG_OUTER_RING_RADIUS(1.3)，围在淡环外一圈
-const HOME_NEST_STONE_SIZE = { x: 0.22, y: 0.16, z: 0.16 } as const;
-const HOME_NEST_GLOW_Y = 0.55; // 悬浮高度——与 particles.ts 萤火的悬浮带(FIREFLY_MIN_Y..MAX_Y≈0.8..2.5)同一量级但更贴近地面，读作"就地一盏灯"而非游荡的萤火
+// ---- 普通挖点的枯草描边（M15 P2，巢穴存在感 rider——"escape network reads on the
+// ground, not just minimap"）：比家巢草垫更淡更稀疏的版本，见 buildGrassRing/buildDugVisual。
+const DUG_GRASS_TUFT_COUNT = 4; // 家巢的一半（8→4）——更稀疏，读作"没人打理的野草"
+const DUG_GRASS_RING_RADIUS = 1.5; // 略大于 DUG_OUTER_RING_RADIUS(1.3)，围在淡环外一圈
+const DUG_GRASS_TUFT_RADIUS = 0.05;
+const DUG_GRASS_TUFT_HEIGHT = 0.18;
+
+// ---- 家巢标记（Part 2，postfix-9 初版为石头环+暖光球；M15 P2 升级为土丘/草垫/骨堆
+// 三件套——见 buildHomeNestVisual 头部注释，postfix-9 的石头环整体被这套更具体的
+// 视觉取代，不是并存叠加）----
+const HOME_NEST_MOUND_RADIUS = 1.1; // 压扁前的球半径——压扁后穹顶实际高度＝此值×MOUND_SQUASH
+const HOME_NEST_MOUND_SQUASH = 0.4; // Y 轴压扁比例——"flattened dome"
+// 土丘中心沿 +Z 偏移。**Playwright 截图实测修正**（首版 1.9 与半径 1.3 组合，近边缘＝
+// 1.9-1.3=0.6，反而落在 DUG_OUTER_RING_RADIUS(1.3) 以内——土丘会整个扣在墨环/洞口上，
+// 截图 m15p2-nest-mound-day.png 首版肉眼可见"土丘糊住了洞口"，读不出两者是分开的两个
+// 构造）：改成 2.7，近边缘＝2.7-1.1=1.6，恰好与下面 HOME_NEST_GRASS_RING_RADIUS(1.6)
+// 齐平（草长到土丘根部，视觉上是连续的），同时比洞口外环(1.3) 多留 0.3m 的干净缝隙。
+const HOME_NEST_MOUND_OFFSET = 2.7;
+const HOME_NEST_GRASS_COUNT = 8; // 普通挖点的两倍密度——"精心维护的家"读法
+const HOME_NEST_GRASS_RING_RADIUS = 1.6;
+const HOME_NEST_GRASS_TUFT_RADIUS = 0.09;
+const HOME_NEST_GRASS_TUFT_HEIGHT = 0.3;
+const HOME_NEST_BONE_COUNT = 3;
+const HOME_NEST_BONE_RADIUS = 0.045;
+const HOME_NEST_BONE_LENGTH = 0.5;
+const HOME_NEST_BONE_CLUSTER_ANGLE = Math.PI * 1.15; // 与土丘偏移方向（0）错开约 205°，20m 外一眼能同时看清土丘＋骨堆两组，不叠在一起
+const HOME_NEST_BONE_CLUSTER_RADIUS = 1.1;
+// 悬浮高度——与 particles.ts 萤火的悬浮带(FIREFLY_MIN_Y..MAX_Y≈0.8..2.5)同一量级但更贴近
+// 地面，读作"就地一盏灯"而非游荡的萤火。位置刻意留在洞口正上方（局部原点，未跟随
+// HOME_NEST_MOUND_OFFSET 挪去土丘那一侧，code review 2026-08-10 确认过这一点是设计
+// 取舍而非疏漏）：这盏光代表"洞里透出的暖光"，读法是家的入口本身透光，不是土丘上摆了
+// 一盏灯——土丘/骨堆/草垫三件套负责白天的"家"识别，暖光负责夜里"这里有人"的信号，
+// 两组视觉各自挂在自己最合理的位置上。
+const HOME_NEST_GLOW_Y = 0.55;
 const HOME_NEST_GLOW_RADIUS = 0.16;
+/**
+ * 暖光只在暮色/夜里点亮（M15 P2，postfix-9 初版是常驻可见，这里是升级点之一）——
+ * nightAmount 取自 palette.ts 的 interpolateDayNight，与 particles.ts 萤火 gain/
+ * atmosphere.ts 光照插值同一套 keyframe 数据源。四个关键帧的 nightAmount 依次是
+ * 黎明 0.35／白昼 0.0／黄昏 0.65／夜 1.0（见 palette.ts DAYNIGHT_KEYFRAMES）——0.3
+ * 卡在"白昼→黎明/黄昏"过渡区间的中段，不是任何一个关键帧本身的数值，两头都留了一截
+ * smoothstep 过渡余量，不会卡在插值边界来回抖动。
+ */
+const HOME_NEST_GLOW_NIGHT_THRESHOLD = 0.3;
 
 /**
  * 每个挖点标记的场景节点，按 dig spot id 索引：undug/dug 两套视觉常驻创建好，
@@ -187,7 +225,53 @@ function buildUndugVisual(): THREE.Group {
   return group;
 }
 
-/** 已挖 dig spot 的视觉：实心墨洞（全黑圆盘）+ 外圈一道更淡的墨环收边。 */
+/**
+ * 单株草垫/枯草——细锥体立在地面（同 scatter.ts buildGrassGeometry 同一手法：translate
+ * 让锥体底部落在本地 y=0，这样 mesh.position 直接就是"这株草站的地面点"，不需要额外
+ * 减半高度）。
+ */
+function buildGrassTuft(radius: number, height: number, color: number): THREE.Mesh {
+  const geometry = new THREE.ConeGeometry(radius, height, 5);
+  geometry.translate(0, height / 2, 0);
+  const material = new THREE.MeshLambertMaterial({ color });
+  return new THREE.Mesh(geometry, material);
+}
+
+/**
+ * 一圈草垫/枯草描边——固定角度均分（同 postfix-9 石头环/particles.ts spawnBurrowRing
+ * 同一"固定角度而非随机撒点"手法，读出"围成一圈"而不是散落一地），每株再叠一点
+ * Math.random() 的高度/半径抖动增加自然感。这是客户端一次性构建（buildTerrainMesh 只调
+ * 一次）的纯展示几何体，不是 sim 状态——Math.random() 在这里不影响任何确定性契约，
+ * 与 particles.ts 萤火初始相位/scatter.ts 地表点缀已有的用法同一惯例（sim/src 才是
+ * "禁止 Math.random()"的确定性纪律边界）。供 buildDugVisual（枯草，稀疏淡）与
+ * buildHomeNestVisual（草垫，密集鲜绿）共用，只是传入的数量/半径/颜色不同。
+ */
+function buildGrassRing(count: number, ringRadius: number, tuftRadius: number, tuftHeight: number, color: number): THREE.Group {
+  const group = new THREE.Group();
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const jitter = 0.85 + Math.random() * 0.3;
+    const tuft = buildGrassTuft(tuftRadius * jitter, tuftHeight * jitter, color);
+    tuft.position.set(Math.sin(angle) * ringRadius, MARKER_Y_OFFSET, Math.cos(angle) * ringRadius);
+    tuft.rotation.y = angle; // 沿圆周切线摆一点角度，同一批草读起来不是完全相同的复制粘贴
+    group.add(tuft);
+  }
+  return group;
+}
+
+/**
+ * 单根骨头——细圆柱躺平（同 pits.ts 交叉枯枝同一手法：默认圆柱沿本地 Y 轴竖直，绕 Z
+ * 转 90° 把它掰倒躺平到 X 轴）。
+ */
+function buildBoneStick(radius: number, length: number, color: number): THREE.Mesh {
+  const geometry = new THREE.CylinderGeometry(radius, radius, length, 6);
+  const material = new THREE.MeshLambertMaterial({ color });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.z = Math.PI / 2;
+  return mesh;
+}
+
+/** 已挖 dig spot 的视觉：实心墨洞（全黑圆盘）+ 外圈一道更淡的墨环收边 + 一圈稀疏枯草。 */
 function buildDugVisual(): THREE.Group {
   const group = new THREE.Group();
   const holeGeometry = new THREE.CircleGeometry(DUG_HOLE_RADIUS, 32);
@@ -197,42 +281,69 @@ function buildDugVisual(): THREE.Group {
   hole.position.y = MARKER_Y_OFFSET;
   group.add(hole);
   group.add(buildInkRing(DUG_OUTER_RING_RADIUS, DUG_OUTER_RING_OPACITY));
+  // 枯草描边（M15 P2，巢穴存在感 rider——"escape network reads on the ground, not just
+  // minimap"）：普通挖开的洞口也有一圈更淡更稀疏的枯草，与家巢草垫（更密、更绿）区分，
+  // 读作"这只是个洞"而不是"这是家"，同一套视觉语言里天然分出两个等级。
+  group.add(buildGrassRing(DUG_GRASS_TUFT_COUNT, DUG_GRASS_RING_RADIUS, DUG_GRASS_TUFT_RADIUS, DUG_GRASS_TUFT_HEIGHT, PALETTE.digRimGrassDry));
   return group;
 }
 
 /**
- * 家巢标记（Part 2，postfix-9）：一圈小石/骨头（6 个灰色小方块，固定均分角度——
- * 复用 particles.ts spawnBurrowRing 同款"固定角度而非随机"手法，读出"围成一圈"的
- * 形状而不是散落一地）+ 一颗悬浮的暖光小球（PALETTE.lampWarm，与萤火/HUD 饥饿环
- * 同一色相，MeshBasicMaterial 自发光读法——延续本工程"氛围光靠未受光材质表达"的
- * 既有惯例，不为每个巢穴单独开一盏真实 PointLight）。只建一次、单例——
- * GameState.homeNest 本身就是单例（同一时刻只有一个家），updateHomeNest 每帧只做
- * "挪到哪个 dig spot、要不要可见"的判断，不重建任何几何体（与 digSpotMarkers 的
- * "常驻创建、可见性切换"是同一套思路，只是这次只有一份实例，不按 spot id 建 Map）。
+ * 家巢标记（Part 2，postfix-9 初版为石头环+暖光球；M15 P2「引导链＋巢穴存在感」升级——
+ * owner feedback「还是没有巢穴概念」，巢穴系统本身早就存在，问题是可发现性：postfix-9
+ * 那圈均匀的灰色小方块从 20m 外读不出"这是一个家"，只读得出"这里有点什么"）：
+ *   - 土丘：压扁的半球穹顶，偏移到洞口一侧（不盖住洞口本身），读作"挖洞时堆在旁边的
+ *     浮土"——见 HOME_NEST_MOUND_OFFSET 头部注释。
+ *   - 草垫环：一圈鲜绿草丛（比 buildDugVisual 的枯草更密更绿，见 buildGrassRing 共用
+ *     实现），读作"这里被打理过，是活的"。
+ *   - 骨堆：2-3 根散落的骨头，聚在与土丘错开的另一侧角度，避免两组视觉元素叠在同一块
+ *     20m 外的视野里。
+ *   - 暖光：与萤火同色相（PALETTE.lampWarm），只在暮色/夜里点亮（见 updateHomeNest 的
+ *     nightAmount 判定与 HOME_NEST_GLOW_NIGHT_THRESHOLD 注释）——postfix-9 初版是常驻
+ *     可见，白天也亮着，本批收紧成"像窗户里透出的灯火"，昼夜差异本身也是一种存在感。
+ * 只建一次、单例——GameState.homeNest 本身就是单例（同一时刻只有一个家），
+ * updateHomeNest 每帧只做"挪到哪个 dig spot、要不要可见、暖光要不要点亮"的判断，不
+ * 重建任何几何体（与 digSpotMarkers 的"常驻创建、可见性切换"是同一套思路，只是这次
+ * 只有一份实例，不按 spot id 建 Map）。
  */
 function buildHomeNestVisual(): THREE.Group {
   const group = new THREE.Group();
 
-  const stoneGeometry = new THREE.BoxGeometry(HOME_NEST_STONE_SIZE.x, HOME_NEST_STONE_SIZE.y, HOME_NEST_STONE_SIZE.z);
-  const stoneMaterial = new THREE.MeshLambertMaterial({ color: PALETTE.scatterRock });
-  for (let i = 0; i < HOME_NEST_STONE_COUNT; i++) {
-    const angle = (i / HOME_NEST_STONE_COUNT) * Math.PI * 2;
-    const stone = new THREE.Mesh(stoneGeometry, stoneMaterial);
-    stone.position.set(
-      Math.sin(angle) * HOME_NEST_STONE_RADIUS,
-      MARKER_Y_OFFSET + HOME_NEST_STONE_SIZE.y / 2,
-      Math.cos(angle) * HOME_NEST_STONE_RADIUS,
-    );
-    stone.rotation.y = angle; // 沿圆周切线摆一点角度，六块读起来不是完全相同的复制粘贴
-    group.add(stone);
+  // 土丘——SphereGeometry 用 thetaLength=PI/2 只取上半球（从极点到赤道），天然就是一个
+  // 圆顶，不需要额外裁切/合并几何体；scale.y 再压扁成"flattened dome"。
+  const moundGeometry = new THREE.SphereGeometry(HOME_NEST_MOUND_RADIUS, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const moundMaterial = new THREE.MeshLambertMaterial({ color: PALETTE.nestMoundEarth });
+  const mound = new THREE.Mesh(moundGeometry, moundMaterial);
+  mound.scale.y = HOME_NEST_MOUND_SQUASH;
+  mound.position.set(0, MARKER_Y_OFFSET, HOME_NEST_MOUND_OFFSET);
+  group.add(mound);
+
+  // 草垫环——密度是普通挖点枯草的两倍，覆盖整整一圈（含盖过土丘那一侧，读作"草长在
+  // 新翻的土上"，本身就是自然的）。
+  group.add(buildGrassRing(HOME_NEST_GRASS_COUNT, HOME_NEST_GRASS_RING_RADIUS, HOME_NEST_GRASS_TUFT_RADIUS, HOME_NEST_GRASS_TUFT_HEIGHT, PALETTE.scatterGrass));
+
+  // 骨堆——聚在与土丘偏移方向错开约 205° 的一侧，各自的角度/半径/长度都带一点独立抖动
+  // （同 buildGrassRing 的 Math.random() 用法，纯展示几何体，见该函数头部注释）。
+  for (let i = 0; i < HOME_NEST_BONE_COUNT; i++) {
+    const bone = buildBoneStick(HOME_NEST_BONE_RADIUS, HOME_NEST_BONE_LENGTH * (0.8 + Math.random() * 0.3), PALETTE.nestBoneWhite);
+    const angle = HOME_NEST_BONE_CLUSTER_ANGLE + (i - (HOME_NEST_BONE_COUNT - 1) / 2) * 0.35;
+    const r = HOME_NEST_BONE_CLUSTER_RADIUS + Math.random() * 0.2;
+    bone.position.set(Math.sin(angle) * r, MARKER_Y_OFFSET + HOME_NEST_BONE_RADIUS, Math.cos(angle) * r);
+    bone.rotation.y = angle + Math.PI / 2 + (Math.random() - 0.5) * 0.6; // 大致沿圆周切向散落，带一点随机偏转，不是整整齐齐一排
+    group.add(bone);
   }
 
+  // 暖光——与萤火同色相，MeshBasicMaterial 自发光读法，延续本工程"氛围光靠未受光材质
+  // 表达"的既有惯例（不为每个巢穴单独开一盏真实 PointLight）。初值隐藏，updateHomeNest
+  // 每帧按 nightAmount 同步真实值（见该函数与 HOME_NEST_GLOW_NIGHT_THRESHOLD）。
   const glow = new THREE.Mesh(
     new THREE.SphereGeometry(HOME_NEST_GLOW_RADIUS, 12, 10),
     new THREE.MeshBasicMaterial({ color: PALETTE.lampWarm }),
   );
   glow.position.y = HOME_NEST_GLOW_Y;
+  glow.visible = false;
   group.add(glow);
+  group.userData["homeNestGlow"] = glow;
 
   return group;
 }
@@ -348,29 +459,43 @@ export function updateDigSpots(group: THREE.Group, terrain: Terrain): void {
  * dirty-check 用一个独立的 tracker 对象比较"上一次同步到的 spotId"，不是拿
  * `homeNestGroup.visible` 反推（见 buildTerrainMesh 里那处注释：两者在"挪动"场景
  * 下不等价）。
+ *
+ * `timeOfDay`（M15 P2 新增参数）：驱动暖光 chip 的暮色/夜间点亮判定——这一段刻意
+ * 不放进上面 spotId 的 dirty-check 里，nightAmount 是连续变化的插值量，不是"变化时
+ * 处理一次"的离散事件，必须每帧都重新判断（同 updateWater/updateAtmosphere 每帧
+ * 无条件重算同一套惯例，即便 homeNestGroup 本身因为 spotId 未变而没有触发上面那段
+ * if 分支）。
  */
-export function updateHomeNest(group: THREE.Group, terrain: Terrain, homeNest: { spotId: number; stash: number } | null): void {
+export function updateHomeNest(group: THREE.Group, terrain: Terrain, homeNest: { spotId: number; stash: number } | null, timeOfDay: number): void {
   const homeNestGroup = group.userData["homeNestGroup"] as THREE.Group | undefined;
   const tracker = group.userData["homeNestTrackedSpotId"] as { spotId: number | null } | undefined;
   if (!homeNestGroup || !tracker) return;
 
   const nextSpotId = homeNest?.spotId ?? null;
-  if (nextSpotId === tracker.spotId) return;
-  tracker.spotId = nextSpotId;
+  if (nextSpotId !== tracker.spotId) {
+    tracker.spotId = nextSpotId;
+    if (nextSpotId === null) {
+      homeNestGroup.visible = false;
+    } else {
+      const spot = terrain.digSpots.find((s) => s.id === nextSpotId);
+      if (!spot) {
+        // 防御性兜底：理论上不会发生（homeNest.spotId 只可能来自 buildHomeNest 写入
+        // 一个真实存在的 dig spot id），但宁可安静隐藏也不要指向一个不存在的位置。
+        homeNestGroup.visible = false;
+      } else {
+        homeNestGroup.position.set(spot.pos.x, spot.pos.y, spot.pos.z);
+        homeNestGroup.visible = true;
+      }
+    }
+  }
 
-  if (nextSpotId === null) {
-    homeNestGroup.visible = false;
-    return;
+  // 暖光——只在暮色/夜里点亮（见 HOME_NEST_GLOW_NIGHT_THRESHOLD 头部注释）；即使
+  // homeNestGroup 本身不可见（还没筑巢），照常同步这个子节点的 visible 也没有任何
+  // 副作用（父节点 visible=false 时子节点无论如何都不会被渲染），不需要额外 if 包一层。
+  const glow = homeNestGroup.userData["homeNestGlow"] as THREE.Mesh | undefined;
+  if (glow) {
+    glow.visible = interpolateDayNight(timeOfDay).nightAmount >= HOME_NEST_GLOW_NIGHT_THRESHOLD;
   }
-  const spot = terrain.digSpots.find((s) => s.id === nextSpotId);
-  if (!spot) {
-    // 防御性兜底：理论上不会发生（homeNest.spotId 只可能来自 buildHomeNest 写入
-    // 一个真实存在的 dig spot id），但宁可安静隐藏也不要指向一个不存在的位置。
-    homeNestGroup.visible = false;
-    return;
-  }
-  homeNestGroup.position.set(spot.pos.x, spot.pos.y, spot.pos.z);
-  homeNestGroup.visible = true;
 }
 
 /**

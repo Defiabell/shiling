@@ -105,6 +105,7 @@ export function spawnCreature(
     nestProgress: 0,
     dormantHeld: false,
     hiddenTicks: 0, // M1 B4：仅穴獾的 tickBurrowEvader 会写非零值，其余物种恒 0
+    reappearStallCount: 0, // M15 P2 rider：仅穴獾遁地重现耗尽兜底会写非零值，其余物种恒 0
     pitDigProgress: 0, // M15 P1：仅玩家的 tickPitDig 会写非零值，其余物种恒 0
     snaredTicks: 0, // M15 P1：仅潭狩会被 pits.ts 的 tickPitSnares 写非零值，其余物种恒 0
   };

@@ -16,11 +16,12 @@ import { createPitVisuals } from "./render/pits.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
-import { createHud, type HudContext } from "./hud.js";
+import { createHud, homeBearing, type HudContext } from "./hud.js";
 import { createMinimap } from "./minimap.js";
 import { createOrganPanel } from "./organPanel.js";
 import { showTitle } from "./title.js";
 import { createPauseOverlay } from "./pause.js";
+import { createObjectivesTracker } from "./objectives.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 // 捕获成变量（而不是像原先那样直接内联进 createSim(...)）：Patch 3c 的地表
@@ -122,6 +123,10 @@ const audio = createAudio();
 // M1 B5：器官面板，与 hud/minimap 同层的新增 UI 消费者（evolutionFx 创建于文件更靠前的
 // 位置——见 isPlayerBurrowed() 后那段注释，KeyE 拦截器必须先于 input.ts 注册）。
 const organPanel = createOrganPanel();
+// 开局目标链（M15 P2「引导链＋巢穴存在感」）：与 hud/minimap/organPanel 同层的又一个
+// UI 消费者——已跳过/完成过（isObjectivesDismissed()，见该文件）时内部直接返回零开销的
+// no-op tracker，这里不需要额外判断要不要创建它。
+const objectives = createObjectivesTracker();
 const eventDiffer = createSimEventDiffer();
 
 // ---- 顿帧 hitstop（Part 1，postfix-9 捕食特效强化）----
@@ -220,7 +225,7 @@ function nearWater(pos: Creature["pos"], terrain: Terrain): boolean {
  * by construction — see digging.ts). adrenalineActive is a direct read of
  * state.adrenalineTicks>0, same "nothing to re-derive" treatment as dormant above.
  */
-function computeHudContext(terrain: Terrain, state: GameState, player: Creature): HudContext {
+function computeHudContext(terrain: Terrain, state: GameState, player: Creature, camYaw: number): HudContext {
   const nearDigSpot = terrain.digSpots.some((spot) => dist2d(player.pos, spot.pos) <= TUNING.interactRange);
   const nearCarcass = state.carcasses.some((c) => dist2d(player.pos, c.pos) <= TUNING.interactRange);
   const attackRange = SPECIES.youshou!.attackRange;
@@ -236,6 +241,20 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
   const homeNestSpot = state.homeNest ? terrain.digSpots.find((s) => s.id === state.homeNest!.spotId) : undefined;
   const nearNest = homeNestSpot !== undefined && dist2d(player.pos, homeNestSpot.pos) <= TUNING.interactRange;
   const inOwnBurrow = player.burrowId !== null && state.homeNest?.spotId === player.burrowId;
+  // M15 P2（巢穴存在感——家巢罗盘 chip）：只在离家超过 homeCompassShowDist(60m) 时才给出
+  // 方向/距离提示，站在家门口不需要一个多余的箭头。bearing 的推导（三角基向量投影）
+  // 挪到了 hud.ts 的 homeBearing 纯函数里（code review 2026-08-10：main.ts 顶层有真实
+  // 副作用——建 Scene/WebGLRenderer/挂 DOM，这个文件天生没法被 import 进单元测试，这段
+  // 本可测试的数学之前只能靠人工复核三角推导），这里只管调用+算距离。
+  let homeCompass: HudContext["homeCompass"] = null;
+  if (homeNestSpot) {
+    const dx = homeNestSpot.pos.x - player.pos.x;
+    const dz = homeNestSpot.pos.z - player.pos.z;
+    const distanceM = Math.sqrt(dx * dx + dz * dz);
+    if (distanceM > TUNING.homeCompassShowDist) {
+      homeCompass = { distanceM, bearing: homeBearing(dx, dz, camYaw) };
+    }
+  }
   // postfix-9 Part 2：筑巢进度百分比——只有 nestProgress>0（正在累积，见 digging.ts
   // 的筑巢分支）才非零；换算用到的 TUNING.nestBuildSec 留在 main.ts 算好再传给
   // hud.ts（该模块刻意不 import TUNING，见 hud.ts 头部注释）。
@@ -270,6 +289,7 @@ function computeHudContext(terrain: Terrain, state: GameState, player: Creature)
     dormancyEligible: isDormancyEligible(state),
     essencePct,
     adrenalineActive: state.adrenalineTicks > 0, // M15 P1：驱动 HUD 爆发图标 chip
+    homeCompass,
   };
 }
 
@@ -533,6 +553,9 @@ if (import.meta.env.DEV) {
       c.pos.z = z;
       c.pos.y = sim.terrain.isWater(x, z) ? sim.terrain.waterLevel : sim.terrain.heightAt(x, z);
     },
+    // M15 P2（开局目标链）verification hook：当前应该显示的引导文案，供外部 Playwright
+    // 脚本断言"目标 1 显示→驱动击杀→目标 2 显示"这条转场，不需要靠 OCR 读画面文字。
+    getObjectiveText: () => objectives.getCurrentText(),
   };
 }
 
@@ -641,7 +664,7 @@ renderer.setAnimationLoop(() => {
   const tSec = now / 1000;
   applyInterp(views, acc / DT, tSec);
   updateDigSpots(terrainGroup, sim.terrain);
-  updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest);
+  updateHomeNest(terrainGroup, sim.terrain, sim.state.homeNest, sim.state.timeOfDay);
   updateWater(tSec);
   // 陷坑视觉（M15 P1）：与 dig spot/家巢标记同一 gate（无条件每帧调用）——state.pits
   // 在 `started` 变真之前恒为空数组（sim.step 从未跑过），提前调用没有任何副作用。
@@ -757,7 +780,7 @@ renderer.setAnimationLoop(() => {
   // "no hud.update" 要求，而不是依赖"反正数据没变所以更新也没用"这层隐含推论。
   input.consume();
   if (started && !paused) {
-    hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player));
+    hud.update(sim.state, computeHudContext(sim.terrain, sim.state, player, followCam.yaw));
     // followCam.yaw（镜头朝向，不是玩家朝向）驱动小地图的视野锥——与 HUD 同样按
     // started 冻结，标题画面期间不在小地图上跑动画。
     minimap.update(sim.state, followCam.yaw);
@@ -765,6 +788,17 @@ renderer.setAnimationLoop(() => {
     // sim.step() 真正推进时才会变化，暂停期间没有必要重复刷新（不像 evolutionFx 那样
     // 有基于真实时钟的计时器，没有跳变风险，可以放心按 started&&!paused 冻结）。
     organPanel.update(sim.state);
+    // 开局目标链（M15 P2）：与 hud/minimap/organPanel 同一 gate——read-only 派生同一份
+    // sim 状态，essenceTotal 用 Object.values 求和（本模块不需要认识 EssenceType 具体
+    // 有哪几种，见 objectives.ts 头部注释）。
+    objectives.update({
+      kills: sim.state.behaviorStats.kills,
+      essenceTotal: Object.values(sim.state.essence).reduce((sum, v) => sum + v, 0),
+      anyDug: sim.terrain.digSpots.some((s) => s.dug),
+      hasHomeNest: sim.state.homeNest !== null,
+      stash: sim.state.homeNest?.stash ?? 0,
+      hasEvolved: sim.state.lastEvolution !== null,
+    });
   }
   renderer.render(scene, camera);
 });

@@ -91,4 +91,9 @@ export const TUNING = {
 
   // M15 P1：棘背威慑，见 sim/src/ai.ts 的 resolveHunt。
   spineDeterrenceMult: 0.65, // 目标玩家装备棘背(jibei)时，潭狩的放弃追猎距离(senseRadius×1.5)再乘此系数
+
+  // M15 P2（引导链＋巢穴存在感）：家巢罗盘 chip 只在离家足够远时才显示，避免站在自家
+  // 门口也挂着一个"家在这边"的箭头（噪音）——见 client main.ts computeHudContext 与
+  // hud.ts 的 HudContext.homeCompass。
+  homeCompassShowDist: 60,
 } as const;

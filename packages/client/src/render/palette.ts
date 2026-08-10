@@ -35,6 +35,12 @@ export const PALETTE = {
   organTailOrb: 0xc9a06a, // 平衡尾·端球：土褐（与精气"穴"色同相，呼应"稳"）
   organEyeGlow: 0x9fd8ff, // 夜瞳·发光眼点：冷蓝光
   organNoseGlow: 0xe8c88a, // 灵嗅·鼻光点：暖金光
+  // M15 P2（引导链＋巢穴存在感——家巢视觉升级，见 terrainMesh.ts 的 buildHomeNestVisual/
+  // buildDugVisual）：土丘/骨堆/枯草三件套的专用色，与既有 scatter*/organ* 色相区分——
+  // 这三种读法（"新翻的土""风干的骨头""枯萎的草"）都不该借用任何已有语义的颜色。
+  nestMoundEarth: 0x5c4630, // 土丘——新翻浮土，比 scatterWood(0x4a3f35) 更暖更红一档
+  nestBoneWhite: 0xd8cfb8, // 骨堆——风吹日晒的骨白，比 organFang(0xe8e2d4，佩戴的器官挂件) 压暗一档，区分"地面散落"与"戴在身上"
+  digRimGrassDry: 0x6b6650, // 普通挖点的枯草描边——比家巢草垫(scatterGrass 0x5f7355) 更黄更暗，读作"没人打理的野草"
 } as const;
 
 /**

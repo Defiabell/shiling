@@ -80,6 +80,14 @@ export interface Creature {
    */
   hiddenTicks: number;
   /**
+   * 遁地重现耗尽兜底计数器（M15 P2 rider，穴獾 xuehuan 专属，见 ai.ts 的 reappear()/
+   * randomLandPosNear）：连续找不到陆地重现点的失败次数。达到 REAPPEAR_STALL_MAX_RETRIES
+   * 之前，每次失败只是多隐藏 1 秒（hiddenTicks 重置）再重试；达到上限则放弃陆地约束、
+   * 原地重现并清零——两条路径的"成功重现"（含耗尽兜底）都会把它清回 0，不是跨隐匿
+   * 周期累积的终身计数。非穴獾物种恒为 0，与 hiddenTicks 对不适用物种恒为 0 同一惯例。
+   */
+  reappearStallCount: number;
+  /**
    * 陷坑挖掘进度（M15 P1，玩家专属，见 digging.ts 的 pit-dig 分支）：与 digProgress/
    * nestProgress 同构（可打断、松开即清零），但挂在"开阔地、无其它 E 消费者在场"这个
    * 第三种场景，故另开一个字段而不是复用前两者——三者互斥（同一 tick 只可能落进其中

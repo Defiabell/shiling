@@ -343,13 +343,25 @@ function tickFleeingHerbivore(c: Creature, state: GameState, terrain: Terrain, r
 // 只是量级小一档（那两处是全图撒点，这里是小半径定点环采样，命中率天然更高）。
 const REAPPEAR_MAX_ATTEMPTS = 1000;
 
+// 耗尽兜底重试上限（M15 P2 rider）：见 reappear() 头部注释"耗尽兜底"一节——真实长会话
+// 里 REAPPEAR_MAX_ATTEMPTS 次单轮采样仍可能偶发全部落空（例如穴獾恰好蜷在被水完全
+// 包围的小岛/半岛），最多再多隐藏 REAPPEAR_STALL_MAX_RETRIES 秒重试，超过此数直接
+// 放弃陆地约束原地重现——有界，不会无限期卡住。
+const REAPPEAR_STALL_MAX_RETRIES = 3;
+
 /**
  * randomLandPos（sim.ts）的镜像变体（M1 B4，穴獾遁地重现专用）：以 origin 为圆心、固定
  * 距离 dist、随机角度 rejection-sample 一个陆地点（h > waterLevel+0.5，与 randomLandPos/
  * digSpot 采样同一陆地判据），clamp 到世界边界内。"~8m 外的随机陆地点"取的是固定半径+
  * 随机方向，不是半径内任意撒点——与 plan 原话"约 8m 外"对应的最直接实现。
+ *
+ * 耗尽即返回 null（M15 P2 rider，之前是 throw）：REAPPEAR_MAX_ATTEMPTS 次单轮采样仍可能
+ * 一个陆地点都没找到（穴獾蜷在被水完全包围的小岛/半岛，8m 半径圆环上处处是水）——这在
+ * 真实长会话 Playwright 验证中已经复现过两次（见 m15-p1-report.md「未确认」一节），不是
+ * 假设性的边缘情形。调用方（reappear()）负责决定"再等一等重试"还是"放弃约束兜底"，本
+ * 函数只负责如实报告"这一轮没找到"，不再单方面抛异常终止整个 tick 循环。
  */
-function randomLandPosNear(rng: Rng, terrain: Terrain, originX: number, originZ: number, dist: number): { x: number; y: number; z: number } {
+function randomLandPosNear(rng: Rng, terrain: Terrain, originX: number, originZ: number, dist: number): { x: number; y: number; z: number } | null {
   const half = terrain.size / 2;
   for (let attempt = 0; attempt < REAPPEAR_MAX_ATTEMPTS; attempt++) {
     const angle = rng.range(0, Math.PI * 2);
@@ -358,7 +370,7 @@ function randomLandPosNear(rng: Rng, terrain: Terrain, originX: number, originZ:
     const h = terrain.heightAt(x, z);
     if (h > terrain.waterLevel + 0.5) return { x, y: h, z };
   }
-  throw new Error("randomLandPosNear: no land position found after max attempts; check TUNING.xuehuanReappearDist/world size");
+  return null;
 }
 
 /**
@@ -371,10 +383,34 @@ function randomLandPosNear(rng: Rng, terrain: Terrain, originX: number, originZ:
  * 判定，若真的贴脸重现，下一 tick 立即再次触发 channel（"钻地躲一下没躲开，接着躲"是
  * 可读的失败模式，不是卡死/崩溃）；要让重现方向"背离威胁"需要把威胁方向一起传进
  * randomLandPosNear，留给后续批次按需再做，本批不扩大 B4 既定范围。
+ *
+ * 耗尽兜底（M15 P2 rider，P1 报告标注的预先存在 bug，非本批引入）：randomLandPosNear
+ * 单轮 REAPPEAR_MAX_ATTEMPTS 次都找不到陆地点时不再抛异常整体崩溃 tick 循环，改为有界
+ * 优雅退化，分两级（都是确定性的——同 seed 同输入序列，重试次数与最终落点逐位一致）：
+ *   1) reappearStallCount < REAPPEAR_STALL_MAX_RETRIES：不重现，多隐藏 1 秒（hiddenTicks
+ *      重置为 tickHz）再重试——下一次倒数归零时本函数会再被调用一次，继续消费同一个 rng。
+ *   2) 达到上限仍失败：放弃"陆地点"这个约束，直接原地重现（c.pos.x/z 不动，只重采样一次
+ *      y）。这个位置必然安全：channel 只可能从 wander/graze 触发（tickBurrowEvader 顶层
+ *      判据），而两者全程都在 moveCreature 的挡水守卫之下运行，"原地"从触发那一刻起就是
+ *      合法陆地，不需要再验证一遍。
+ * 总耗时上限 = xuehuanHiddenSec(4s) + REAPPEAR_STALL_MAX_RETRIES(3s) = 7s，有界、
+ * 不依赖任何"最终总会找到陆地"的假设。
  */
 function reappear(c: Creature, rng: Rng, terrain: Terrain): void {
   const pos = randomLandPosNear(rng, terrain, c.pos.x, c.pos.z, TUNING.xuehuanReappearDist);
-  c.pos.x = pos.x; c.pos.y = pos.y; c.pos.z = pos.z;
+  if (pos === null) {
+    if (c.reappearStallCount < REAPPEAR_STALL_MAX_RETRIES) {
+      c.reappearStallCount += 1;
+      c.hiddenTicks = TUNING.tickHz; // 多隐藏 1 秒，下次倒数归零再重试
+      return;
+    }
+    // 有界耗尽：放弃陆地约束，原地重现（见函数头注释"耗尽兜底"第 2 点）。
+    c.pos.y = terrain.heightAt(c.pos.x, c.pos.z);
+    c.reappearStallCount = 0;
+  } else {
+    c.pos.x = pos.x; c.pos.y = pos.y; c.pos.z = pos.z;
+    c.reappearStallCount = 0;
+  }
   c.locomotion = "walk";
   c.activity = "idle";
   c.aiState = "wander";

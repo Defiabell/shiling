@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Creature } from "@shiling/sim";
-import { contextPrompt, statusLabel, type HudContext } from "../src/hud.js";
+import { contextPrompt, homeBearing, normalizeAngle, statusLabel, type HudContext } from "../src/hud.js";
 
 /** 最小可用 Creature 字面量——contextPrompt/statusLabel 只读 burrowId/activity/locomotion。 */
 function mkPlayer(over: Partial<Creature> = {}): Creature {
@@ -10,7 +10,7 @@ function mkPlayer(over: Partial<Creature> = {}): Creature {
     aiState: "idle", targetId: null, attackCooldown: 0, feedingCarcassId: null,
     burrowId: null, satiatedTimer: 0, digProgress: 0, interactHeld: false,
     aiDirX: 0, aiDirZ: 1, aiTimer: 0, fleeTime: 0, fleeRecoverTime: 0,
-    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0,
+    carryingCarcassId: null, carryHeld: false, nestProgress: 0, dormantHeld: false, hiddenTicks: 0, reappearStallCount: 0,
     pitDigProgress: 0, snaredTicks: 0,
     ...over,
   };
@@ -22,6 +22,7 @@ const baseCtx: HudContext = {
   dormant: false, dormancyEligible: false,
   essencePct: { zu: 0, lin: 0, xue: 0, meng: 0 },
   adrenalineActive: false,
+  homeCompass: null,
 };
 
 describe("contextPrompt", () => {
@@ -154,5 +155,67 @@ describe("statusLabel", () => {
   it("dormant shows 蛰伏中……, taking priority over the stash line", () => {
     const p = mkPlayer({ burrowId: 3 });
     expect(statusLabel(p, { ...baseCtx, inOwnBurrow: true, stash: 87.9, dormant: true })).toBe("蛰伏中……");
+  });
+});
+
+// M15 P2（巢穴存在感——家巢罗盘 chip）：code review 2026-08-10 把这段三角推导从 main.ts
+// 挪到 hud.ts 正是为了能被直接单元测试（main.ts 顶层有真实副作用，天生不可 import）。
+describe("normalizeAngle", () => {
+  it("passes values already inside (-π, π] through unchanged", () => {
+    expect(normalizeAngle(0)).toBeCloseTo(0, 9);
+    expect(normalizeAngle(1)).toBeCloseTo(1, 9);
+    expect(normalizeAngle(-1)).toBeCloseTo(-1, 9);
+    expect(normalizeAngle(Math.PI)).toBeCloseTo(Math.PI, 9); // 上界闭区间——π 本身合法
+  });
+
+  it("wraps values above π down by one full turn", () => {
+    expect(normalizeAngle(Math.PI + 0.5)).toBeCloseTo(0.5 - Math.PI, 9);
+    expect(normalizeAngle(Math.PI * 2 - 0.1)).toBeCloseTo(-0.1, 9);
+  });
+
+  it("wraps values at or below -π up by one full turn", () => {
+    expect(normalizeAngle(-Math.PI)).toBeCloseTo(Math.PI, 9); // 下界不闭——恰好 -π 折到 +π
+    expect(normalizeAngle(-Math.PI - 0.5)).toBeCloseTo(Math.PI - 0.5, 9);
+  });
+
+  it("handles multi-turn wraparounds (several full 2π revolutions)", () => {
+    expect(normalizeAngle(Math.PI * 4 + 0.3)).toBeCloseTo(0.3, 9);
+    expect(normalizeAngle(-Math.PI * 4 - 0.3)).toBeCloseTo(-0.3, 9);
+  });
+});
+
+describe("homeBearing", () => {
+  it("home straight ahead (same direction as camera forward) gives bearing 0", () => {
+    // camYaw=0 → forward=(sin0,cos0)=(0,1)=+Z；home 同样在 +Z 方向（dx=0,dz=1）。
+    expect(homeBearing(0, 1, 0)).toBeCloseTo(0, 9);
+  });
+
+  it("home directly behind gives bearing ±π", () => {
+    expect(Math.abs(homeBearing(0, -1, 0))).toBeCloseTo(Math.PI, 9);
+  });
+
+  it("home to camera's screen-right gives a positive bearing (CSS rotate() clockwise)", () => {
+    // camYaw=0 时镜头的屏幕右手方向 right=(-cos0,sin0)=(-1,0)=世界 -X（见 homeBearing
+    // 头部注释的基向量推导）——home 摆在世界 -X（dx=-1,dz=0）应该读作"在屏幕右边"。
+    expect(homeBearing(-1, 0, 0)).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it("home to camera's screen-left gives a negative bearing", () => {
+    expect(homeBearing(1, 0, 0)).toBeCloseTo(-Math.PI / 2, 9);
+  });
+
+  it("rotating the camera yaw by the same amount as the home direction keeps bearing at 0 (bearing is relative, not absolute)", () => {
+    // camYaw=π/2 时 right=(-cos(π/2),sin(π/2))=(0,1)=世界 +Z——把 home 摆在同一个方向
+    // (dx=0,dz=1) 应该现在读作"正前方"意味着 bearing 归零？不——home 在世界 +Z、镜头转向
+    // π/2 后 forward=(sin(π/2),cos(π/2))=(1,0)=+X，+Z 相对新 forward 是"右边"，不是
+    // "正前方"，所以这里断言的是"右边"（+π/2），呼应上一条测试换了个 camYaw 仍然自洽。
+    expect(homeBearing(0, 1, Math.PI / 2)).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it("bearing is purely relative: rotating camYaw by the exact angle to home always yields 0", () => {
+    const dx = 3;
+    const dz = -4;
+    const homeAngle = Math.atan2(dx, dz);
+    expect(homeBearing(dx, dz, homeAngle)).toBeCloseTo(0, 9);
   });
 });

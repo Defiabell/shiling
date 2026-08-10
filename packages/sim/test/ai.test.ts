@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { ORGANS, SPECIES, TUNING } from "@shiling/content";
 import { createSim, getPlayer } from "../src/sim.js";
 import { dist2d } from "../src/vec.js";
+import { tickAi } from "../src/ai.js";
+import { createRng } from "../src/rng.js";
+import type { Terrain } from "../src/terrain.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
@@ -249,5 +252,55 @@ describe("xuehuan (穴獾) burrow-evasion AI", () => {
     sim.step(idle);
     expect(tan.aiState).toBe("patrol"); // 未被选为目标——隐匿期间对捕食者也不可见
     expect(tan.targetId).toBeNull();
+  });
+
+  // M15 P2 rider（P1 报告「未确认」一节标注的预先存在 bug，Playwright 长会话里已经真实
+  // 复现两次——见 m15-p1-report.md）：randomLandPosNear 的 rejection-sample 在病态地形
+  // 下会耗尽 REAPPEAR_MAX_ATTEMPTS 次仍找不到陆地点。用一个"处处是水"的假 Terrain 直接
+  // 驱动 tickAi（绕开 sim.step，不依赖真实地图恰好有这样一块被水包围的孤岛/半岛，
+  // 100% 确定性复现"badger surrounded by water"），验证不再抛异常崩溃整个 tick 循环，
+  // 而是先有界重试（每次多隐藏 1 秒）、耗尽后原地兜底重现。
+  it("reappear stall fallback: an all-water pathological terrain never throws — bounded retries then reappears in place", () => {
+    const sim = createSim(21);
+    isolateToBadger(sim);
+    const p = getPlayer(sim.state);
+    const badger = sim.state.creatures.find((c) => c.species === "xuehuan")!;
+    p.pos = { ...badger.pos }; p.pos.x += 5; // 进入 senseRadius(12)，触发 channel
+    const vanishPos = { ...badger.pos };
+
+    // 病态地形：heightAt 恒低于 waterLevel——8m 半径圆环上任何角度采样都是水，
+    // randomLandPosNear 保证每一轮都耗尽 1000 次尝试后返回 null。digSpots 留空，
+    // 本测试不涉及挖点。terrain.size/waterLevel 沿用真实 sim.terrain 的量级，
+    // 只替换 heightAt/isWater 两个判定函数。
+    const allWaterTerrain: Terrain = {
+      size: sim.terrain.size,
+      waterLevel: sim.terrain.waterLevel,
+      digSpots: [],
+      heightAt: () => sim.terrain.waterLevel - 1,
+      isWater: () => true,
+    };
+    const rng = createRng(7); // 与 sim 内部 rng 无关——直接调 tickAi，绕开 sim.step
+
+    // 有界安全阀：channel(24 tick)+hidden(80 tick)+3 次耗尽重试(各 20 tick)≈164 tick，
+    // 1000 留足余量而不是真的"无限循环等它恢复"——一旦 hidden→wander 的转场发生就立即
+    // break，不依赖这个上限本身当断言。
+    let prevAiState = badger.aiState;
+    let recovered = false;
+    expect(() => {
+      for (let i = 0; i < 1000 && !recovered; i++) {
+        tickAi(sim.state, allWaterTerrain, rng);
+        if (prevAiState === "hidden" && badger.aiState === "wander") recovered = true;
+        prevAiState = badger.aiState;
+      }
+    }).not.toThrow();
+
+    expect(recovered).toBe(true);
+    expect(badger.hiddenTicks).toBe(0);
+    expect(badger.activity).toBe("idle");
+    expect(badger.locomotion).toBe("walk");
+    expect(badger.reappearStallCount).toBe(0); // 耗尽兜底成功后清零，不是跨周期累积
+    // 原地重现：channel/隐匿期间从不移动，兜底刻意保留 x/z 不变（见 ai.ts reappear() 头注）。
+    expect(badger.pos.x).toBeCloseTo(vanishPos.x, 9);
+    expect(badger.pos.z).toBeCloseTo(vanishPos.z, 9);
   });
 });

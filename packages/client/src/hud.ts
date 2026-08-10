@@ -63,6 +63,14 @@ export interface HudContext {
   essencePct: Record<EssenceType, number>;
   /** M15 P1（反制包）：state.adrenalineTicks>0 直传——驱动 HUD 的爆发图标 chip。 */
   adrenalineActive: boolean;
+  /**
+   * M15 P2（巢穴存在感——家巢罗盘）：null＝没有家，或有家但距离在 TUNING.homeCompassShowDist
+   * 之内（离家够近，不需要提示）。非 null 时 bearing 是"从当前镜头朝向转到家的方向"需要
+   * 转过的角度（弧度，正值＝顺时针，直接喂给 CSS `rotate()`——0 表示家就在正前方）；
+   * distanceM 是直线距离（米，未取整，本模块负责四舍五入展示）。main.ts 完成全部几何/
+   * TUNING 换算（同 nestBuildPct/essencePct 一样，本文件不 import TUNING/Terrain）。
+   */
+  homeCompass: { distanceM: number; bearing: number } | null;
 }
 
 export interface Hud {
@@ -426,6 +434,46 @@ const HUD_CSS = `
   50% { box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset, 0 0 14px 3px rgba(232, 180, 95, 0.55); }
 }
 
+/* ---- 顶部居中：家巢罗盘 chip（M15 P2，巢穴存在感）——离家远时才出现，与左上角的
+   开局目标卡（objectives.ts）、右上角小地图分居三个角落，互不遮挡。淡入用 opacity+
+   translateY 复用 hud-prompt-fade-in 同一条 keyframe（下方声明已经存在，不重复定义）。 ---- */
+.hud-home-chip {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: ${GLASS.pill};
+  backdrop-filter: blur(${GLASS.blurPill});
+  -webkit-backdrop-filter: blur(${GLASS.blurPill});
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px ${GLASS.hairlinePill} inset;
+  font-size: 13px;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  color: ${TEXT.primary};
+  white-space: nowrap;
+}
+.hud-home-chip.hud-visible { display: flex; }
+.hud-home-chip.hud-fade-in {
+  animation: hud-prompt-fade-in ${PROMPT_FADE_MS}ms ease-out;
+}
+.hud-home-chip-arrow {
+  display: inline-block;
+  color: ${ACCENT.hunger};
+  /* transform 由 updateHomeChip() 逐帧写 rotate(deg)——静态样式只声明过渡时长，箭头
+     跟着玩家转身平滑扭头，而不是每帧硬切。 */
+  transition: transform 120ms linear;
+}
+.hud-home-chip-dist {
+  color: ${TEXT.dim};
+  font-size: 12px;
+}
+
 /* ---- 右上：状态字（小地图正下方，无底框细体宽字距） ---- */
 .hud-status-text {
   /* top 174px = minimap.ts SKIN.top(16) + SKIN.cssSize(148) + 10px 间隙——
@@ -615,6 +663,39 @@ function updateOrb(handle: OrbHandle, value: number): void {
     handle.orbEl.classList.toggle("hud-orb-ready", ready);
     handle.lastReady = ready;
   }
+}
+
+/**
+ * 归一化到 (-π, π]——供 homeBearing 使用，独立导出供 hud.test.ts 直接断言边界行为
+ * （同 contextPrompt/statusLabel 的既有惯例："pure, DOM-free logic worth pinning down
+ * directly"，见下方两者头部注释）。
+ */
+export function normalizeAngle(rad: number): number {
+  const twoPi = Math.PI * 2;
+  let a = rad % twoPi;
+  if (a > Math.PI) a -= twoPi;
+  else if (a <= -Math.PI) a += twoPi;
+  return a;
+}
+
+/**
+ * 家巢罗盘 chip 的箭头角度（M15 P2，巢穴存在感——见 HudContext.homeCompass 字段注释）：
+ * 从当前镜头朝向转到家的方向需要转过的角度，弧度，CSS `rotate()` 正值＝顺时针（0＝家
+ * 就在正前方）。`dx`/`dz` 是"家相对玩家"的位移（homePos − playerPos，不是反过来）；
+ * `camYaw` 与 sim 的 `player.yaw` 共用同一个正向量约定 forward=(sin(yaw),cos(yaw))
+ * （见 camera.ts createFollowCamera 头部注释）。
+ *
+ * 推导（code review 2026-08-10 要求把这段数学从 main.ts 挪到这里，理由是 main.ts 顶层
+ * 会在 import 时就真的创建 THREE.Scene/WebGLRenderer/挂 DOM，天生没法被单元测试直接
+ * import，这段本可以纯函数验证的三角推导之前只能靠人工复核——见本文件其余 pure 函数
+ * 同一惯例，拆出来才测得到）：三维空间里镜头的屏幕右手方向 right=(-cos(camYaw),sin(camYaw))
+ * （three.js `Object3D.lookAt` 的标准基向量构造：z=eye-target=-forward，
+ * x=normalize(cross(up,z))）。把家的方向向量 (dx,dz) 投影到 (right,forward) 这组基上
+ * 再取 atan2，化简后恰好等于 camYaw-homeAngle——这正是下面这一行算的值。
+ */
+export function homeBearing(dx: number, dz: number, camYaw: number): number {
+  const homeAngle = Math.atan2(dx, dz);
+  return normalizeAngle(camYaw - homeAngle);
 }
 
 /** Action word + keycap label for one context-prompt state. */
@@ -829,6 +910,22 @@ export function createHud(): Hud {
   adrenalineChipEl.textContent = "濒死爆发";
   root.appendChild(adrenalineChipEl);
 
+  // 家巢罗盘 chip（M15 P2，巢穴存在感）：顶部居中，只在 ctx.homeCompass!==null 时出现
+  // ——见该字段注释，main.ts 已经把"是否够远"的门槎判断做完，这里只管展示。箭头是纯
+  // 字符（"▲"，呼应本文件全局"只用字符/字距表达"的既有语言），旋转角度直接写
+  // ctx.homeCompass.bearing（弧度→角度）。
+  const homeChipEl = document.createElement("div");
+  homeChipEl.className = "hud-home-chip";
+  const homeChipArrowEl = document.createElement("span");
+  homeChipArrowEl.className = "hud-home-chip-arrow";
+  homeChipArrowEl.textContent = "▲";
+  const homeChipLabelEl = document.createElement("span");
+  homeChipLabelEl.textContent = "家";
+  const homeChipDistEl = document.createElement("span");
+  homeChipDistEl.className = "hud-home-chip-dist";
+  homeChipEl.append(homeChipArrowEl, homeChipLabelEl, homeChipDistEl);
+  root.appendChild(homeChipEl);
+
   const deathEl = document.createElement("div");
   deathEl.className = "hud-death";
   const deathTitle = document.createElement("div");
@@ -855,6 +952,9 @@ export function createHud(): Hud {
   let lastStatus = "";
   let lastCarrying = false;
   let lastAdrenaline = false;
+  let lastHomeVisible = false;
+  let lastHomeDistText = ""; // ""：强制第一次可见时写入
+  let lastHomeAngleDeg = NaN; // NaN !== 任何角度值，强制第一次可见时写入
   let lastBuildPct = -1; // -1：强制第一帧写入，0 是"筑巢条隐藏"这个合法值本身，不能拿来当哨兵
 
   // Reload is a full page reload (Task 16 brief), not a sim reset call, so a
@@ -931,6 +1031,41 @@ export function createHud(): Hud {
       if (ctx.adrenalineActive !== lastAdrenaline) {
         adrenalineChipEl.classList.toggle("hud-visible", ctx.adrenalineActive);
         lastAdrenaline = ctx.adrenalineActive;
+      }
+
+      // 家巢罗盘 chip（M15 P2）：可见性切换时补一次 hud-fade-in（离家够远才第一次出现，
+      // 值得一个渐显——与叼运/爆发两个纯布尔 chip 不同，那两者是明确的按键/边沿事件，
+      // 这个是"走远了"这种渐进状态，淡入比硬切更不突兀，同 contextPrompt 切换文案的
+      // 惯例）；距离/角度两个数值各自独立 dirty-check，避免因为其中一个没变而白写另一个。
+      const home = ctx.homeCompass;
+      const homeVisible = home !== null;
+      if (homeVisible !== lastHomeVisible) {
+        homeChipEl.classList.toggle("hud-visible", homeVisible);
+        if (homeVisible) {
+          homeChipEl.classList.remove("hud-fade-in");
+          void homeChipEl.offsetWidth;
+          homeChipEl.classList.add("hud-fade-in");
+        }
+        lastHomeVisible = homeVisible;
+      }
+      if (home) {
+        const distText = `${Math.round(home.distanceM)}m`;
+        if (distText !== lastHomeDistText) {
+          homeChipDistEl.textContent = distText;
+          lastHomeDistText = distText;
+        }
+        // 四舍五入到整数角度才重写（同 updateRing/pct 与上面 distText 的既有 dirty-check
+        // 惯例——code review 2026-08-10 指出 bearing 是连续变化量，不取整会导致玩家转身/
+        // 走动时几乎每帧都重写 transform；CSS 的 120ms transition 本身已经足够平滑，
+        // 整数角度粒度肉眼分辨不出差异）。
+        const angleDeg = Math.round(home.bearing * (180 / Math.PI));
+        if (angleDeg !== lastHomeAngleDeg) {
+          homeChipArrowEl.style.transform = `rotate(${angleDeg}deg)`;
+          lastHomeAngleDeg = angleDeg;
+        }
+      } else {
+        lastHomeDistText = ""; // 走近后再走远：强制下次可见时重新写入（不依赖巧合命中同一个整数距离）
+        lastHomeAngleDeg = NaN;
       }
 
       // 筑巢进度条（Part 2，postfix-9）：与环形仪表同一套"四舍五入到整数百分比才重写"
