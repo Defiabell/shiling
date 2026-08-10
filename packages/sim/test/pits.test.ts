@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import { TUNING } from "@shiling/content";
 import { createSim, getPlayer, DT } from "../src/sim.js";
 import { dist2d } from "../src/vec.js";
+import { nearWater } from "../src/needs.js";
 
 const idle = { moveX: 0, moveZ: 0, sprint: false, interact: false, attack: false, carry: false, dormant: false };
 
 /**
  * 扫描出一个真正"开阔地"的陆地点：不在水域、离任何 dig spot 都超过 interactRange
- * 一截（+3m 安全余量）。`avoid`：已经用过的点列表，再扫描时顺便跳开（供"连续挖 4 个坑"
- * 的测试拿到 4 个互相隔开、都各自安全的坐标，而不是重复返回同一个点）。
+ * 一截（+3m 安全余量）、且不会被 `nearWater` 判成"在水边"（M15 P3：地形改动新增了
+ * 灵泉+险峰山地区，`isWater(x,z)` 本身为 false 不再足够——见 digging.ts 的 pit-dig
+ * 分支，它与 needs.ts 的饮水判据抢的是同一份 `nearWater` 几何，直接复用生产代码里
+ * 那份实现而不是自己重新估一个安全边距，才是真正对齐"这个点会不会被判成水边"的
+ * 权威判据，不依赖"land margin 应该留多宽"这种容易随地形改动漂移的估算）。
+ * `avoid`：已经用过的点列表，再扫描时顺便跳开（供"连续挖 4 个坑"的测试拿到 4 个
+ * 互相隔开、都各自安全的坐标，而不是重复返回同一个点）。
  */
 function findOpenGround(
   sim: ReturnType<typeof createSim>,
@@ -20,6 +26,7 @@ function findOpenGround(
       if (sim.terrain.isWater(x, z)) continue;
       const h = sim.terrain.heightAt(x, z);
       if (h <= sim.terrain.waterLevel + 1) continue; // 留够余量，避免贴着水线
+      if (nearWater({ pos: { x, y: h, z } }, sim.terrain)) continue;
       if (sim.terrain.digSpots.some((s) => dist2d({ x, y: 0, z }, s.pos) <= TUNING.interactRange + 3)) continue;
       if (avoid.some((a) => dist2d({ x, y: 0, z }, { x: a.x, y: 0, z: a.z }) <= TUNING.interactRange + 1)) continue;
       return { x, y: h, z };

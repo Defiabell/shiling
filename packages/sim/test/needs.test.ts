@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QINGQIU_GRAYBOX, TUNING } from "@shiling/content";
+import { QINGQIU_GRAYBOX, SPECIES, TUNING } from "@shiling/content";
 import { createSim, getPlayer, spawnCreature } from "../src/sim.js";
 import { createRng } from "../src/rng.js";
 import { killCreature } from "../src/needs.js";
@@ -98,6 +98,49 @@ describe("tickNeeds", () => {
     }
 
     expect(p.needs.thirst).toBeGreaterThan(t0); // 饮水生效
+  });
+
+  // M15 P3（山海经地形与地标——灵泉滋养）：站在灵泉里饮水应叠加加成（drinkPerSec×
+  // springDrinkMult + hp regen，封顶 maxHp）；离所有灵泉都足够远的普通水域饮水则
+  // 只有基础速率、无 hp regen。两个测试都先过滤掉潭狩——避免罕见的"1 秒内恰好被咬中"
+  // 干扰 hp 的精确断言（同 needs.test.ts 上面"holding attack"两个测试同一惯例）。
+  it("spirit spring bonus: drink rate ×springDrinkMult + hp regen while drinking inside springRadius", () => {
+    const sim = createSim(5);
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou");
+    const p = getPlayer(sim.state);
+    const spring = sim.terrain.springs[0]!;
+    p.pos.x = spring.pos.x;
+    p.pos.z = spring.pos.z;
+    p.needs.thirst = 20;
+    p.hp = 10;
+    const maxHp = SPECIES.youshou!.maxHp;
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true }); // 1s
+    expect(p.needs.thirst).toBeCloseTo(20 + TUNING.drinkPerSec * TUNING.springDrinkMult, 0);
+    expect(p.hp).toBeCloseTo(Math.min(maxHp, 10 + TUNING.springHpPerSec), 1);
+  });
+
+  it("no spring bonus while drinking away from every spring", () => {
+    const sim = createSim(5);
+    sim.state.creatures = sim.state.creatures.filter((c) => c.species !== "tanshou");
+    const p = getPlayer(sim.state);
+    outer: for (let x = -220; x <= 220; x += 4) {
+      for (let z = -220; z <= 220; z += 4) {
+        if (!sim.terrain.isWater(x, z)) continue;
+        const farFromAllSprings = sim.terrain.springs.every(
+          (s) => Math.hypot(x - s.pos.x, z - s.pos.z) > TUNING.springRadius + 1,
+        );
+        if (farFromAllSprings) {
+          p.pos.x = x;
+          p.pos.z = z;
+          break outer;
+        }
+      }
+    }
+    p.needs.thirst = 20;
+    p.hp = 10;
+    for (let i = 0; i < TUNING.tickHz; i++) sim.step({ ...idle, interact: true }); // 1s
+    expect(p.needs.thirst).toBeCloseTo(20 + TUNING.drinkPerSec, 0); // 仅基础速率，无灵泉加成
+    expect(p.hp).toBe(10); // 无 hp regen
   });
 });
 

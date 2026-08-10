@@ -2,6 +2,7 @@ import { SPECIES, TUNING } from "@shiling/content";
 import { DT } from "./sim.js";
 import type { Terrain } from "./terrain.js";
 import type { Creature, GameState, PlayerInput } from "./state.js";
+import { dist2d, type Vec3 } from "./vec.js";
 
 function clamp01to100(v: number): number {
   return v < 0 ? 0 : v > 100 ? 100 : v;
@@ -35,8 +36,13 @@ export function killCreature(state: GameState, c: Creature): void {
  * 的饮水判据在同一 tick 抢占同一次 E 按下，见 digging.ts 头部注释）。client 侧的
  * main.ts 另有一份独立的只读复刻（不经过这个导出）——那份是隔着 sim 包边界的 HUD
  * 探针，见该文件头注释，与这里的包内复用是两个不同的问题。
+ *
+ * 参数类型只要求 `{ pos: Vec3 }`（M15 P3 收紧，此前是完整的 `Creature`）——函数体
+ * 只读 `c.pos`，从未用过 `Creature` 的其它字段；收紧之后测试侧（pits.test.ts 的
+ * findOpenGround，用它排除"贴着灵泉/新地形水域的开阔地"）可以直接传一个裸的
+ * `{pos:{x,y,z}}`，不需要伪造一整个 Creature 对象来满足类型检查。
  */
-export function nearWater(c: Creature, terrain: Terrain): boolean {
+export function nearWater(c: { pos: Vec3 }, terrain: Terrain): boolean {
   if (terrain.isWater(c.pos.x, c.pos.z)) return true;
   const r = TUNING.interactRange;
   for (let i = 0; i < 8; i++) {
@@ -91,6 +97,22 @@ export function tickNeeds(state: GameState, terrain: Terrain, input: PlayerInput
     player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * DT);
   } else if (player && player.activity === "drinking") {
     player.activity = "idle";
+  }
+
+  // 灵泉滋养（M15 P3「山海经地形与地标」）：正在饮水（上面这个分支本 tick 刚设好/
+  // 延续设好 "drinking"）且落在任一灵泉 TUNING.springRadius(5m) 内——额外加成：
+  // 补足到 drinkPerSec×springDrinkMult 的总速率（上面已经加过 1x，这里只补
+  // (springDrinkMult-1) 倍的差额，两段相加正好等于总量，不重复计算），外加 hp regen
+  // （封顶玩家自己的 maxHp）。这是叠在"在哪片水域饮水"这件事之上的加成，不是独立于
+  // 饮水判据之外的另一套触发条件——灵泉本身只是水域里更优越的一种，站在灵泉旁但没有
+  // 满足上面的基础饮水判据（比如举着左键攻击）不会触发这段加成。
+  if (player && player.activity === "drinking") {
+    const nearSpring = terrain.springs.some((s) => dist2d(player.pos, s.pos) <= TUNING.springRadius);
+    if (nearSpring) {
+      player.needs.thirst = clamp01to100(player.needs.thirst + TUNING.drinkPerSec * (TUNING.springDrinkMult - 1) * DT);
+      const maxHp = SPECIES[player.species]!.maxHp;
+      player.hp = Math.min(maxHp, player.hp + TUNING.springHpPerSec * DT);
+    }
   }
 
   for (const c of state.creatures) {

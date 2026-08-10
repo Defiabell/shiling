@@ -276,6 +276,7 @@ describe("xuehuan (穴獾) burrow-evasion AI", () => {
       size: sim.terrain.size,
       waterLevel: sim.terrain.waterLevel,
       digSpots: [],
+      springs: [], // M15 P3：Terrain 接口新增字段，本测试不涉及灵泉，留空数组即可
       heightAt: () => sim.terrain.waterLevel - 1,
       isWater: () => true,
     };

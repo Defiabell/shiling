@@ -96,4 +96,13 @@ export const TUNING = {
   // 门口也挂着一个"家在这边"的箭头（噪音）——见 client main.ts computeHudContext 与
   // hud.ts 的 HudContext.homeCompass。
   homeCompassShowDist: 60,
+
+  // M15 P3（山海经地形与地标——owner feedback「地形太简单，不符合山海经的背景」）：
+  // 灵泉滋养，见 sim/src/needs.ts 的 tickNeeds 灵泉加成分支。springRadius(5m) 略大于
+  // 池子本身的可视半径（terrain.ts 的 SPRING_POOL_RADIUS=3m）——玩家站在池边（脚还没
+  // 踏进水里）也能吃到加成，与既有 nearWater() 的 8 向 interactRange 环状判据留出的
+  // 宽容度是同一读法（"贴着水边"就该算数，不是必须整只脚泡进水里）。
+  springRadius: 5,
+  springDrinkMult: 1.6, // 灵泉内饮水速率倍数（相对 drinkPerSec）
+  springHpPerSec: 0.5,  // 灵泉内饮水时叠加的 hp 回复速率（封顶 maxHp）
 } as const;

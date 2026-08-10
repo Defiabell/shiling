@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Terrain } from "@shiling/sim";
+import { mountainCenterFor, mountainMaskAt, MOUNTAIN_AMP_MULT, type Terrain } from "@shiling/sim";
 import type { WorldParams } from "@shiling/content";
 import { PALETTE, interpolateDayNight } from "./palette.js";
 
@@ -71,6 +71,13 @@ const HOME_NEST_GLOW_RADIUS = 0.16;
  * smoothstep 过渡余量，不会卡在插值边界来回抖动。
  */
 const HOME_NEST_GLOW_NIGHT_THRESHOLD = 0.3;
+
+// ---- 险峰山地区调色（M15 P3——owner feedback「地形太简单，不符合山海经的背景」）：
+// terrainBandColor 算出的高度分层基础色之上，按 sim/src/terrain.ts 的 mountainMaskAt
+// 再叠一层 zone-aware tint——"这块地读起来是山地区的一部分"，不是靠地形网格几何形状
+// 本身（那由 sim 的 ridged noise 负责）单独传达。----
+const MOUNTAIN_ROCK_TINT_MAX = 0.55; // mask=1 时向 mountainRock 混合的最大比例——留一点原有高度分层色，不整块替换成纯灰
+const MOUNTAIN_PEAK_TINT_MAX = 0.7; // 峰值区域（h>=peakMin）额外向 mountainPeakSnow 混合的最大比例，"崖线之上，白留"
 
 /**
  * 每个挖点标记的场景节点，按 dig spot id 索引：undug/dug 两套视觉常驻创建好，
@@ -149,8 +156,19 @@ function terrainBandColor(h: number, waterLevel: number, shoreMax: number, swamp
  * （坡度用 computeVertexNormals 烘焙好的法线 y 分量近似——法线越偏离正上方，
  * 说明相邻顶点高差越大、越陡，"相邻顶点高差近似法线倾角"正是这个意思，
  * 不需要再手工重新采样相邻格点)。必须在 computeVertexNormals() 之后调用。
+ *
+ * `mountainCenter`（M15 P3）：山地区 zone-aware tint 的圆心——按
+ * sim/src/terrain.ts 同一份 `mountainMaskAt` 算出这个顶点是否落在山地区（及落得多
+ * "深"），再向 mountainRock/mountainPeakSnow 混合，与 sim 侧 ridged noise 撑起来的
+ * 几何形状在空间上精确对齐（不是各自估一份可能对不齐的近似——山地区是"整块地形都
+ * 该看起来是山"这件事，不像 scatter.ts 的 slopeAt 那种允许近似的次要细节）。
  */
-function applyTerrainVertexColors(geometry: THREE.BufferGeometry, terrain: Terrain, params: WorldParams): void {
+function applyTerrainVertexColors(
+  geometry: THREE.BufferGeometry,
+  terrain: Terrain,
+  params: WorldParams,
+  mountainCenter: { x: number; z: number },
+): void {
   const positions = geometry.attributes.position;
   const normals = geometry.attributes.normal;
   if (!positions || !normals) throw new Error("applyTerrainVertexColors: missing position/normal attribute");
@@ -158,7 +176,11 @@ function applyTerrainVertexColors(geometry: THREE.BufferGeometry, terrain: Terra
   const shoreMax = terrain.waterLevel + 0.6;
   const swampMax = terrain.waterLevel + 0.9; // 沼泽湿度带上限（moisture proxy，W2）——与 scatter.ts 的芦苇采样带同公式
   const peakMin = params.hillAmp * 0.75;
+  const globalAmp = params.hillAmp * MOUNTAIN_AMP_MULT; // M15 P3：山地区振幅上限，见 terrain.ts 的 globalAmp 同一常量
+  const peakSpan = Math.max(1e-6, globalAmp - peakMin);
   const ink = new THREE.Color(PALETTE.outlineInk);
+  const mountainRock = new THREE.Color(PALETTE.mountainRock);
+  const mountainPeakSnow = new THREE.Color(PALETTE.mountainPeakSnow);
 
   const colors = new Float32Array(positions.count * 3);
   for (let i = 0; i < positions.count; i++) {
@@ -166,6 +188,19 @@ function applyTerrainVertexColors(geometry: THREE.BufferGeometry, terrain: Terra
     const color = terrainBandColor(h, terrain.waterLevel, shoreMax, swampMax, peakMin);
     const slope = clamp01(1 - normals.getY(i));
     color.lerp(ink, clamp01(slope * PALETTE.slopeInkFactor));
+
+    // 险峰山地区调色（M15 P3）：mask 越高越冷灰（裸崖石），峰值区域再叠一层更强的
+    // 留白（mountainPeakSnow）——两次 lerp 顺序不能颠倒：先定下"这是山地区的岩石"，
+    // 再单独强调"这一点还恰好是山地区的最高处"，后者是前者的加强，不是独立判断。
+    const mask = mountainMaskAt(positions.getX(i), positions.getZ(i), mountainCenter);
+    if (mask > 0) {
+      color.lerp(mountainRock, mask * MOUNTAIN_ROCK_TINT_MAX);
+      if (h >= peakMin) {
+        const peakT = clamp01((h - peakMin) / peakSpan);
+        color.lerp(mountainPeakSnow, mask * peakT * MOUNTAIN_PEAK_TINT_MAX);
+      }
+    }
+
     colors[i * 3] = color.r;
     colors[i * 3 + 1] = color.g;
     colors[i * 3 + 2] = color.b;
@@ -361,9 +396,14 @@ function buildHomeNestVisual(): THREE.Group {
  * mesh.position.y 做整体平移（不像下面的深水层那样）：waterLevel 直接烘焙进
  * 每个顶点的 y 分量，这样 updateWater 每帧原地重写这份 y 时，只靠
  * position.getX/getZ 就能复原世界坐标，不需要知道 mesh 自身的 transform。
+ *
+ * `seed`（M15 P3 新增参数）：与 `createSim(seed)`/`buildScatter(...,seed,...)` 同一个
+ * 世界种子——山地区调色需要知道 mountainCenterFor(seed, terrain.size) 算出的圆心，
+ * 才能让"看起来是山"的地形色与 sim 侧 ridged noise 撑起来的几何形状精确对齐。
  */
-export function buildTerrainMesh(terrain: Terrain, params: WorldParams): THREE.Group {
+export function buildTerrainMesh(terrain: Terrain, params: WorldParams, seed: number): THREE.Group {
   const group = new THREE.Group();
+  const mountainCenter = mountainCenterFor(seed, terrain.size);
 
   // --- 地形网格：分辨率对齐 WorldParams.cell，与 sim 内部高度图网格粒度一致 ---
   const segments = Math.max(1, Math.round(params.size / params.cell));
@@ -378,7 +418,7 @@ export function buildTerrainMesh(terrain: Terrain, params: WorldParams): THREE.G
   }
   positions.needsUpdate = true;
   terrainGeometry.computeVertexNormals();
-  applyTerrainVertexColors(terrainGeometry, terrain, params);
+  applyTerrainVertexColors(terrainGeometry, terrain, params, mountainCenter);
   const terrainMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
   const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
   group.add(terrainMesh);

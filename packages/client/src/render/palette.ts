@@ -41,6 +41,19 @@ export const PALETTE = {
   nestMoundEarth: 0x5c4630, // 土丘——新翻浮土，比 scatterWood(0x4a3f35) 更暖更红一档
   nestBoneWhite: 0xd8cfb8, // 骨堆——风吹日晒的骨白，比 organFang(0xe8e2d4，佩戴的器官挂件) 压暗一档，区分"地面散落"与"戴在身上"
   digRimGrassDry: 0x6b6650, // 普通挖点的枯草描边——比家巢草垫(scatterGrass 0x5f7355) 更黄更暗，读作"没人打理的野草"
+  // M15 P3（山海经地形与地标——owner feedback「地形太简单，不符合山海经的背景」）：
+  // 险峰山地区调色 + 志怪地标（landmarks.ts）专用色，与既有 scatter*/nest* 色相
+  // 区分——这几种读法（"崖石""虬曲古木""上古巨兽遗骸""发光灵芝""灵泉光晕"）都不该
+  // 借用任何已有语义的颜色。
+  mountainRock: 0x565a54,      // 山地区地形色（terrainMesh.ts 的 mask 混合）——比 terrainHigh(0x8b9784) 更冷更灰，读作"裸露崖石"
+  mountainPeakSnow: 0xe4e8e2,  // 山地区峰顶留白——比 terrainPeak(0xc9d2c4) 更亮更冷，"崖线之上，白留"
+  landmarkTreeTrunk: 0x362a1c,   // 古树——虬曲树干，比 scatterWood(0x4a3f35) 更深更冷一档，读作"年迈枯朽"
+  landmarkTreeFoliage: 0x2c3826, // 古树——深色叶簇，比 scatterGrass 更暗更蓝一档，读作"阴翳"
+  landmarkStoneRing: 0x74766d,   // 巨石阵——立石本体，比 scatterRock(0x6e6f6a) 更亮一档，"巨石"要比路边碎石更显眼
+  landmarkBoneWhite: 0xe2dac2,   // 白骨——上古巨兽遗骸，比 nestBoneWhite(0xd8cfb8，散落小骨) 更亮一档，呼应"巨大"的读法（风化巨骨反而更白）
+  landmarkMushroomCap: 0x3d6b5c,  // 发光灵芝——伞盖本体（未受光基色）
+  landmarkMushroomGlow: 0x6fe8b8, // 发光灵芝——emissive/加色贴图发光色，青绿灵光
+  springGlowRing: 0x7fd4e8,       // 灵泉——水面光环+上浮的灵光颗粒，冷青色（呼应 minimap.ts cardGlow 同一色相）
 } as const;
 
 /**

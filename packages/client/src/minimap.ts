@@ -81,6 +81,12 @@ const SKIN = {
   homeNestRingWidth: 1.5,
   homeNestRingGlowBlur: 5,
 
+  // 灵泉（M15 P3「山海经地形与地标」）：小地图上的冷青色圆点——terrain.springs 位置
+  // 永远不变，画在静态底图里（renderBaseLayer），不需要每帧重绘的覆盖层。
+  springDotColor: "#7fd4e8", // 与 render/palette.ts 的 PALETTE.springGlowRing 同一色相
+  springDotRadius: 3.5,
+  springDotGlowBlur: 4,
+
   viewConeColor: "rgba(232, 236, 242, 0.14)",
   viewConeHalfAngle: Math.PI / 6, // 30°
   playerMarkerSize: 6,
@@ -185,6 +191,21 @@ function renderBaseLayer(ctx: CanvasRenderingContext2D, terrain: Terrain, worldS
       // +1px 冗余避免相邻格之间出现亚像素缝隙（抗锯齿导致的可见细纹）。
       ctx.fillRect(ix * cell, iz * cell, cell + 1, cell + 1);
     }
+  }
+
+  // 灵泉（M15 P3）：位置永远不变（terrain.springs 是 sim 侧建图时一次性烘焙好的
+  // 常量数组），画进静态底图，不必占用每帧重绘的覆盖层预算。
+  for (const s of terrain.springs) {
+    const m = worldToMap(s.pos.x, s.pos.z, half, pxSize);
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, SKIN.springDotRadius, 0, Math.PI * 2);
+    ctx.fillStyle = SKIN.springDotColor;
+    ctx.shadowColor = SKIN.springDotColor;
+    ctx.shadowBlur = SKIN.springDotGlowBlur;
+    ctx.fill();
+    // 立刻复位——同 drawPlayerMarker/家巢圆环头部注释同一惯例，shadow* 是 ctx 全局态。
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = "transparent";
   }
 }
 

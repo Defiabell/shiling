@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createSim, DT, dist2d, getModifiers, getPlayer, isDormancyEligible, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
+import { createSim, DT, dist2d, getModifiers, getPlayer, isDormancyEligible, mountainCenterFor, mountainMaskAt, type Creature, type GameState, type PlayerInput, type Terrain } from "@shiling/sim";
 import { QINGQIU_GRAYBOX, SPECIES, TUNING, type EssenceType } from "@shiling/content";
 import { buildTerrainMesh, updateDigSpots, updateHomeNest, updateWater } from "./render/terrainMesh.js";
 import { applyInterp, snapshotPrev, syncCreatures, type CreatureViews } from "./render/creatureView.js";
@@ -13,6 +13,7 @@ import { createKillMarker } from "./render/killMarker.js";
 import { createEvolutionFx } from "./render/evolutionFx.js";
 import { buildScatter } from "./render/scatter.js";
 import { createPitVisuals } from "./render/pits.js";
+import { buildLandmarks } from "./render/landmarks.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createFollowCamera } from "./camera.js";
@@ -22,6 +23,7 @@ import { createOrganPanel } from "./organPanel.js";
 import { showTitle } from "./title.js";
 import { createPauseOverlay } from "./pause.js";
 import { createObjectivesTracker } from "./objectives.js";
+import { createFlavorToastTracker } from "./flavorToast.js";
 
 // 种子只在 client 边界产生（Date.now() 非确定性），sim 内部逻辑仍保持确定性。
 // 捕获成变量（而不是像原先那样直接内联进 createSim(...)）：Patch 3c 的地表
@@ -53,12 +55,22 @@ const modelLibraryPromise = loadModelLibrary().then((library) => {
 });
 setupAtmosphere(scene, renderer);
 mountPaperOverlay();
-const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX);
+// M15 P3：新增第三参 seed——山地区调色需要 mountainCenterFor(seed, terrain.size)
+// 算出的圆心，才能让"看起来是山"的地形色与 sim 侧 ridged noise 撑起来的几何形状
+// 精确对齐（见 terrainMesh.ts 该参数的头部注释）。
+const terrainGroup = buildTerrainMesh(sim.terrain, QINGQIU_GRAYBOX, seed);
 scene.add(terrainGroup);
 // Patch 3c：地表点缀，地形建好之后一次性构建（静态 InstancedMesh，不逐帧更新）。
 // W2：额外传入 QINGQIU_GRAYBOX（WorldParams）——scatter.ts 需要 hillAmp 算山地 rocky
 // 高度阈值，Terrain 接口本身不暴露它。
 buildScatter(scene, sim.terrain, seed, QINGQIU_GRAYBOX);
+// M15 P3（山海经地形与地标）：志怪地标（古树/巨石阵/白骨/发光灵芝丛）+ 灵泉可视化，
+// 与 scatter 同一层——地形建好之后一次性构建（大部分是静态 InstancedMesh，只有灵泉
+// 的上浮灵光颗粒需要每帧更新，见渲染循环里的 landmarks.update() 调用点）。
+const landmarks = buildLandmarks(scene, sim.terrain, seed);
+// 险峰山地区圆心（M15 P3）：main.ts 顶层只算一次（纯函数，同一个 seed 恒定不变），
+// 供下面 flavor toast 的"是否已进入山地区核心"判定复用——不需要每帧重新算。
+const mountainCenter = mountainCenterFor(seed, sim.terrain.size);
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -127,6 +139,10 @@ const organPanel = createOrganPanel();
 // UI 消费者——已跳过/完成过（isObjectivesDismissed()，见该文件）时内部直接返回零开销的
 // no-op tracker，这里不需要额外判断要不要创建它。
 const objectives = createObjectivesTracker();
+// 险峰/灵泉一次性风味 toast（M15 P3）：与 objectives 同层的又一个 UI 消费者——两条
+// flavor 都已展示过时（老玩家）内部直接返回零开销的 no-op tracker，同 objectives 的
+// 既有惯例（见 flavorToast.ts 头部注释）。
+const flavorToasts = createFlavorToastTracker();
 const eventDiffer = createSimEventDiffer();
 
 // ---- 顿帧 hitstop（Part 1，postfix-9 捕食特效强化）----
@@ -160,6 +176,12 @@ let hitstopEndTime = 0; // performance.now() 时间戳；0 或已过期 = 当前
  * ——这道检查把"玩家造成"从"id 不是我自己"收紧成"离我这么近，基本只能是我干的"。
  */
 const PLAYER_HIT_PROXIMITY = SPECIES.youshou!.attackRange;
+// M15 P3（flavor toast「险峰之地，古兽出没」的触发阈值）：mountainMaskAt 达到这个值
+// 才判定"已经踏入山地区核心"——高于 sim 侧灵泉排斥用的 0.6（terrain.ts 的
+// SPRING_MOUNTAIN_MASK_REJECT），故意收得更紧一档：flavor toast 是"哇，好险的山"
+// 这种一次性惊叹，应该等玩家真的走进了视觉上明显陡峭的核心区域才弹出，不是刚摸到
+// 过渡带边缘就触发（那样会读作"随便走两步就弹"，稀释掉这条提示本该有的分量）。
+const MOUNTAIN_ZONE_TOAST_THRESHOLD = 0.75;
 // **CRITICAL（见 simEvents.ts 头部 JSDoc 的快照契约）**：sim.state 是同一个对象、
 // 每次 step() 原地 mutate；prevSnapshot 必须是每步之前对 differ 实际读取字段的
 // 独立深拷贝，否则 prev/curr 会变成同一份引用，事件流会静默永远清零。这里严格
@@ -474,6 +496,9 @@ if (import.meta.env.DEV) {
     getPlayerCarrying: () => getPlayer(sim.state).carryingCarcassId,
     getPlayerBurrowId: () => getPlayer(sim.state).burrowId,
     getPlayerHunger: () => getPlayer(sim.state).needs.hunger,
+    // M15 P3 verification hook: hp 直读，供外部 Playwright 脚本验证灵泉饮水的 hp regen
+    // 加成（needs.ts 的灵泉加成分支）——之前只有 debugSetPlayerHp（写），没有对应的读。
+    getPlayerHp: () => getPlayer(sim.state).hp,
     getHomeNest: () => sim.state.homeNest,
     getDigSpots: () => sim.terrain.digSpots.map((s) => ({ id: s.id, x: s.pos.x, z: s.pos.z, dug: s.dug })),
     // M1 postfix N3（程序化音效）验证钩子：音频是否真的在播只能靠人耳判断，但下面三个
@@ -556,6 +581,15 @@ if (import.meta.env.DEV) {
     // M15 P2（开局目标链）verification hook：当前应该显示的引导文案，供外部 Playwright
     // 脚本断言"目标 1 显示→驱动击杀→目标 2 显示"这条转场，不需要靠 OCR 读画面文字。
     getObjectiveText: () => objectives.getCurrentText(),
+    // M15 P3（山海经地形与地标）verification hooks：灵泉/险峰位置直读，供外部
+    // Playwright 脚本确定性地把玩家 warpTo 到灵泉/山地区核心，而不必在 480×480 的
+    // 世界里凭空猜坐标（同 getDigSpots/getHomeNest 的既有惯例）。
+    getSprings: () => sim.terrain.springs.map((s) => ({ id: s.id, x: s.pos.x, z: s.pos.z })),
+    getMountainCenter: () => ({ x: mountainCenter.x, z: mountainCenter.z }),
+    getMountainMaskAt: (x: number, z: number) => mountainMaskAt(x, z, mountainCenter),
+    // landmarks.ts 的地标 site 锚点——同上一条同一惯例，供外部 Playwright 脚本飞到
+    // 古树/巨石阵/白骨/灵芝丛附近取景截图。
+    getLandmarkAnchors: () => landmarks.anchors,
   };
 }
 
@@ -669,6 +703,10 @@ renderer.setAnimationLoop(() => {
   // 陷坑视觉（M15 P1）：与 dig spot/家巢标记同一 gate（无条件每帧调用）——state.pits
   // 在 `started` 变真之前恒为空数组（sim.step 从未跑过），提前调用没有任何副作用。
   pitVisuals.update(sim.state);
+  // 灵泉可视化（M15 P3）：与 updateWater/pitVisuals 同一"backdrop 无条件继续吃
+  // tSec/frameDt"惯例——上浮灵光颗粒纯靠 tSec 驱动，标题画面/暂停/顿帧期间继续飘不
+  // 依赖 sim 是否在步进。
+  landmarks.update(frameDt, tSec);
   // 昼夜光照（M1 B5）：无条件每帧调用——timeOfDay 只在 sim.step() 推进时变化，暂停/
   // 标题画面/顿帧/蜕变冻结期间重复写入同一份取值没有副作用，与 particles/killMarker
   // 同一套"backdrop 无条件继续吃 tSec/frameDt"惯例。
@@ -798,6 +836,16 @@ renderer.setAnimationLoop(() => {
       hasHomeNest: sim.state.homeNest !== null,
       stash: sim.state.homeNest?.stash ?? 0,
       hasEvolved: sim.state.lastEvolution !== null,
+    });
+    // 险峰/灵泉一次性风味 toast（M15 P3）：与 objectives 同一 gate，同一份"只读复刻
+    // sim 判据"惯例——nearSpringDrinking 与 needs.ts 灵泉加成分支用的是同一份几何
+    // 判据（player.activity==="drinking" && 落在任一灵泉 springRadius 内），只是这里
+    // 不改任何状态，纯读取。
+    flavorToasts.update({
+      inMountainZone: mountainMaskAt(player.pos.x, player.pos.z, mountainCenter) > MOUNTAIN_ZONE_TOAST_THRESHOLD,
+      nearSpringDrinking:
+        player.activity === "drinking" &&
+        sim.terrain.springs.some((s) => dist2d(player.pos, s.pos) <= TUNING.springRadius),
     });
   }
   renderer.render(scene, camera);
