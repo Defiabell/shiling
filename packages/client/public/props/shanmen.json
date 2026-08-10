@@ -1,0 +1,37 @@
+{
+  "id": "shanmen",
+  "nameCn": "山门",
+  "generatedAt": "2026-08-10T14:50:10.111Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted weathered ancient Chinese stone gate arch, two thick stone pillars supporting one horizontal stone lintel on top, the lintel visibly cracked and chipped with age, faint carved patterns on the pillars, standalone freestanding archway with open space between the pillars, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, wooden gate, torii, modern architecture, wall attached, doors",
+  "tasks": {
+    "previewTaskId": "019fec25-0223-709a-8655-1bd9cb23cd2b",
+    "refineTaskId": "019fec25-fdf8-79ef-bdcc-63eda055ee6a"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 5067884,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec25-fdf8-79ef-bdcc-63eda055ee6a/output/preview.png?Expires=4939920000&Signature=eZ4MSJfXfGRH5RTXG1ahxF9Doj1GZIWMlfoUpez09CR5pgmtIZICnk0mfIVuOyzbTpPn8NpohTSGa6W6PiMyXTy0tr0AKMfuvfTHo6AcRbJEDTvKunQ9cFE~BTxo4Pby1fjn0K24~UCFc7Q3uipKi~1UQpr9tTTCFTSUVO~gzHMgibyRVDvp4kTCB6qNNZU3LfTLN1ENxnYFJQWZXmf1t~MsTI6EjGDbRQsWiYFsvnU3bJyestPPRMC0sm~DYJSPwdCRLqF1e4KlNxqNz9lcCs3CUeLREU1N45vHxKQMyEUU~AF58jatPR4PO6C2aQS5lqO9snm8OXganRfKcU4f-w__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:39.615Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 5067884,
+    "glbBytesAfterOptimize": 762192,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

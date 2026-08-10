@@ -1,0 +1,37 @@
+{
+  "id": "shibei",
+  "nameCn": "石碑",
+  "generatedAt": "2026-08-10T14:42:43.641Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted ancient Chinese stone stele, a tall weathered stone slab standing upright, deeply carved mysterious patterns and archaic script covering its face, patches of green moss growing across the cracked surface, sitting on a simple stone base, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, readable modern language, flat unweathered surface",
+  "tasks": {
+    "previewTaskId": "019fec1e-4c84-7f32-a7e9-122d39f846a1",
+    "refineTaskId": "019fec1f-331b-7f11-b356-6b86515f4df3"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 4929200,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec1f-331b-7f11-b356-6b86515f4df3/output/preview.png?Expires=4939920000&Signature=gPNXSXEyHntU-WFQxN377xG~F7HPENkl3-oOUXAGiAAKcGeBB3QT4WfFDRh1r8qpKc3GAUlTAN1Iawa~qM-TWRrEXiBeTQDyLDEUzlnAInBh2pPJzRldjqr2rO1b4tCUPrGcW0s0NRhDs03cHmiSe37hWm7AwtEn21XBGdDTUhyJXIkXBob-4gNOyHDwrxN3XQrWv~Sj4~VjWpwIZgrip1wdAlxKzrezzdXDIRNKBXzjnlmyXuuRt6~BFXdCXvST0q1Qk~f5~UBpYRTCg-feQrMpxFZQev0-XwzFPIrl-NZY-w1-BAFVw2Q0o00MJHhdkNUxxxhJSvNS8P5NKIXzfQ__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:38.598Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 4929200,
+    "glbBytesAfterOptimize": 869700,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

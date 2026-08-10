@@ -1,0 +1,37 @@
+{
+  "id": "gushu",
+  "nameCn": "古树",
+  "generatedAt": "2026-08-10T14:55:48.605Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted ancient gnarled tree, a massive thick twisted trunk with deeply grooved bark, gnarled writhing branches reaching outward and upward, sparse patches of red autumn leaves clinging to the branch tips, an air of great age and mystery, rooted firmly in the ground, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, lush full green canopy, thin sapling, dead bare tree",
+  "tasks": {
+    "previewTaskId": "019fec2a-1354-725c-ae03-5e4b04baac83",
+    "refineTaskId": "019fec2b-1a37-71cc-befa-52c424bac1ed"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 4250952,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec2b-1a37-71cc-befa-52c424bac1ed/output/preview.png?Expires=4939920000&Signature=ooxSSrKx9ePpH8ZZPR-kxi-Y6TRA2nzRDJhRPwXkNmPlYtF9Cu3q3rLp-GjCFHUqaBpoDyK63HHeyp5XTbqSqPrJ0EgRr-QOtfUSqTAliO4mjNoNTm9r9Znfox8eEVkYgWa2F4eXPERCXBpEWapAQdGTyf-470sLu3Kvq84VS6JcrayWw24D0Tvu9H1Tv6pC13NS1a-sFlzwS7XuntNQ-b4NnjTAcZBvHT8cbSGbjpaA6R9m89lsXbax9w456znCVGD6yXhCyxwm0svtRB9F28BbEfWh69o2fu8~FPz9KFhcOA6RDcYNV46iZC~kHlyWj4hFsjJy6cvyVq4Exh8bzg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:40.298Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 4250952,
+    "glbBytesAfterOptimize": 838260,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

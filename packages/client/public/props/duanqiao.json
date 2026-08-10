@@ -1,0 +1,37 @@
+{
+  "id": "duanqiao",
+  "nameCn": "断桥",
+  "generatedAt": "2026-08-10T14:58:11.161Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted broken white jade bridge fragment, an ornately carved white stone bridge deck with decorative railings, one end shattered and jagged where the bridge has broken off, delicate carved railing posts along the intact side, elegant ancient craftsmanship, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, complete unbroken bridge, wooden bridge, rope bridge, modern railing",
+  "tasks": {
+    "previewTaskId": "019fec2c-3ad2-7340-a101-a802cccfba15",
+    "refineTaskId": "019fec2d-43cc-7bbf-9275-cdff04e41f77"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 4923156,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec2d-43cc-7bbf-9275-cdff04e41f77/output/preview.png?Expires=4939920000&Signature=b89pVzM75josnwcaA6fw1aatmcNmN6ZKwDQdDCSKZRzQfWT56Swc9P9Hq7uPOglfjPnCYAh89Ub3bPcSGRSv7I~LWNbgreAESAbNjWgJS00YSIzgnqIbazv6BHW-B5QkL0Rb7hKrJOxyqSARRfdyhAht-c3UxIIT6-Eeu2qSVItcRNph264Icuue8qQ22sSOnsV3oYwldwlSABpG3HdhKIRSuYULVYYGnuePCm49ZPzKRA98WzNK5YgPFj5Clo5~rZLEYwPRaI125gow18zsm6VNM3As4U11n0PmvXtE2Ajz6XMaUYDPt1wbtKQ3KYSAEYYL6ONVPJ~QJqntEtsjzg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:40.636Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 4923156,
+    "glbBytesAfterOptimize": 944208,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

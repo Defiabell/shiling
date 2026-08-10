@@ -1,0 +1,37 @@
+{
+  "id": "lingzhi",
+  "nameCn": "灵芝",
+  "generatedAt": "2026-08-10T15:06:13.776Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted oversized glowing lingzhi mushroom cluster growing on top of an old tree stump, several large fan-shaped mushroom caps of varying size clustered together, caps glowing with soft bioluminescent cyan-green light, rich woody stump base, fantastical magical fungus, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, single small mushroom, edible button mushroom, no stump, dull matte caps",
+  "tasks": {
+    "previewTaskId": "019fec31-8723-730f-a8ff-5a872a8abc0e",
+    "refineTaskId": "019fec33-af1d-7d5d-91f2-c0de7536fc69"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 4991044,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec33-af1d-7d5d-91f2-c0de7536fc69/output/preview.png?Expires=4939920000&Signature=i9V7~bDb2L7Lk~T3AFJ9Z5AG9VikZR4hufqV18j40FFfekdRfwt2S5UH~1FeynF87EGyuOqr~ZZdVYmpcw1ULbFLp-F3A4Mgmrv2A9EaymMWiAur7ntnwBRX7JkIZpHLZsCD7LgZLtU4Mywk3J4qPXhQ-js5gCCJr3in~B~lTZjJmYp09h-agbvI8Qx1-yUbPHo8wu4HMHgK9FWz9z7MJTibgRMyK8~yV1YocyPxtjTmfcV-lHeI1sq5rXAOxHvgUUCbeTh-xmoVhusdXTr7lhGkKUzQjJSQoVi2P5amGH4tQpFWwGGziOph0eEYw0GCfAKOzhGC8gnMafeKLlS9bQ__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:41.322Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 4991044,
+    "glbBytesAfterOptimize": 861756,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

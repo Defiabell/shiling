@@ -1,0 +1,37 @@
+{
+  "id": "baigu",
+  "nameCn": "白骨",
+  "generatedAt": "2026-08-10T15:01:35.811Z",
+  "pipeline": "packages/gen (Meshy API text-to-3d preview+refine)",
+  "settings": {
+    "aiModel": "meshy-6",
+    "textureResolution": "2k",
+    "targetPolycount": 12000
+  },
+  "prompt": "A stylized hand-painted giant mythical beast skull, an enormous weathered bone-white skull half-buried in the ground, deep eye sockets, short broken horn stubs on top of the skull, cracked and pitted ancient bone surface, an air of a long-dead colossal creature, painterly stylized non-photorealistic look, clean readable silhouette, game-ready 3D asset",
+  "negativePrompt": "photorealistic, real photo, realistic skin texture, blurry, low detail, text, watermark, logo, modern, sci-fi, plastic, creature, animal, human, character, humanoid, full skeleton, human skull, clean polished bone, small skull",
+  "tasks": {
+    "previewTaskId": "019fec2e-67c3-7c16-a2ef-347d6aa56cdf",
+    "refineTaskId": "019fec2f-9d9e-7422-a690-759ae3124bad"
+  },
+  "credits": {
+    "preview": 20,
+    "refine": 10
+  },
+  "glbBytes": 4361088,
+  "thumbnailUrl": "https://assets.meshy.ai/288281a5-3869-49b4-9074-8083c558ebdf/tasks/019fec2f-9d9e-7422-a690-759ae3124bad/output/preview.png?Expires=4939920000&Signature=RrCkI4v81ffTymAWCYfaGtwHXoHHyoki1Nfha9YXcKf8pcvetmcLpz9RWBwtnHUwb0bzxbzYu4DecfCHvvRG9jFV-kD6fxPcHs5gEcimspb5X6v6Q9KElCLyfmsKiaBcU-Q1N2GIOhubgvUoRDwX1IY8jjho8llUVP4Fx4Vq78cuKYYUVX3T1Z2VY6uId1QdZtLhY5BDkExy~baq0lAIACSJDz151K~mmc-WkZZvOUZsWchnP-DXGd6OivBqTTiZU06S7SN~jQHPRUX85QONxxbS1OI3pA0VBoiA0d-aWADS5EYUGSG5OIEDvUsZwmLW2MkoEGseojrJTgjcg~qVgA__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "note": "Auto-rigging/animation not applicable: this is a static architectural/landscape set-piece, not a character — no rigging/animation calls were made for this asset.",
+  "optimization": {
+    "tool": "@gltf-transform/cli optimize",
+    "appliedAt": "2026-08-10T15:07:40.981Z",
+    "params": {
+      "compress": false,
+      "textureCompress": "auto",
+      "textureSize": 1024,
+      "simplify": false
+    },
+    "glbBytesBeforeOptimize": 4361088,
+    "glbBytesAfterOptimize": 815352,
+    "reason": "Geometry was already on-target at generation time; this pass only shrinks the texture."
+  }
+}

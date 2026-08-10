@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "generate": "node src/generate-creatures.ts",
+    "generate:props": "node src/generate-props.ts",
     "validate": "node src/validate-glb.ts",
     "optimize": "node src/optimize-glb.ts",
+    "optimize:props": "node src/optimize-props-glb.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
