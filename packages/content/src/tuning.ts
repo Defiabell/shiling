@@ -20,7 +20,11 @@ export const TUNING = {
   // 战斗
   attackCooldownSec: 1.0,
   // 挖洞
-  digDurationSec: 4,         // 挖开一个洞口耗时
+  // M15 P4（owner playtest feedback「洞太稀，被追上前挖不完」）：4→3——与 world.ts 的
+  // digSpotCount 24→44（洞更密）同一批修复的另一半，紧急挖洞窗口更现实；沿用
+  // digging.test.ts/pits.test.ts/organs.test.ts/carrying.test.ts 既有的参数化写法
+  // （全部读 TUNING.digDurationSec 而不是硬编码 4），这些测试不需要跟着改字面量。
+  digDurationSec: 3,         // 挖开一个洞口耗时
   burrowFatigueRecoverPerSec: 4,
   // AI
   grazeHungerPerSec: 0.8,    // 苓鼠吃草回复速度（原地 graze）

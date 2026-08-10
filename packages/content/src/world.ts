@@ -18,8 +18,13 @@ export interface WorldParams {
 // 不会让两个新物种灭绝（见 ecology.test.ts），也未观察到 tanshou 因为多了一种可猎物种
 // 而对 lingshu 的捕食压力发生显著转移（tanshou 现在也会游泳猎鱼，但 lingshu 种群规模
 // 稳定在既有区间，未重新调过 lingshu/tanshou 的既有密度）。
+// M15 P4（owner playtest feedback「洞太稀，被追上前挖不完」）：digSpotCount 24→44——
+// 逃生窗口（潭狩追近时能否就近找到一个挖点）主要靠密度，不是靠单个洞挖得多快（那个另见
+// tuning.ts 的 digDurationSec 4→3），两处一起改才是完整修复。未重跑 ecology 8-seed 之外
+// 的密度调优——digSpots 是纯地形层对象，不参与 ai.ts 的任何捕食/生存判定，因此不会改变
+// lingshu/tanshou/xiyu/xuehuan 的种群曲线（见 ecology.test.ts 的 8-seed 灭绝检查）。
 export const QINGQIU_GRAYBOX: WorldParams = {
-  size: 480, cell: 2, waterLevel: -1.5, hillAmp: 9, digSpotCount: 24,
+  size: 480, cell: 2, waterLevel: -1.5, hillAmp: 9, digSpotCount: 44,
   spawns: [
     { species: "lingshu", count: 26 },
     { species: "tanshou", count: 4 },

@@ -72,11 +72,25 @@ export function computeArrowLook(
   arrowDown: boolean,
   frameDt: number,
 ): { dx: number; dy: number } {
-  const yawDir = (arrowRight ? 1 : 0) - (arrowLeft ? 1 : 0);
-  const pitchDir = (arrowDown ? 1 : 0) - (arrowUp ? 1 : 0);
-  // 符号与鼠标拖拽的 accumDx/accumDy 完全同义："方向右/下"就是视觉上"往右/往下拖拽"
-  // 一次——ArrowRight 像拖右（dx 正，yaw 增），ArrowUp 像拖上（dy 负，pitch 增，见
-  // camera.ts 的 `pitch = pitch - delta.dy * DRAG_SENSITIVITY`）。
+  // Sign fix（owner playtest feedback 2026-08-10「方向键转视角左右反了」）：这两行
+  // 的符号在此之前是 `(arrowRight?1:0)-(arrowLeft?1:0)` / `(arrowDown?1:0)-(arrowUp?1:0)`
+  // ——那版注释声称"与鼠标拖拽的 accumDx/accumDy 完全同义"，但那个假设本身就是错的：
+  // camera.ts 把 cam.yaw += delta.dx*SENS，而相机是 `eye = target − forward(yaw)` +
+  // `camera.lookAt(target)` 摆位（见 composeMove() 头部注释那次独立证明的
+  // "screen-right = forward(yaw−π/2)"结论）——这个几何关系下，yaw 增大实际让视线转向
+  // **左**（forward 对 yaw 的偏导 = −Right(yaw)，Right 用 three.js 真实 lookAt 矩阵验证
+  // 过），pitch 增大（camera.ts 的 `pitch = pitch − dy*SENS`，dy<0 时 pitch 增）则让
+  // 相机爬升到更接近正上方俯视——不是"抬头看"而是"俯视"。旧符号因此让 ArrowRight/↑
+  // 实际转向左/俯视，与直觉恰好相反（owner 实测截图 + Playwright 探针 landmark 像素
+  // 位移双重验证，见 test 注释）。现在两行都反过来：
+  //   ←＝视角向左转，→＝视角向右转（yawDir 符号翻转）
+  //   ↑＝视角抬起（更贴近水平/仰视角，pitch 减小），↓＝视角压低（更接近俯视，pitch 增大）
+  // 鼠标拖拽的方向（camera.ts 的 `cam.yaw += delta.dx*SENS` / `pitch -= delta.dy*SENS`）
+  // 完全不动——owner 从未反馈拖拽方向有问题，这次只在方向键这一侧翻转，不去动
+  // camera.ts 或 pointermove 那段共享通路（两者仍然共用同一个 camDelta()/consume()
+  // 累加器，只是方向键这一路现在往里塞的符号变了）。
+  const yawDir = (arrowLeft ? 1 : 0) - (arrowRight ? 1 : 0);
+  const pitchDir = (arrowUp ? 1 : 0) - (arrowDown ? 1 : 0);
   return {
     dx: (yawDir * ARROW_YAW_RATE * frameDt) / DRAG_SENSITIVITY,
     dy: (pitchDir * ARROW_PITCH_RATE * frameDt) / DRAG_SENSITIVITY,
