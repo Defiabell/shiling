@@ -28,6 +28,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 34 },
     title: "丛中窥影",
     body: "追踪的血迹断在一片棘丛前。丛内有物在动，压得枝叶簌簌作响，却始终不肯出来。你伏在下风处等了半刻，那声响不急不缓，像是知道你在等。",
+    illustration: "events/qiu-hunt-thicket.webp",
     illustrationBrief: `近景一片密棘丛占画面右半，枝叶缝里只透出一团看不清形状的暗影；左下角${VT.self}伏地，耳朵朝向棘丛。薄雾，光自左后斜来，留白在上方。`,
     choices: [
       {
@@ -74,6 +75,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 26 },
     title: "幼鹿哀鸣",
     body: "泥泞里陷着一头幼鹿，后腿折了，见你来反而不叫了，只把头往草里埋。它的母亲还在坡上打转，喉里发出你听不懂的调子。血腥气很淡，风把它压在低处，只有你闻得见。",
+    illustration: "events/qiu-hunt-fawn.webp",
     illustrationBrief: `中景泥沼里一头折了后腿的幼鹿低头埋进草中，坡上远处一头母鹿侧身回望；${VT.self}立于近景左侧，只见半身与压低的头。黄昏，泥面反光。`,
     choices: [
       {
@@ -115,6 +117,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 30 },
     title: "腐肉之宴",
     body: "沟底一具鹿骸，皮肉半烂，蝇声如沸。空了三日的胃在叫，可那气味里除了腐还有别的东西，隐隐发甜——青丘的老兽说，发甜的肉不能碰。你不是老兽。",
+    illustration: "events/qiu-hunt-carrion.webp",
     illustrationBrief: `俯视沟底一具半烂鹿骸，蝇群成一层薄雾般的黑点；${VT.self}立在沟沿探头下望，姿态犹豫。光线阴沉，画面下三分之一留给阴影。`,
     choices: [
       {
@@ -161,6 +164,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 22, forbidsFlags: [FLAG_HUNTED] },
     title: "绳套",
     body: "兽径当中横着一根麻绳，绳头系在弯下的树梢上，绳圈里搁着半块熏肉。你从没见过这样规整的东西——它太直了，直得不像山里长出来的。可肉香是真的。",
+    illustration: "events/qiu-hunt-snare.webp",
     illustrationBrief: `近景${VT.shengTao}横在窄兽径中央，绳索绷得笔直；${VT.self}在三步外压低身子嗅探。林间斜光打亮熏肉，其余处偏暗。`,
     choices: [
       {
@@ -207,6 +211,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], seasons: [1, 2], weight: 24 },
     title: "石蜂之巢",
     body: "崖壁裂缝里嵌着一团灰白的巢，蜜色顺着石纹往下淌，蜂群在洞口结成一片薄薄的云。甜味很重，重到让你一时想不起来疼是什么滋味。",
+    illustration: "events/qiu-hunt-beehive.webp",
     illustrationBrief: `仰视崖壁一道裂缝中的${VT.shifeng}，蜜色沿石纹垂流，蜂群如薄云绕巢；崖下${VT.self}仰头，前爪已搭上石棱。正午强光。`,
     choices: [
       {
@@ -254,6 +259,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], seasons: [0, 1, 2], weight: 26 },
     title: "浅滩鳞影",
     body: "溪水拐弯处积成一潭，潭底压着一片游动的银亮。水冷得刺骨，深处望不见底，可那些鳞光就在两尺之下，看着一伸爪就能够到。看着而已。",
+    illustration: "events/qiu-hunt-fishpool.webp",
     illustrationBrief: `水面视角，潭底数尾${VT.wenyao}银鳞成群游动；${VT.self}立在浅滩石上，一只前爪已探入水中，水面漾开圈纹。清晨，水色偏青。`,
     choices: [
       {
@@ -300,6 +306,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 24 },
     title: "秃鹫争食",
     body: "你按倒的东西还热着，三只秃鹫已落在旁边枯枝上，一动不动地看你。它们不急。它们知道你要走，也知道你一次带不走多少，剩下的迟早是它们的。",
+    illustration: "events/qiu-hunt-vulture.webp",
     illustrationBrief: `中景枯枝上三只秃鹫并列俯视，姿态静止；地面${VT.self}压着一头猎物抬头对峙。逆光，枝与鸟近乎剪影，地面留一小片亮部。`,
     choices: [
       {
@@ -346,6 +353,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 26 },
     title: "穴中有声",
     body: "草根下的土是新翻的，爪子一探，底下空空作响。那声音往深处退，退到你听不见为止，只留一股温热的土腥气从洞口慢慢漫出来。里头不止一只。",
+    illustration: "events/qiu-hunt-burrow.webp",
     illustrationBrief: `低角度近景一处新翻土的洞口，土粒散落；${VT.self}前爪按在洞沿低头细听，耳朵前倾。画面右侧一只${VT.xueshu}的尾巴刚没入土中。`,
     choices: [
       {
@@ -394,6 +402,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], weight: 24, forbidsFlags: [FLAG_FOX_ALLY] },
     title: "草狐夺食",
     body: "你正低头进食，一头草狐从侧面窜出来，咬住猎物的另一头往回拖。它比你瘦，眼睛比你亮，牙齿也不见得比你短。两边都不肯松口，肉在中间被扯得咯咯响。",
+    illustration: "events/qiu-hunt-fox-steal.webp",
     illustrationBrief: `中景${VT.self}与${VT.caohu}各咬猎物一端相持，四足抵地，尘土微扬；两兽头部齐平对视。侧逆光，背景是枯草坡。`,
     choices: [
       {
@@ -440,6 +449,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], seasons: [2, 3], once: true, weight: 30 },
     title: "月下白兔",
     body: "月色最亮的那一夜，草坡上蹲着一只通体雪白的兔，不逃，也不看你。它耳后有一道旧疤，像是被什么东西咬住过又放开了。风停了，草也不动。",
+    illustration: "events/qiu-hunt-moon-hare.webp",
     illustrationBrief: `夜景全月下的白草坡，${VT.baiTu}端坐正中不动；${VT.self}自画面左侧低身逼近，只见轮廓。月光把两者影子拉向同一侧，大面积留白给天空。`,
     choices: [
       {
@@ -486,6 +496,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], minYear: 3, weight: 16 },
     title: "山魈拦路",
     body: "岩影里立着一个人形的东西，赤面无毛，两臂过膝。它把你按倒的猎物提起来看了看，随手扔在一边，然后转过脸来看你。它看你的样子，和你看猎物时一样。",
+    illustration: "events/qiu-hunt-shanxiao-road.webp",
     illustrationBrief: `中景巨岩阴影中${VT.shanxiao}直立，一手垂着刚扔下的猎物；${VT.self}在画面下缘压低前身，鬃毛竖起。天光只从岩顶漏下一线。`,
     choices: [
       {
@@ -532,6 +543,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["hunt"], maxYear: 2, once: true, weight: 55 },
     title: "初猎",
     body: "你第一次追上活物。它在爪下挣得很凶，喉咙里咕噜作响，热的血溅在脸上，甜得让你发抖。这一刻你忽然明白自己是什么——不是吃草的那种，是另一种。",
+    illustration: "events/qiu-hunt-first-blood.webp",
     illustrationBrief: `近景${VT.self}压住一只${VT.yezhi}，口鼻沾血，双眼睁大；羽毛四散飞起。构图紧凑，背景虚化成一片枯黄。`,
     choices: [
       {

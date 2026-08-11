@@ -33,6 +33,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 28 },
     title: "灵泉",
     body: "乱石之间一眼清泉，泉底铺着九曲青石纹，水面浮一层极薄的白气。你低头去饮，水里那张脸比你自己的更清楚些——它先动的嘴，你才觉出渴。",
+    illustration: "events/qiu-explore-spring.webp",
     illustrationBrief: `近景${VT.lingquan}占画面下半，水面浮薄白气；${VT.self}俯身饮水，水中倒影比实体清晰。四周乱石，晨光偏冷，上方留白。`,
     choices: [
       {
@@ -88,6 +89,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 22 },
     title: "断碑",
     body: "半截石碑埋在藤里，字是刻上去的，比爪痕深得多。你不识字，可看久了那些笔画会在眼里动，像很多小虫排着队往同一个方向走。你也想跟着走。",
+    illustration: "events/qiu-explore-stele.webp",
     illustrationBrief: `中景${VT.duanbei}斜插在藤蔓中；${VT.self}仰头贴近碑面，鼻尖几乎触到刻痕。林间散光，碑面刻痕投出细影，右侧大片留白。`,
     choices: [
       {
@@ -143,6 +145,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     },
     title: "白泽问路",
     body: "山脊上站着一头人面四目的白鹿，通体霜白，额生双角。它不惊，也不避，先开口问你：你要往哪里去。你听得懂它的话——正因为听得懂，你才更怕。",
+    illustration: "events/qiu-explore-baize.webp",
     illustrationBrief: `远中景山脊线上${VT.baize}侧立，四目齐睁；坡下${VT.self}仰头相望，两者间隔一段空白山脊。天光平，云层压低，构图左右分置。`,
     choices: [
       {
@@ -193,6 +196,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], minYear: 3, once: true, weight: 44 },
     title: "垂死应龙",
     body: "谷底横着一条身长数丈的巨物，背上残翼半张，鳞色青金而黯。它还活着，每一次呼吸都把地上的碎石一粒粒吹开。它的眼睛正对着你，从你进谷起就一直对着你。",
+    illustration: "events/qiu-explore-yinglong.webp",
     illustrationBrief: `广角谷底${VT.yinglong}横卧占据画面大半，残翼一侧张开；谷口${VT.self}极小地立在画面右下，形成体量对比。天色将暮，云低压。`,
     choices: [
       {
@@ -252,6 +256,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], seasons: [1, 2], weight: 24 },
     title: "鬼伞",
     body: "腐叶堆上生出一圈灰白的伞，伞面有淡红的斑，一碰就渗水。这东西闻起来像肉，可青丘的老兽从不碰它，连蝇都绕着走。你饿，而且已经饿了很久。",
+    illustration: "events/qiu-explore-mushroom.webp",
     illustrationBrief: `俯视腐叶层上一圈${VT.guiSan}环生，伞面淡红斑清晰；${VT.self}低头嗅探，一只前爪悬在伞上未落。光线幽绿，四周暗。`,
     choices: [
       {
@@ -303,6 +308,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 26 },
     title: "雾林",
     body: "雾起得极快，三步之外只剩灰白。你辨不出方向，只听见水声在左边，走两步又像在右边。这样的雾里走错一步，一整季就要费在原地打转。",
+    illustration: "events/qiu-explore-fog-woods.webp",
     illustrationBrief: `画面几乎被灰白雾气填满，只见近处三两株树干与湿地；${VT.self}居中偏下，形体一半没入雾中。极低对比，大量留白。`,
     choices: [
       {
@@ -355,6 +361,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     },
     title: "幽穴",
     body: "石壁裂开一道缝，缝里吹出的风是暖的，带着湿土与陈骨的气味。风里没有活物的气息，可你分明听见很深的地方有水在滴，一滴，很久，又一滴。",
+    illustration: "events/qiu-explore-cave.webp",
     illustrationBrief: `近景${VT.youxue}裂口占画面左侧，口沿湿苔；${VT.self}半身探入缝中，后腿仍在外。洞内深处一点微光，其余全暗。`,
     choices: [
       {
@@ -406,6 +413,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 20, forbidsFlags: [FLAG_HUNTED] },
     title: "采药人",
     body: "坡上有个青布短褐的人，背着竹篓，腰悬小镰，正低头挖一株带紫花的草。他没有抬头。你与他之间不过十步——这十步很近，近到你能听见他哼的调子。",
+    illustration: "events/qiu-explore-hermit.webp",
     illustrationBrief: `中景${VT.caiyaoren}蹲在坡上挖草，背影为主；坡下草丛中${VT.self}伏低窥视，只露出头与前爪。逆光，人影与草坡成剪影。`,
     choices: [
       {
@@ -452,6 +460,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], seasons: [1], weight: 22 },
     title: "蝉蜕",
     body: "枝上挂着一只完整的空壳，背缝裂开一线，六足还牢牢抓着树皮。壳仍是活物的形状，里头却什么都没有。你看着看着，觉得自己身上某一处也开始发痒。",
+    illustration: "events/qiu-explore-cicada.webp",
     illustrationBrief: `特写树枝上一只${VT.chanTui}，背缝裂口清晰，六足仍抓紧树皮；背景虚化，${VT.self}的一只眼睛在画面边缘凑近。夏日强光透过树叶。`,
     choices: [
       {
@@ -496,6 +505,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], once: true, weight: 32 },
     title: "骨坛",
     body: "林中空地垒着一圈兽骨，中央一块黑石，石面被血浸得发亮。骨都朝着同一个方向摆，摆得太整齐了，不像野兽干的，也不太像人干的。空地上一根草都不长。",
+    illustration: "events/qiu-explore-altar.webp",
     illustrationBrief: `俯视林中空地一座${VT.gutan}，兽骨环列指向中心黑石；${VT.self}立在骨圈之外，一足悬停未踏入。四周林木暗，空地异常明亮。`,
     choices: [
       {
@@ -545,6 +555,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], seasons: [0, 1, 2], weight: 22 },
     title: "悬瀑",
     body: "水从三十丈高的崖口砸下来，砸出的白雾把整条谷填满。崖壁湿滑，雾里却隐约有一条斜上去的石棱，棱上留着旧爪痕——比你的爪大，而且只上不下。",
+    illustration: "events/qiu-explore-waterfall.webp",
     illustrationBrief: `竖构图高崖瀑布自上倾泻，白雾弥漫下半；崖壁一道斜石棱上留有旧爪痕，${VT.self}立于棱下抬头。水汽厚重，画面上端留白。`,
     choices: [
       {
@@ -602,6 +613,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     },
     title: "萤引",
     body: "入夜后，一点青萤从草里升起来，飘三步，停一停，像在等你。你跟了十几步才发现，草里还有别的萤，一点接一点，排成一条长得看不到头的线。",
+    illustration: "events/qiu-explore-firefly.webp",
     illustrationBrief: `夜景草地上一串青萤连成蜿蜒光线，向画面深处延伸；${VT.self}立于线首回望，身上落着两点萤光。整体深暗，只靠萤光提亮。`,
     choices: [
       {
@@ -651,6 +663,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 20 },
     title: "千年桑",
     body: "一株老桑独立在坡顶，树身要三兽合抱，枝上却只剩几片叶。树根处的土是暖的，暖得像底下睡着一个活物。你把耳朵贴上去，听见很慢很慢的一下、又一下。",
+    illustration: "events/qiu-explore-mulberry.webp",
     illustrationBrief: `坡顶一株${VT.qiannianSang}孤立，枝干虬曲仅余数叶；${VT.self}伏在树根处侧头贴地倾听。天空大片留白，坡线简洁。`,
     choices: [
       {
@@ -701,6 +714,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], minYear: 2, weight: 16 },
     title: "蟒穴",
     body: "石隙里堆着一层蜕下的旧皮，薄如纸，长得看不到尽头。隙内很暗，暗处有一段极缓的呼吸，缓到你要屏住自己的呼吸才听得见。旧皮上没有灰——蜕下不久。",
+    illustration: "events/qiu-explore-mang-den.webp",
     illustrationBrief: `近景石隙口堆叠成层的蛇蜕旧皮，半透明；隙内暗处隐约可见${VT.xuanmang}一段黑鳞身躯。${VT.self}在画面右下角贴地窥视。`,
     choices: [
       {
@@ -754,6 +768,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     },
     title: "照影潭",
     body: "潭水静得不像水。你走近去看，水里那只兽比你大，牙比你长，额上的灵纹亮得刺眼。它抬头的时候你也抬了头，可它抬得比你早那么一瞬。",
+    illustration: "events/qiu-explore-mirror-pool.webp",
     illustrationBrief: `俯视${VT.zhaoyingtan}水面倒影：岸上${VT.self}瘦小，水中倒影却是同一形貌放大、牙更长、额纹更亮的成兽。碎石环列，水面无波。`,
     choices: [
       {
@@ -799,6 +814,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], seasons: [1, 2], weight: 20 },
     title: "雷击木",
     body: "一株松被雷劈成两半，断口焦黑，里头还留着一股说不出的躁气。你走近三步，身上的毛就全立起来，牙根发麻，像有什么东西在皮下面找出口。",
+    illustration: "events/qiu-explore-thunder-tree.webp",
     illustrationBrief: `背景为${VT.qiuHills}；中景一株松树被雷劈裂成两半，断口焦黑冒细烟；${VT.self}在数步外全身鬃毛竖立。天色铅灰，地面焦痕成放射状。`,
     choices: [
       {
@@ -845,6 +861,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 22 },
     title: "乌鸦示警",
     body: "一群乌鸦从林子那头炸开，绕着你叫了三圈，往南飞了。青丘的鸦从不多事——它们叫，是因为林子里有比你更饿的东西，而且那东西已经知道你在这里。",
+    illustration: "events/qiu-explore-crow-omen.webp",
     illustrationBrief: `中景一群乌鸦自林梢炸起盘旋，剪影密集；林下${VT.self}停步仰头，身后林影深处一团模糊暗形。构图上重下轻，天色发白。`,
     choices: [
       {
@@ -895,6 +912,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], seasons: [0, 1], weight: 24 },
     title: "空巢遗卵",
     body: "高枝上的巢空了，巢里剩三枚卵，还是温的。母鸟的羽毛散在树下，散得很开，一直散到坡那边去。你数了数：三枚，每一枚都够你半日。",
+    illustration: "events/qiu-explore-empty-nest.webp",
     illustrationBrief: `仰视高枝上一只鸟巢，巢中三枚卵；树下散落大量羽毛。${VT.self}已攀至半途，前爪扒住枝干抬头。清晨侧光，天空留白。`,
     choices: [
       {
@@ -935,6 +953,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 22 },
     title: "石林",
     body: "一片直立的青石，高矮如林，风穿过去有人说话的声音。石面上凿着许多小坑，坑里积着雨水，水面浮着不知多少年的灰。凿坑的东西没留下别的痕迹。",
+    illustration: "events/qiu-explore-stone-forest.webp",
     illustrationBrief: `广角${VT.shilin}纵深排列，石柱高矮参差；${VT.self}行于石柱之间，体量极小。风起，坑中积水微漾。天光斜射形成长影。`,
     choices: [
       {
@@ -981,6 +1000,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["explore"], weight: 20 },
     title: "野狐坟",
     body: "土坡上有一排小丘，每丘前压着一块白石。你嗅得出丘下都是狐，死了很久，骨头一律朝着丘外摆。其中有一丘的土是新的，新到还能闻出翻土者的气味。",
+    illustration: "events/qiu-explore-fox-grave.webp",
     illustrationBrief: `中景${VT.huGrave}成排列于缓坡，白石整齐；最近的一丘土色新鲜。${VT.self}立于新丘前低头嗅探。暮色，坡后天空留大片空白。`,
     choices: [
       {

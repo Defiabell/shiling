@@ -233,6 +233,105 @@ export async function getAnimationTask(id: string): Promise<AnimationTask> {
 }
 
 // ---------------------------------------------------------------------------
+// Text to Image — POST /openapi/v1/text-to-image
+// Image to Image — POST /openapi/v1/image-to-image
+//
+// Verified against live docs + live API on 2026-08-11 (B4 art pipeline). Two
+// facts that differ from the 3D endpoints above and bite if assumed:
+//   1. `ai_model` is REQUIRED and its vocabulary is disjoint from AiModel
+//      ("nano-banana*" / "gpt-image-2", not "meshy-*").
+//   2. There is NO `negative_prompt` parameter. Negative constraints have to be
+//      written into `prompt` as explicit prohibitions — see artStyle.ts's
+//      NEGATIVE_CLAUSE.
+// Allowed `aspect_ratio` values depend on the model; see artStyle.ts.
+//
+// image_urls are pre-signed and expire (`expires_at`), so download promptly.
+// ---------------------------------------------------------------------------
+
+export interface ImageTask {
+  id: string;
+  type?: string;
+  ai_model?: string;
+  prompt?: string;
+  status: TaskStatus;
+  progress: number;
+  created_at?: number;
+  finished_at?: number;
+  expires_at?: number;
+  preceding_tasks?: number;
+  image_urls?: string[];
+  consumed_credits?: number;
+  task_error?: { message?: string } | null;
+}
+
+export interface CreateTextToImageParams {
+  aiModel: string;
+  prompt: string;
+  /** Omit when `generateMultiView` is set — the API rejects both together. */
+  aspectRatio?: string;
+  generateMultiView?: boolean;
+  poseMode?: "a-pose" | "t-pose";
+}
+
+export async function createTextToImage(params: CreateTextToImageParams): Promise<string> {
+  const body: Record<string, unknown> = {
+    ai_model: params.aiModel,
+    prompt: params.prompt,
+  };
+  if (params.generateMultiView) body.generate_multi_view = true;
+  else if (params.aspectRatio) body.aspect_ratio = params.aspectRatio;
+  if (params.poseMode) body.pose_mode = params.poseMode;
+
+  const res = await request<{ result: string }>("/openapi/v1/text-to-image", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return res.result;
+}
+
+export async function getTextToImageTask(id: string): Promise<ImageTask> {
+  return request<ImageTask>(`/openapi/v1/text-to-image/${id}`);
+}
+
+export interface CreateImageToImageParams {
+  aiModel: string;
+  prompt: string;
+  /**
+   * 1–5 references. Each is either a publicly reachable https URL or a
+   * `data:image/...;base64,...` URI. The anchor pipeline uses a data URI so the
+   * anchor keeps working after the source task's signed URL expires.
+   */
+  referenceImageUrls: string[];
+  aspectRatio?: string;
+  generateMultiView?: boolean;
+}
+
+export async function createImageToImage(params: CreateImageToImageParams): Promise<string> {
+  if (params.referenceImageUrls.length < 1 || params.referenceImageUrls.length > 5) {
+    throw new Error(
+      `image-to-image needs 1..5 reference images, got ${params.referenceImageUrls.length}`
+    );
+  }
+  const body: Record<string, unknown> = {
+    ai_model: params.aiModel,
+    prompt: params.prompt,
+    reference_image_urls: params.referenceImageUrls,
+  };
+  if (params.generateMultiView) body.generate_multi_view = true;
+  else if (params.aspectRatio) body.aspect_ratio = params.aspectRatio;
+
+  const res = await request<{ result: string }>("/openapi/v1/image-to-image", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return res.result;
+}
+
+export async function getImageToImageTask(id: string): Promise<ImageTask> {
+  return request<ImageTask>(`/openapi/v1/image-to-image/${id}`);
+}
+
+// ---------------------------------------------------------------------------
 // Balance — GET /openapi/v1/balance
 // ---------------------------------------------------------------------------
 

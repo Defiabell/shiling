@@ -25,6 +25,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
     },
     title: "梦中白兽",
     body: "浅眠里你见到一头白兽站在雪上，四只眼睛都睁着，看你，不说话。醒来时穴口的草被压平了一片，压出的形状不是你的，也不是这一带任何一种兽的。",
+    illustration: "events/qiu-rest-white-dream.webp",
     illustrationBrief: `梦境感画面上半为雪原上侧立的${VT.baize}，四目齐睁；下半为现实穴口一片压平的白草。${VT.self}半醒探头，两层景以雾气分隔。`,
     choices: [
       {
@@ -71,6 +72,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["rest"], requiresFlags: [FLAG_WOUND], weight: 60 },
     title: "旧伤发热",
     body: "伤口周围的肉肿了起来，热得发亮，一碰就有黄水渗出。你舔了半日，那热反而顺着筋往身体深处走，走到你开始发抖，抖得连爪子都收不住。",
+    illustration: "events/qiu-rest-fever.webp",
     illustrationBrief: `近景${VT.self}侧卧于石隙中，一处伤口红肿发亮，口鼻凑近舔舐；身下石面有暗色水渍。光线昏暗，只一线天光落在伤处。`,
     choices: [
       {
@@ -134,6 +136,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
     },
     title: "同穴之客",
     body: "你的穴里多了一只小兽，缩在最里侧，见你回来也不逃，只把耳朵放平贴住后脑。它身上有血味，不是它自己的。外头的风一夜比一夜冷。",
+    illustration: "events/qiu-rest-guest.webp",
     illustrationBrief: `穴内近景一只瘦小异兽缩在最深处，耳朵贴平；洞口${VT.self}侧身站定，与之对视。洞外冷光自入口斜射，洞内其余处深暗。`,
     choices: [
       {
@@ -178,6 +181,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", actions: ["rest"], weight: 28 },
     title: "蜕痒",
     body: "皮下有东西在挤。你在石上磨了半日，磨破了几处，那痒却从骨头里透出来，像另一个自己想从这层皮里出去，而这层皮已经不够它用了。",
+    illustration: "events/qiu-rest-molting-itch.webp",
     illustrationBrief: `近景${VT.self}侧身在粗石上磨蹭，几处毛发脱落露出发红的皮；皮下隐约有起伏的形状。光线低平，画面偏暖，背景大片空石。`,
     choices: [
       {

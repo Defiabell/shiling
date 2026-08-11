@@ -23,6 +23,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [0], weight: 26 },
     title: "春汛",
     body: "雪水一夜之间灌满了谷，旧路全在水下。水里漂着上游冲下来的东西：断枝、死鱼、一头肿胀的鹿，还有别的什么在水底慢慢地走，走得比水还慢。",
+    illustration: "events/qiu-spring-flood.webp",
     illustrationBrief: `广角浑黄洪水漫过谷地，水面浮断枝与一头肿胀的鹿尸；${VT.self}立于半淹的高石上俯视水面。天色灰白，远景为${VT.qiuHills}。`,
     choices: [
       {
@@ -69,6 +70,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [0], weight: 28 },
     title: "野蓂初生",
     body: "涧边石隙里钻出一丛蓂草，叶背泛着极淡的青光。凡草不该有这样的光。你伏下身去闻，气味又腥又甜，像血，也像熟透到快要烂掉的果子。",
+    illustration: "events/qiu-spring-sprout.webp",
     illustrationBrief: `近景石隙间一丛蓂草，叶背透出极淡青光；${VT.self}俯身贴近嗅闻，鼻尖几乎触叶。早春残雪未化，背景简净，右上留白。`,
     choices: [
       {
@@ -116,6 +118,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [1], weight: 26 },
     title: "夏旱",
     body: "三个月没有雨。溪只剩一线，泥裂成龟纹，走得动的兽都走了。剩下的都挤在同一处饮水，谁也不敢先低头——低头的那一刻，脖子就交给别人了。",
+    illustration: "events/qiu-summer-drought.webp",
     illustrationBrief: `中景干涸溪床龟裂，仅余一线细流；数头瘦兽围成半圈互相戒备，其中一头是${VT.yanyang}，${VT.self}在另一侧压低身体。烈日当空，光线惨白，影子极短。`,
     choices: [
       {
@@ -162,6 +165,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [2], weight: 28 },
     title: "秋实",
     body: "满山的果都熟了，红的紫的压弯了枝，落在地上积成一层，踩上去出水。这是青丘一年里最不必挨饿的一季，也是最容易忘事的一季——忘了自己也是别人的食物。",
+    illustration: "events/qiu-autumn-fruit.webp",
     illustrationBrief: `广角结满红紫果实的林坡，地面落果堆积；${VT.self}埋头进食于画面中央，林影深处有一双反光的眼睛。秋阳暖色，构图饱满。`,
     choices: [
       {
@@ -208,6 +212,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [2], weight: 24 },
     title: "秋猎之火",
     body: "南坡起了火，不是天火——火线是直的，一路推着往北走。烟里混着人声、犬吠和铜器相击的响动。风正往你这边吹，火也是。你没有多少时间挑方向。",
+    illustration: "events/qiu-autumn-fire.webp",
     illustrationBrief: `远中景一道笔直火线横贯南坡，浓烟压低；烟后隐约可见${VT.lieren}举火成列。近景${VT.self}回头逆火奔逃，鬃毛被热风掀起。`,
     choices: [
       {
@@ -270,6 +275,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [3], weight: 30 },
     title: "冬雪封山",
     body: "雪把青丘盖成一片白，兽径全断了。你走一步陷半尺，鼻子里只剩雪的味道，闻不到任何活物。这样的日子还有很长，长到你数不出来还剩几个夜。",
+    illustration: "events/qiu-winter-snow.webp",
     illustrationBrief: `广角大雪覆盖的${VT.qiuHills}，天地皆白，只余几处黑石与枯枝；${VT.self}在雪中深一脚浅一脚，身后一串孤零零的足迹。极简构图，大面积留白。`,
     choices: [
       {
@@ -332,6 +338,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     trigger: { region: "qingqiu", seasons: [3], minYear: 5, once: true, weight: 38 },
     title: "穷奇夜至",
     body: "后半夜，雪地上传来婴儿一样的啼哭。哭声一步一步靠近，靠近到你能听见爪子踏碎雪壳的声音。青丘的老兽说过：听见小孩哭，就不要再睁眼。你睁了。",
+    illustration: "events/qiu-winter-qiongqi.webp",
     illustrationBrief: `夜雪中${VT.qiongqi}自远处踏雪走来，肩翼微张，口鼻呼出白气；近景${VT.self}半起身回望，双眼反光。冷蓝月色，雪面留下两行足迹。`,
     choices: [
       {
@@ -391,6 +398,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
     },
     title: "天命",
     body: "云自四方合拢，中开一隙，白光垂落如柱，正照在你伏身之处。光里没有声音，却有一句话直接落进识海：可去矣。你听得很清楚，清楚到知道这句话只说一次。",
+    illustration: "events/qiu-heaven-mandate.webp",
     illustrationBrief: `夜山之巅浓云中开一道竖隙，一柱冷白光垂落至山石；光柱下${VT.self}伏地仰首，只见剪影。远景为${VT.qiuHills}。上方留白占三分之一。`,
     choices: [
       {

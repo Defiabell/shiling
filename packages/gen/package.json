@@ -8,6 +8,10 @@
     "validate": "node src/validate-glb.ts",
     "optimize": "node src/optimize-glb.ts",
     "optimize:props": "node src/optimize-props-glb.ts",
+    "art": "node --import ./src/tsResolveHook.mjs src/generate-art.ts",
+    "art:anchors": "node --import ./src/tsResolveHook.mjs src/generate-art.ts --anchors",
+    "art:promote": "node --import ./src/tsResolveHook.mjs src/generate-art.ts --promote",
+    "art:backfill": "node --import ./src/tsResolveHook.mjs src/backfill-illustrations.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

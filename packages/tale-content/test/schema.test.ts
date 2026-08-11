@@ -470,7 +470,16 @@ describe("视觉 token", () => {
     for (const event of EVENTS) {
       expect(event.illustrationBrief, `${event.id} 缺 brief`).toBeTruthy();
       expect(charCount(event.illustrationBrief ?? ""), `${event.id} brief 太短`).toBeGreaterThan(20);
-      expect(event.illustration, `${event.id} 的 illustration 应留给 B4 回填`).toBeUndefined();
+    }
+  });
+
+  // B4 已交付（2026-08-11）：44 张事件插图全部生成并回填，原先「illustration 应留给 B4 回填」
+  // 的断言就地换成命名约定断言 —— 客户端拼的是 `ART_DIR + illustration`（ART_DIR="/art/"），
+  // 所以值必须是 `events/<事件 id>.webp` 这一种形状。文件名与事件 id 绑死，命名一漂就红，
+  // 静默 404（界面只是空图位，不报错）才不会溜过去。
+  it("每个事件的 illustration 都是 events/<id>.webp（B4 产出的命名约定）", () => {
+    for (const event of EVENTS) {
+      expect(event.illustration, `${event.id} 缺 illustration`).toBe(`events/${event.id}.webp`);
     }
   });
 
