@@ -65,16 +65,23 @@ describe("eligibleChoiceIdxs 门槛过滤", () => {
     expect(eligibleChoiceIdxs(biter, THICKET, CONTENT)).toEqual([0]);
   });
 
-  it("碰到 organTags 门槛却没传 content → 抛错（不静默把抉择置灰成死内容）", () => {
-    const seer = withOrgans(life(), ORGAN_WU_MU);
-    expect(() => eligibleChoiceIdxs(seer, THICKET)).toThrow(/必须传第三参 content/);
-    expect(eligibleChoiceIdxs(seer, THICKET, CONTENT)).toEqual([0, 1]);
-  });
-
-  it("不含 organTags 门槛的事件两参调用照常可用（正本签名仍然有效）", () => {
-    const bright = { ...life(), stats: { ...life().stats, ling: 20 } };
-    expect(eligibleChoiceIdxs(bright, SPROUT)).toEqual(eligibleChoiceIdxs(bright, SPROUT, CONTENT));
-    expect(eligibleChoiceIdxs(bright, SPROUT)).toEqual([0, 1]);
+  it("organTags 门槛认的是神种器官的 tag（解析必须走 organs ∪ seeds[].organ 并集）", () => {
+    // 灵蕴神种自带 spirit-born，而神种器官不在 content.organs 里 ——
+    // 漏了并集的实现会把这个门槛判成永远不满足
+    const seedGated: TaleEvent = {
+      id: "seed-tag-gate",
+      trigger: { region: "any", weight: 1 },
+      title: "神种门槛",
+      body: "试。",
+      choices: [
+        {
+          label: "以神识应之",
+          requires: { organTags: ["spirit-born"] },
+          outcomes: [{ weight: 1, text: "应。", effects: {} }],
+        },
+      ],
+    };
+    expect(eligibleChoiceIdxs(life(), seedGated, CONTENT)).toEqual([0]);
   });
 
   it("多门槛同时存在时全部满足才算过", () => {

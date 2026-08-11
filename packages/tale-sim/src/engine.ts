@@ -601,21 +601,12 @@ export function performAction(
 function meetsChoiceRequirement(
   state: TaleState,
   choice: EventChoice,
-  tags: Set<string> | null,
+  tags: Set<string>,
 ): boolean {
   const requires = choice.requires;
   if (!requires) return true;
   if (!meetsStats(state.stats, requires.stats)) return false;
   if (requires.organTags && requires.organTags.length > 0) {
-    // tags 为 null = 调用方没传 content，无从校验器官 tag。这里**抛错而不是保守判否**：
-    // 判否会让所有 organTags 门槛的抉择永久置灰，变成谁都发现不了的死内容
-    // （B2 按计划要写 ≥4 处这类门槛）；抛错则让漏传 content 在第一次遇到这类事件时
-    // 就当场暴露。
-    if (!tags) {
-      throw new Error(
-        "eligibleChoiceIdxs: 该抉择带 organTags 门槛，必须传第三参 content 才能校验",
-      );
-    }
     if (!requires.organTags.some((tag) => tags.has(tag))) return false;
   }
   if (requires.essenceMin) {
@@ -630,20 +621,16 @@ function meetsChoiceRequirement(
 /**
  * 当前满足门槛的抉择下标。
  *
- * ⚠️ **接口缺口（待仲裁）**：正本的签名是 `(state, event)` 两参，但
- * `EventChoice.requires.organTags` 必须靠 `content` 才能把 `organIds` 解析成 tag
- * （神种器官还只存在于 `seeds[].organ`，见 `organIndex`）。为不破坏正本签名，第三参
- * `content` 做成**可选**；但只要碰到带 organTags 门槛的抉择又没传 content 就**抛错**，
- * 不静默置灰。
- *
- * **B3 一律传 content。** 建议正本把签名改成三参必填，B1 报告已列为第一号仲裁项。
+ * `content` 必填 —— `EventChoice.requires.organTags` 要靠它把 `organIds` 解析成 tag
+ * （神种器官只存在于 `seeds[].organ`，见 `organIndex`）。接口正本原为两参，2026-08-11
+ * 仲裁后已改成三参必填：漏传是 typecheck 失败，而不是某类抉择被静默置灰成死内容。
  */
 export function eligibleChoiceIdxs(
   state: TaleState,
   event: TaleEvent,
-  content?: TaleContent,
+  content: TaleContent,
 ): number[] {
-  const tags = content ? ownedTags(state, content) : null;
+  const tags = ownedTags(state, content);
   const idxs: number[] = [];
   event.choices.forEach((choice, idx) => {
     if (meetsChoiceRequirement(state, choice, tags)) idxs.push(idx);
