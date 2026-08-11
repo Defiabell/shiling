@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -b packages/sim packages/content packages/client packages/tale-sim",
-    "dev": "pnpm --filter @shiling/client dev"
+    "typecheck": "tsc -b packages/sim packages/content packages/client packages/tale-sim packages/tale-content packages/tale-client",
+    "dev": "pnpm --filter @shiling/client dev",
+    "dev:tale": "pnpm --filter @shiling/tale-client dev"
   },
   "devDependencies": { "typescript": "^5.5.0", "vitest": "^2.0.0" }
 }

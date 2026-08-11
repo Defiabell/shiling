@@ -1,0 +1,2 @@
+{ "name": "@shiling/tale-content", "type": "module", "main": "src/index.ts",
+  "dependencies": { "@shiling/tale-sim": "workspace:*" } }

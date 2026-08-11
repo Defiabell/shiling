@@ -51,6 +51,22 @@ importers:
         specifier: workspace:*
         version: link:../content
 
+  packages/tale-client:
+    dependencies:
+      '@shiling/tale-sim':
+        specifier: workspace:*
+        version: link:../tale-sim
+    devDependencies:
+      vite:
+        specifier: ^5.4.0
+        version: 5.4.21(@types/node@22.20.1)
+
+  packages/tale-content:
+    dependencies:
+      '@shiling/tale-sim':
+        specifier: workspace:*
+        version: link:../tale-sim
+
   packages/tale-sim: {}
 
 packages:
