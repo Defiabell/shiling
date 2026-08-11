@@ -1,0 +1,1537 @@
+/* 四个屏的布局与组件样式。 */
+
+.screen {
+  position: relative;
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   题字画面
+   ========================================================================== */
+
+.screen--title {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.screen--title .cine {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.title__inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+  padding: 6vh 24px;
+  text-align: center;
+}
+
+.title__mark {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.title__zi {
+  font-family: var(--kai);
+  font-size: clamp(58px, 9.2vw, 122px);
+  line-height: 1;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #f2ede1;
+  text-shadow:
+    0 0 42px rgba(232, 180, 95, 0.35),
+    0 6px 40px rgba(0, 0, 0, 0.9);
+}
+
+.title__rule {
+  width: min(340px, 52vw);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(232, 180, 95, 0.65) 24%, rgba(232, 180, 95, 0.65) 76%, transparent);
+}
+
+.title__sub {
+  font-size: clamp(19px, 2.4vw, 27px);
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: var(--gold-soft);
+}
+
+/* 藏书印：盖在题字右上角，微微歪着 */
+.title__seal {
+  position: absolute;
+  top: -6px;
+  right: -14px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  font-size: 21px;
+  line-height: 1;
+  color: #fbf3e4;
+  border-radius: 5px;
+  background: radial-gradient(circle at 34% 28%, #cf4a2f, #8f2415 76%);
+  box-shadow: 0 0 0 1px rgba(255, 210, 180, 0.22), 0 6px 18px -8px rgba(194, 59, 34, 0.9);
+  transform: rotate(-7deg);
+}
+
+.title__lede {
+  max-width: 38em;
+  /* 居中排的散文最怕末行只剩两个字，balance 让各行等长 */
+  text-wrap: balance;
+  font-size: 15.5px;
+  line-height: 2.1;
+  letter-spacing: 0.04em;
+  color: var(--txt-2);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.85);
+}
+
+.title__enter {
+  margin-top: 6px;
+  font-size: 19px;
+  padding: 13px 44px;
+}
+
+.title__foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--txt-4);
+}
+
+.title__badge {
+  font-style: normal;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: var(--txt-3);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+/* ==========================================================================
+   主界面
+   ========================================================================== */
+
+.play {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 302px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "status status"
+    "stage  rail"
+    "acts   acts";
+  gap: 16px 20px;
+  height: 100vh;
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 18px 26px 22px;
+}
+
+/* — 顶部状态栏 — */
+
+.statusbar {
+  grid-area: status;
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto minmax(240px, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 12px 22px;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(14px);
+}
+
+.when__main {
+  font-size: 21px;
+  letter-spacing: 0.14em;
+  color: #f0ebdf;
+}
+
+.when__sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--txt-3);
+}
+
+.when__sub i {
+  font-style: normal;
+  color: var(--txt-4);
+}
+
+.statusbar__stats {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+
+.gauge {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(10, 13, 18, 0.5);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+/* 环形仪表：conic-gradient ＋ 径向遮罩挖空中心（C 案的签名件）。 */
+.gauge__ring {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--p) * 100%), rgba(232, 236, 242, 0.07) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.4px));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c) 40%, transparent));
+  transition: background var(--t-slow) var(--ease);
+}
+
+.gauge__face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0;
+  line-height: 1;
+}
+
+.gauge__zi {
+  font-family: var(--kai);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--txt);
+}
+
+.gauge__num {
+  margin-top: 3px;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--txt-3);
+}
+
+.statusbar__vitals {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 30px;
+  padding-right: 4px;
+}
+
+.hunger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 168px;
+}
+
+.hunger__zi {
+  font-size: 14px;
+  color: var(--txt-2);
+}
+
+.hunger__track {
+  position: relative;
+  flex: 1;
+  height: 9px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(232, 236, 242, 0.07);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.hunger__fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #8a5220, var(--gold) 92%);
+  box-shadow: 0 0 12px -2px rgba(232, 180, 95, 0.7);
+  transition: width var(--t-slow) var(--ease), background var(--t) var(--ease);
+}
+
+.hunger__num {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--txt-3);
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.hunger.is-critical .hunger__fill {
+  background: linear-gradient(90deg, #6d1c10, var(--cinnabar-lt) 92%);
+  box-shadow: 0 0 14px -2px rgba(226, 105, 76, 0.85);
+}
+
+.hunger.is-critical .hunger__zi,
+.hunger.is-critical .hunger__num {
+  color: var(--cinnabar-lt);
+}
+
+.hunger.is-starving .hunger__fill {
+  animation: pulse-warn 1.5s ease-in-out infinite;
+}
+
+/* 精气是 build 的唯一货币，柱子给足存在感（9px 宽时四根挤在角落像装饰纹） */
+.essences {
+  display: flex;
+  align-items: flex-end;
+  gap: 11px;
+}
+
+.ess {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  --c: var(--e-zu);
+}
+
+.ess--zu { --c: var(--e-zu); }
+.ess--lin { --c: var(--e-lin); }
+.ess--xue { --c: var(--e-xue); }
+.ess--meng { --c: var(--e-meng); }
+
+.ess__track {
+  position: relative;
+  width: 12px;
+  height: 46px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(232, 236, 242, 0.07);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  display: flex;
+  align-items: flex-end;
+}
+
+.ess__fill {
+  display: block;
+  width: 100%;
+  border-radius: 99px;
+  background: linear-gradient(180deg, var(--c), color-mix(in srgb, var(--c) 42%, #000));
+  transition: height var(--t-slow) var(--ease);
+}
+
+.ess__zi {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--txt-3);
+  transition: color var(--t) var(--ease);
+}
+
+.ess.is-ripe .ess__track {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent), 0 0 16px -3px var(--c);
+}
+
+.ess.is-ripe .ess__zi {
+  color: var(--c);
+}
+
+.ess.is-ripe .ess__fill {
+  animation: pulse-glow 2.2s ease-in-out infinite;
+}
+
+/* — 中央舞台 — */
+
+.stage {
+  grid-area: stage;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  justify-content: center;
+  padding: 2px 4px 6px;
+}
+
+/*
+ * `margin: auto 0` 让矮卡（一句旁白）垂直居中、高卡（长事件＋四抉择）正常从顶部滚 ——
+ * 这是 flex + overflow 容器里唯一两头都不失效的居中写法（`align-items:center` 会把
+ * 超高内容的上半截截掉且滚不到）。此前 `align-self:flex-start` 让矮卡吊在顶上，
+ * 下方留一大片死黑。
+ */
+.card {
+  width: 100%;
+  max-width: 780px;
+  margin: auto 0;
+  /*
+   * 卡自身封顶到舞台高度，插图固定、正文与抉择在卡内滚 —— 四个抉择 ＋ 多条门槛提示时
+   * 整卡会超过一屏，此前是**整卡**被舞台裁掉，最后一个抉择连带它的门槛提示一起消失在
+   * 视口外（玩家根本不知道还有第三个选项）。插图钉住 ＋ 内容区滚动是唯一两头都成立的解法。
+   */
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-2);
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+  animation: ink-rise var(--t-slow) var(--ease) both;
+}
+
+.card__art {
+  position: relative;
+  margin: 0;
+  flex: 0 0 auto;
+  height: clamp(132px, 22vh, 240px);
+  overflow: hidden;
+  background: var(--ink-900);
+}
+
+.card__art-el {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: saturate(0.92) contrast(1.04);
+}
+
+/* 图底交界处压一层墨，避免图片硬边切在文字上方 */
+.card__art-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(7, 9, 12, 0.34) 0%, rgba(7, 9, 12, 0) 34%, rgba(20, 25, 34, 0.78) 100%);
+}
+
+.card__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 34px 26px;
+}
+
+.card--plain .card__body {
+  padding: 20px 30px 22px;
+}
+
+/*
+ * 纯旁白卡每个回合都要重建一次（「伏草间半日，猎得野雉」这类）。
+ * 给它整套水墨浮现＝每按一次行动都糊一次 600ms，一世八十回合下来非常累。
+ * 所以只做轻淡入；水墨浮现留给事件卡／抉择结果／战斗这些真正的「新场面」。
+ */
+.card--plain {
+  animation: card-fade var(--t) var(--ease) both;
+}
+
+.card__title {
+  position: relative;
+  padding-left: 18px;
+  font-size: 27px;
+  letter-spacing: 0.15em;
+  color: #f2ede1;
+}
+
+/* 标题前一道朱砂细竖线 —— 比整条横规矩更像批注 */
+.card__title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.34em;
+  bottom: 0.3em;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--cinnabar-lt), rgba(194, 59, 34, 0.15));
+}
+
+.card__prose {
+  margin-top: 14px;
+  max-width: 34em;
+}
+
+.card__prose p {
+  font-size: 17px;
+  line-height: 2.05;
+  letter-spacing: 0.025em;
+  color: #ded9cd;
+  text-indent: 2em;
+}
+
+.card__prose p + p {
+  margin-top: 6px;
+}
+
+.card--plain .card__prose p {
+  font-size: 16px;
+  line-height: 1.95;
+  color: var(--txt-2);
+}
+
+.card__foot {
+  margin-top: 20px;
+}
+
+.card__deadlock {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--cinnabar-lt);
+}
+
+/* — 抉择 — */
+
+.choices {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.choice {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 12px;
+  width: 100%;
+  padding: 13px 18px 13px 14px;
+  text-align: left;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.choice:hover:not([disabled]) {
+  background: rgba(34, 42, 55, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4), 0 0 24px -12px rgba(232, 180, 95, 0.6);
+  transform: translateX(3px);
+}
+
+.choice__index {
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.9;
+  text-align: center;
+  color: var(--txt-4);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.choice__label {
+  font-size: 16.5px;
+  letter-spacing: 0.04em;
+  color: var(--txt);
+}
+
+.choice__reqs {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+/*
+ * 门槛提示是「build 不同就能选它」的欲望展示位：未满足的一条要**亮**，
+ * 不能跟着按钮一起灰掉——那样玩家根本不会去追它。
+ */
+.req {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 9px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.75;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+}
+
+.req b {
+  font-weight: 500;
+}
+
+.req em {
+  font-style: normal;
+  opacity: 0.78;
+}
+
+.req.is-met {
+  color: var(--gold-soft);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.3);
+}
+
+.req.is-met b::before {
+  content: "✓ ";
+  opacity: 0.7;
+}
+
+.req.is-unmet {
+  color: #f0a48d;
+  background: rgba(194, 59, 34, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.52);
+}
+
+.choice.is-locked {
+  background: rgba(12, 15, 21, 0.5);
+}
+
+.choice.is-locked .choice__label {
+  color: var(--txt-3);
+}
+
+.choice.is-locked .choice__index {
+  opacity: 0.4;
+}
+
+/* — 战斗 — */
+
+/*
+ * 战斗卡比事件卡多两块（血条＋四指令），图位得压成一条横幅，否则整卡超过舞台高度要滚
+ * ——打架的时候滚屏是最糟的体验。B4 的敌人头像按同一比例出图即可。
+ */
+.card--combat .card__art {
+  height: clamp(92px, 13vh, 138px);
+}
+
+.card--combat .combat__head {
+  padding: 20px 32px 0;
+}
+
+.combat__kicker {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  color: var(--cinnabar-lt);
+  text-transform: uppercase;
+}
+
+.combat__kicker em {
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--txt-3);
+}
+
+.combat__primed {
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  padding: 1px 9px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4);
+}
+
+.combat__desc {
+  margin-top: 10px;
+  font-size: 16px;
+  line-height: 1.95;
+  color: var(--txt-2);
+}
+
+.combat__bars {
+  display: grid;
+  gap: 12px;
+  padding: 18px 32px 4px;
+}
+
+.hp__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.hp__label {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+  color: var(--txt-2);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+}
+
+.hp__name {
+  flex: 1;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}
+
+.hp__num {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--txt-3);
+}
+
+.hp__track {
+  height: 10px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(232, 236, 242, 0.07);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.hp__fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  transition: width var(--t) var(--ease);
+}
+
+.hp--foe .hp__fill {
+  background: linear-gradient(90deg, #5d1a10, var(--cinnabar-lt));
+  box-shadow: 0 0 12px -2px rgba(226, 105, 76, 0.6);
+}
+
+.hp--self .hp__fill {
+  background: linear-gradient(90deg, #2c5a63, var(--cyan));
+  box-shadow: 0 0 12px -2px rgba(127, 212, 232, 0.55);
+}
+
+.card--combat.is-critical .hp--self .hp__fill {
+  background: linear-gradient(90deg, #6d1c10, var(--cinnabar-lt));
+  animation: pulse-warn 1.4s ease-in-out infinite;
+}
+
+.combat__log {
+  margin: 14px 32px 0;
+  max-height: 118px;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-radius: var(--r);
+  background: rgba(8, 11, 16, 0.55);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.combat__log li {
+  font-size: 14.5px;
+  line-height: 1.95;
+  color: var(--txt-2);
+}
+
+.combat__log li:last-child {
+  color: var(--txt);
+}
+
+.combat__acts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 16px 32px 24px;
+}
+
+.cact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 8px 11px;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.cact:hover:not([disabled]) {
+  background: rgba(38, 46, 60, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.45), 0 0 22px -10px rgba(226, 105, 76, 0.6);
+  transform: translateY(-2px);
+}
+
+.cact__zi {
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--txt);
+}
+
+.cact__hint {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--txt-3);
+}
+
+.cact.is-locked {
+  opacity: 0.45;
+}
+
+/* — 右侧近事 — */
+
+.rail {
+  grid-area: rail;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px 18px;
+  border-radius: var(--r-lg);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(12px);
+}
+
+.rail__title {
+  font-size: 12.5px;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  color: var(--txt-4);
+}
+
+.rail__list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.rail__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  padding-left: 11px;
+  border-left: 2px solid var(--hair);
+}
+
+.rail__item.is-fresh {
+  animation: log-in var(--t) var(--ease) both;
+}
+
+.rail__stamp {
+  grid-column: 1 / -1;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--txt-4);
+}
+
+.rail__text {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--txt-2);
+}
+
+.rail__empty {
+  font-size: 14px;
+  color: var(--txt-4);
+}
+
+/* 身内：已蜕生的器官。近事上限 6 条撑不满右栏，这一格把下半栏填实且给的是真信息。 */
+.rail__organs {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--hair);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.organs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.organ-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(232, 236, 242, 0.04);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.organ-chip b {
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--txt-2);
+}
+
+.organ-chip.is-seed {
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.32);
+}
+
+.organ-chip.is-seed b {
+  color: #d5eaf1;
+}
+
+.organ-chip__mark {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--cyan);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.36);
+}
+
+.rail__item.tone-gain { border-left-color: rgba(232, 180, 95, 0.55); }
+.rail__item.tone-loss { border-left-color: rgba(226, 105, 76, 0.5); }
+.rail__item.tone-combat { border-left-color: rgba(217, 86, 58, 0.65); }
+.rail__item.tone-molt { border-left-color: rgba(127, 212, 232, 0.65); }
+.rail__item.tone-omen { border-left-color: rgba(232, 180, 95, 0.8); }
+.rail__item.tone-molt .rail__text { color: #cfe7ee; }
+.rail__item.tone-omen .rail__text { color: var(--gold-soft); }
+
+/* — 底部行动面板 — */
+
+.actions {
+  grid-area: acts;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.act {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  padding: 13px 18px;
+  text-align: left;
+  border-radius: var(--r);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(12px);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.act:hover:not([disabled]) {
+  background: rgba(36, 44, 57, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.38), 0 0 28px -12px rgba(232, 180, 95, 0.55);
+  transform: translateY(-2px);
+}
+
+.act__seal {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  font-size: 20px;
+  line-height: 1;
+  color: #fbf3e4;
+  border-radius: 6px;
+  background: radial-gradient(circle at 34% 28%, #c1462d, #8a2416 76%);
+  box-shadow: 0 0 0 1px rgba(255, 210, 180, 0.2), 0 6px 16px -8px rgba(194, 59, 34, 0.9);
+}
+
+.act__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.act__text b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+  font-size: 16.5px;
+  letter-spacing: 0.14em;
+  color: var(--txt);
+}
+
+.act__text em {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--txt-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.act.is-locked {
+  opacity: 0.44;
+}
+
+.act.is-locked .act__seal {
+  background: rgba(232, 236, 242, 0.06);
+  color: var(--txt-4);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+/* 蛰伏可用：金色呼吸 —— 这是玩家攒精气的兑现时刻，值得抢一次注意力 */
+.act.is-hot {
+  background: radial-gradient(120% 200% at 12% 120%, rgba(232, 180, 95, 0.2) 0%, rgba(232, 180, 95, 0) 60%), var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.5), 0 0 32px -14px rgba(232, 180, 95, 0.85);
+  animation: pulse-hot 2.6s ease-in-out infinite;
+}
+
+.act.is-hot .act__seal {
+  background: radial-gradient(circle at 34% 28%, #f0c274, #b8792a 78%);
+  color: #2a1c08;
+}
+
+/* ==========================================================================
+   神种选择
+   ========================================================================== */
+
+.screen--seed {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 46px 26px 72px;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.seed__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 26px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.seed__title {
+  font-size: 34px;
+  letter-spacing: 0.2em;
+  color: #f2ede1;
+}
+
+.seed__lede {
+  margin-top: 8px;
+  max-width: 44em;
+  font-size: 15px;
+  line-height: 2;
+  color: var(--txt-3);
+}
+
+.seed__points {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.28);
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: var(--txt-3);
+  white-space: nowrap;
+}
+
+.seed__points b {
+  font-family: var(--sans);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--gold);
+}
+
+/* align-content:center：fixture 只有一枚神种时，卡片不要吊在页顶留一大片空 */
+.seed__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 340px));
+  justify-content: center;
+  align-content: center;
+  min-height: 52vh;
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.seedcard {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(14px);
+  transition: box-shadow var(--t) var(--ease), transform var(--t) var(--ease);
+  animation: ink-rise var(--t-slow) var(--ease) both;
+}
+
+.seedcard:hover {
+  transform: translateY(-3px);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.34), 0 30px 60px -34px rgba(0, 0, 0, 1);
+}
+
+.seedcard__art {
+  position: relative;
+  margin: 0;
+  height: 158px;
+  overflow: hidden;
+}
+
+.seedcard__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.seedcard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px 22px;
+  flex: 1;
+}
+
+.seedcard__name {
+  font-size: 23px;
+  letter-spacing: 0.14em;
+  color: #f2ede1;
+}
+
+.seedcard__desc {
+  font-size: 15px;
+  line-height: 1.95;
+  color: var(--txt-2);
+}
+
+.seedcard__organ {
+  padding: 14px 16px;
+  border-radius: var(--r);
+  background: rgba(8, 11, 16, 0.5);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.seedcard__organ-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.seedcard__slot {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 5px;
+  color: var(--cyan);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.36);
+}
+
+.seedcard__organ-head b {
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.1em;
+}
+
+.seedcard__skill {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+}
+
+.seedcard__organ-desc {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--txt-3);
+}
+
+.seedcard__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.seedcard__go {
+  margin-top: auto;
+  align-self: stretch;
+}
+
+.seedcard.is-locked {
+  opacity: 0.72;
+}
+
+.seedcard.is-locked .seedcard__art img {
+  filter: grayscale(0.7) brightness(0.72);
+}
+
+/* — 前传目录 — */
+
+.seed__past {
+  margin-top: 46px;
+}
+
+.seed__past-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.seed__past-head h2 {
+  font-size: 21px;
+  letter-spacing: 0.3em;
+  color: var(--txt-2);
+}
+
+.seed__past-head span {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--txt-4);
+}
+
+.seed__past-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.pastlife {
+  border-radius: var(--r);
+  transition: background var(--t) var(--ease);
+}
+
+.pastlife:hover {
+  background: rgba(232, 236, 242, 0.03);
+}
+
+.pastlife__head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 11px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.pastlife__head::-webkit-details-marker {
+  display: none;
+}
+
+.pastlife__idx {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--txt-4);
+  min-width: 4.4em;
+}
+
+.pastlife__title {
+  flex: 1;
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  color: var(--txt);
+}
+
+.pastlife__meta {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--txt-4);
+}
+
+.pastlife__ending {
+  font-style: normal;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  padding: 1px 10px;
+  border-radius: 999px;
+  color: var(--txt-3);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.pastlife--ascend .pastlife__ending {
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.45);
+}
+
+.pastlife--slain .pastlife__ending {
+  color: var(--cinnabar-lt);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.4);
+}
+
+.pastlife__body {
+  padding: 4px 16px 18px 16px;
+}
+
+.pastlife__body p {
+  font-size: 14.5px;
+  line-height: 2;
+  color: var(--txt-3);
+}
+
+/* ==========================================================================
+   列传卷轴
+   ========================================================================== */
+
+/* 卷轴＋结算条要在 900px 高的窗口里一屏读完（不然「转世」按钮得滚才看得见） */
+.screen--chronicle {
+  height: 100vh;
+  overflow-y: auto;
+  padding: 26px 24px 30px;
+}
+
+.chronicle__wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  animation: ink-rise 720ms var(--ease) both;
+}
+
+.scroll {
+  position: relative;
+}
+
+/* 轴头：两根铜色横木，把纸夹住 */
+.scroll__rod {
+  height: 13px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, #6a5638 0%, #3d3020 48%, #241b11 100%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 8px 18px -10px rgba(0, 0, 0, 0.9);
+}
+
+.scroll__rod--top {
+  margin: 0 -14px 0;
+}
+
+.scroll__rod--bottom {
+  margin: 0 -14px;
+}
+
+/*
+ * 绢本：暗色而非米白。整套界面是弱光墨底，一屏纯白纸会在夜里晃眼，也跟前面所有屏割裂。
+ * 用暖炭底 ＋ 绢纹 ＋ 铜边，读起来仍是「夜里展一卷旧传」。
+ */
+.scroll__paper {
+  position: relative;
+  padding: 38px 50px 42px;
+  background-color: #171310;
+  background-blend-mode: overlay;
+  box-shadow:
+    inset 0 0 0 1px rgba(214, 178, 94, 0.22),
+    inset 0 0 90px -30px rgba(0, 0, 0, 0.9),
+    0 30px 70px -40px rgba(0, 0, 0, 1);
+}
+
+.scroll__paper::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(232, 200, 138, 0.07), transparent 62%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0) 22%, rgba(0, 0, 0, 0.3));
+}
+
+.scroll__stamp {
+  position: absolute;
+  top: 34px;
+  right: 44px;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  font-size: 15px;
+  line-height: 1.15;
+  letter-spacing: 0.05em;
+  text-align: center;
+  color: #f7e6d6;
+  border-radius: 6px;
+  background: radial-gradient(circle at 34% 28%, rgba(207, 74, 47, 0.92), rgba(126, 32, 19, 0.92) 78%);
+  box-shadow: 0 0 0 1px rgba(255, 200, 170, 0.25);
+  transform: rotate(-6deg);
+}
+
+.scroll__title {
+  position: relative;
+  font-size: 32px;
+  letter-spacing: 0.24em;
+  color: #f0e3c8;
+}
+
+.scroll__meta {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 12px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(214, 178, 94, 0.2);
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #9a8b6e;
+}
+
+.scroll__meta i {
+  font-style: normal;
+  opacity: 0.6;
+}
+
+.scroll__opening,
+.scroll__closing {
+  position: relative;
+  margin-top: 22px;
+  font-size: 17px;
+  line-height: 2.15;
+  letter-spacing: 0.035em;
+  text-indent: 2em;
+  color: #e2d6bd;
+}
+
+.scroll__middle {
+  position: relative;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-left: 18px;
+  border-left: 1px solid rgba(214, 178, 94, 0.22);
+}
+
+.scroll__middle li {
+  font-size: 15.5px;
+  line-height: 2;
+  color: #c6b797;
+}
+
+.scroll__praise {
+  position: relative;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(214, 178, 94, 0.2);
+  text-align: center;
+}
+
+.praise__prefix {
+  display: block;
+  font-size: 14px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  color: var(--cinnabar-lt);
+}
+
+.praise__text {
+  margin-top: 12px;
+  font-size: 19px;
+  line-height: 2.1;
+  letter-spacing: 0.1em;
+  color: #f0e3c8;
+}
+
+.chronicle__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 22px;
+  padding: 16px 24px;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(12px);
+}
+
+.chronicle__gain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  color: var(--txt-3);
+}
+
+.chronicle__gain-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.chronicle__gain b {
+  font-family: var(--sans);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--gold);
+}
+
+.chronicle__gain em {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--txt-4);
+}
+
+/* ==========================================================================
+   窄屏兜底：主界面改为纵向堆叠（M0 的目标机型是桌面，这里只保证不塌）
+   ========================================================================== */
+
+@media (max-width: 1080px) {
+  .play {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "status"
+      "stage"
+      "rail"
+      "acts";
+    height: auto;
+    min-height: 100vh;
+  }
+
+  body {
+    overflow: auto;
+  }
+
+  .stage {
+    overflow: visible;
+  }
+
+  .rail__list {
+    max-height: 200px;
+  }
+
+  .statusbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .statusbar__vitals {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .actions,
+  .combat__acts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .card__body {
+    padding: 20px 22px 22px;
+  }
+
+  .scroll__paper {
+    padding: 34px 26px 38px;
+  }
+}

@@ -1,0 +1,248 @@
+/* 全局底子：reset、页面背景、可访问的焦点环、滚动条。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ink-950);
+  color: var(--txt);
+  font-family: var(--kai);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+.app {
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+/*
+ * 页面背景：三团极散的墨晕 ＋ 竖向渐层。不用纯色，因为大面积纯深色在真机上会显得廉价
+ * （屏幕的色带、玻璃面板的边界都会暴露）。
+ */
+.app__bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(78% 52% at 78% -8%, rgba(232, 180, 95, 0.09) 0%, rgba(232, 180, 95, 0) 62%),
+    radial-gradient(64% 46% at 8% 104%, rgba(127, 212, 232, 0.07) 0%, rgba(127, 212, 232, 0) 66%),
+    radial-gradient(120% 82% at 50% 46%, rgba(27, 34, 46, 0.9) 0%, rgba(7, 9, 12, 0) 74%),
+    linear-gradient(180deg, var(--ink-900) 0%, var(--ink-950) 68%, #05070a 100%);
+}
+
+/* 纸纹：3.5% 的噪点，肉眼几乎看不见，但把渐变的色带压掉了。 */
+.app__bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)' opacity='.045'/%3E%3C/svg%3E");
+}
+
+.app__screen {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+}
+
+.app__fx {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.app__overlays {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.app__overlays > * {
+  pointer-events: auto;
+}
+
+.fx-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.fx-floaters {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+/* — 排版基调 — */
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+p {
+  margin: 0;
+}
+
+ol,
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+kbd {
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--txt-3);
+  background: rgba(232, 236, 242, 0.06);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+::selection {
+  background: rgba(232, 180, 95, 0.28);
+  color: #fff;
+}
+
+/* 焦点环：键盘可达性不能因为「好看」被砍掉，所以给一个和金色强调同源的清晰环。 */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* — 按钮基类 — */
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 0;
+  background: none;
+}
+
+button[disabled] {
+  cursor: not-allowed;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 30px;
+  font-family: var(--kai);
+  font-size: 17px;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: var(--txt);
+  border-radius: 999px;
+  background: var(--glass-hi);
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
+  backdrop-filter: blur(8px);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease),
+    color var(--t) var(--ease);
+}
+
+.btn:hover:not([disabled]) {
+  color: #fff;
+  background: rgba(44, 52, 66, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.42), 0 0 26px -8px rgba(232, 180, 95, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn:active:not([disabled]) {
+  transform: translateY(0);
+}
+
+.btn[disabled] {
+  opacity: 0.42;
+}
+
+/* 印章按钮：主要动作。金线更亮，内里一点暖光。 */
+.btn--seal {
+  color: #f4ead6;
+  background:
+    radial-gradient(120% 160% at 50% 120%, rgba(232, 180, 95, 0.24) 0%, rgba(232, 180, 95, 0) 62%),
+    var(--glass-hi);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4), 0 0 30px -14px rgba(232, 180, 95, 0.7), var(--sh-1);
+}
+
+.btn--ghost {
+  font-size: 15px;
+  padding: 9px 22px;
+  color: var(--txt-2);
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+}
+
+/* — 细滚动条：默认那条在暗底上是一根白杠，太抢眼 — */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 236, 242, 0.16) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(232, 236, 242, 0.14);
+  border-radius: 99px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 236, 242, 0.26);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* — 小零件 — */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  line-height: 1.7;
+  border-radius: 999px;
+  color: var(--txt-3);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.chip--mod {
+  color: var(--gold-soft);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.28);
+}

@@ -1,0 +1,591 @@
+/*
+ * 2D 特效：水墨浮现、数值飘字、过场演出、蜕变卷轴、死亡墨渍。
+ *
+ * 全部尊重 `prefers-reduced-motion`（文件末尾统一关停；JS 侧另有 motion.ts 让 canvas
+ * 粒子干脆不挂载）。动画只用 transform／opacity／filter／clip-path，不动布局属性。
+ */
+
+/* ==========================================================================
+   关键帧
+   ========================================================================== */
+
+/* 事件卡水墨浮现：自下而上洇开 ＋ 由虚转实 */
+@keyframes ink-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.994);
+    filter: blur(7px);
+    clip-path: inset(0 0 14% 0 round 16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+    clip-path: inset(0 0 0 0 round 16px);
+  }
+}
+
+/* 每回合都会重放的轻淡入（纯旁白卡用）：不动模糊、不动 clip-path */
+@keyframes card-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes log-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pulse-warn {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.45);
+  }
+}
+
+@keyframes pulse-hot {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.5), 0 0 30px -16px rgba(232, 180, 95, 0.8);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.78), 0 0 40px -10px rgba(232, 180, 95, 0.95);
+  }
+}
+
+/* Ken Burns 缓推镜：时长刻意远长于演出本身（4〜6s），所以永远停在「正在推」的段落， */
+/* 不会看到镜头走到头急停。 */
+@keyframes kb-in {
+  from { transform: scale(1.03) translate3d(0, 0, 0); }
+  to { transform: scale(1.2) translate3d(-2%, -1.4%, 0); }
+}
+
+@keyframes kb-out {
+  from { transform: scale(1.2) translate3d(1.4%, 1%, 0); }
+  to { transform: scale(1.03) translate3d(0, 0, 0); }
+}
+
+@keyframes kb-pan-left {
+  from { transform: scale(1.14) translate3d(3%, 0, 0); }
+  to { transform: scale(1.14) translate3d(-3%, 0, 0); }
+}
+
+@keyframes kb-pan-right {
+  from { transform: scale(1.14) translate3d(-3%, 0, 0); }
+  to { transform: scale(1.14) translate3d(3%, 0, 0); }
+}
+
+@keyframes kb-rise {
+  from { transform: scale(1.16) translate3d(0, 4%, 0); }
+  to { transform: scale(1.04) translate3d(0, -2%, 0); }
+}
+
+@keyframes cine-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cine-line {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+@keyframes floater-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.9);
+  }
+  16% {
+    opacity: 1;
+    transform: translate(-50%, -6px) scale(1);
+  }
+  66% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, var(--floater-lift, -26px)) scale(1);
+  }
+}
+
+@keyframes blot-spread {
+  from {
+    transform: translate(-50%, -50%) scale(0.02);
+    opacity: 0.2;
+  }
+  70% {
+    opacity: 1;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ==========================================================================
+   过场演出（cinematic）
+   ========================================================================== */
+
+.cine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--ink-950);
+  animation: cine-in 520ms var(--ease) both;
+  transition: opacity 400ms var(--ease);
+}
+
+.cine--out {
+  opacity: 0;
+}
+
+.cine--skippable:not(.cine--hold) {
+  cursor: pointer;
+}
+
+.cine__media {
+  position: absolute;
+  inset: 0;
+}
+
+.cine__media-el {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Ken Burns 只加在图片上；video 自己会动，再推一次就晕了。 */
+.cine__media-el--kb {
+  animation-duration: 17s;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+
+.kb-in { animation-name: kb-in; }
+.kb-out { animation-name: kb-out; }
+.kb-pan-left { animation-name: kb-pan-left; }
+.kb-pan-right { animation-name: kb-pan-right; }
+.kb-rise { animation-name: kb-rise; }
+
+.cine__scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(78% 62% at 50% 42%, rgba(6, 8, 11, 0) 0%, rgba(6, 8, 11, 0.62) 100%),
+    linear-gradient(180deg, rgba(6, 8, 11, 0.5) 0%, rgba(6, 8, 11, 0.14) 34%, rgba(6, 8, 11, 0.86) 100%);
+}
+
+.cine__fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cine__caption {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  width: min(760px, 84vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+.cine__line {
+  font-family: var(--kai);
+  font-size: clamp(17px, 2vw, 22px);
+  line-height: 2;
+  letter-spacing: 0.14em;
+  color: #f0ebdf;
+  text-shadow: 0 2px 22px rgba(0, 0, 0, 0.95);
+  animation: cine-line 900ms var(--ease) both;
+}
+
+.cine__line:first-child {
+  font-size: clamp(21px, 2.6vw, 30px);
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #fbf6ea;
+}
+
+.cine--death .cine__line:first-child {
+  color: #f3c3b3;
+}
+
+.cine--ascend .cine__line:first-child {
+  color: #fdf6e4;
+  text-shadow: 0 0 34px rgba(244, 240, 228, 0.65), 0 2px 22px rgba(0, 0, 0, 0.9);
+}
+
+.cine__skip {
+  position: absolute;
+  right: 26px;
+  bottom: 24px;
+  padding: 6px 16px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--txt-3);
+  border-radius: 999px;
+  background: rgba(10, 13, 18, 0.5);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  backdrop-filter: blur(6px);
+  transition: color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.cine__skip:hover {
+  color: var(--txt);
+  box-shadow: inset 0 0 0 1px var(--hair-3);
+}
+
+/*
+ * 题字画面里当背景用：不吃点击，且**不做四周暗角**。
+ * 暗角会把画面里最亮的东西（月亮在右上）压成一枚灰饼 —— 第一版就是这么翻的车。
+ * 改成「只压文字块所在的中下部 ＋ 上下缘」，横向两端留亮，光源才立得住。
+ */
+.cine--title .cine__scrim {
+  background:
+    radial-gradient(58% 40% at 50% 60%, rgba(6, 8, 11, 0.62) 0%, rgba(6, 8, 11, 0) 100%),
+    linear-gradient(
+      180deg,
+      rgba(6, 8, 11, 0.3) 0%,
+      rgba(6, 8, 11, 0.08) 28%,
+      rgba(6, 8, 11, 0.5) 76%,
+      rgba(6, 8, 11, 0.86) 100%
+    );
+}
+
+.cine--hold {
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   数值飘字
+   ========================================================================== */
+
+.floater {
+  position: absolute;
+  transform: translate(-50%, 0);
+  white-space: nowrap;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+  animation: floater-rise 1500ms var(--ease) both;
+}
+
+.floater--gain { color: var(--gold); }
+.floater--loss { color: var(--cinnabar-lt); }
+.floater--omen { color: #cdb7e8; }
+.floater--essence { color: rgb(var(--floater-rgb, 232 180 95)); }
+
+/* ==========================================================================
+   浮层通用底
+   ========================================================================== */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(5, 7, 10, 0.72);
+  backdrop-filter: blur(10px);
+  animation: overlay-in 360ms var(--ease) both;
+  transition: opacity 260ms var(--ease);
+}
+
+.overlay.is-closing {
+  opacity: 0;
+}
+
+/* ==========================================================================
+   蜕变开奖卷轴
+   ========================================================================== */
+
+.molt__fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.molt__card {
+  position: relative;
+  width: min(560px, 92vw);
+  padding: 28px 32px 30px;
+  text-align: center;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.22), var(--sh-2);
+  backdrop-filter: blur(16px);
+  animation: ink-rise 620ms var(--ease) both;
+}
+
+.molt__kicker {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  color: var(--txt-4);
+}
+
+.molt__kicker em {
+  font-style: normal;
+  letter-spacing: 0.14em;
+  color: var(--cyan);
+}
+
+/* 滚动窗口：正好三行，上下用遮罩淡出，中间一条高亮带 */
+.molt__window {
+  --molt-row: 78px;
+  position: relative;
+  height: calc(var(--molt-row) * 3);
+  margin: 20px 0 6px;
+  overflow: hidden;
+  border-radius: var(--r);
+  background: rgba(8, 11, 16, 0.55);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  -webkit-mask: linear-gradient(180deg, transparent 0, #000 22%, #000 78%, transparent 100%);
+  mask: linear-gradient(180deg, transparent 0, #000 22%, #000 78%, transparent 100%);
+}
+
+.molt__band {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: var(--molt-row);
+  height: var(--molt-row);
+  border-radius: var(--r-sm);
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.3);
+  background: linear-gradient(90deg, rgba(127, 212, 232, 0.05), rgba(127, 212, 232, 0.11), rgba(127, 212, 232, 0.05));
+}
+
+.molt__strip {
+  will-change: transform;
+}
+
+.molt__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 78px;
+  padding: 0 20px;
+}
+
+.molt__slot {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 5px;
+  color: var(--cyan);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.3);
+}
+
+.molt__name {
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  color: var(--txt);
+}
+
+.molt__card.is-settled .molt__band {
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.72), 0 0 32px -8px rgba(127, 212, 232, 0.6);
+}
+
+.molt__card.is-settled .molt__row.is-target .molt__name {
+  color: #eaf8fc;
+  text-shadow: 0 0 22px rgba(127, 212, 232, 0.7);
+}
+
+.molt__detail {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 520ms var(--ease),
+    opacity 420ms var(--ease);
+}
+
+.molt__detail.is-open {
+  max-height: 320px;
+  opacity: 1;
+}
+
+.molt__detail-name {
+  margin-top: 16px;
+  font-size: 20px;
+  letter-spacing: 0.2em;
+  color: #eaf8fc;
+}
+
+.molt__detail-desc {
+  margin-top: 8px;
+  font-size: 15.5px;
+  line-height: 1.95;
+  color: var(--txt-2);
+}
+
+.molt__detail-mods {
+  margin-top: 10px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--gold-soft);
+}
+
+.molt__detail-skill {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.3);
+}
+
+.molt__skill-tag {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+}
+
+.molt__detail-skill b {
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+}
+
+.molt__skill-desc {
+  font-size: 13px;
+  color: var(--txt-3);
+}
+
+.molt__confirm {
+  margin-top: 22px;
+}
+
+/* ==========================================================================
+   死亡墨渍
+   ========================================================================== */
+
+.ink-blot {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 700ms var(--ease);
+}
+
+.ink-blot__drop {
+  position: absolute;
+  width: var(--blot-size);
+  height: var(--blot-size);
+  /* 实心到 74% 再急落：让 border-radius 的不规则轮廓说话，而不是被圆形渐变盖掉 */
+  background: radial-gradient(circle at 44% 40%, #05070a 0%, #05070a 74%, rgba(5, 7, 10, 0.7) 88%, rgba(5, 7, 10, 0) 100%);
+  /* 模糊要跟着尺寸走：2px 在 50vmax 的墨滴上等于没有，边缘照样是塑料圆角 */
+  filter: blur(clamp(6px, 1.6vmax, 26px));
+  transform: translate(-50%, -50%) scale(0.02);
+  animation: blot-spread 900ms cubic-bezier(0.22, 0.9, 0.24, 1) both;
+  animation-delay: var(--blot-delay, 0ms);
+}
+
+.ink-blot__wash {
+  position: absolute;
+  inset: 0;
+  background: #05070a;
+  opacity: 0;
+  transition: opacity 340ms var(--ease);
+}
+
+.ink-blot.is-full .ink-blot__wash {
+  opacity: 1;
+}
+
+.ink-blot.is-lifting {
+  opacity: 0;
+}
+
+/* ==========================================================================
+   减少动画：一律静止。信息不删，只是不动。
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .cine__media-el--kb {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+.reduced-motion .cine__media-el--kb {
+  animation: none !important;
+  transform: none !important;
+}

@@ -1,1 +1,5 @@
-{ "name": "@shiling/tale-sim", "type": "module", "main": "src/index.ts" }
+{ "name": "@shiling/tale-sim", "type": "module", "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test/fixtures": "./test/fixtures.ts"
+  } }

@@ -1,0 +1,5 @@
+/* 样式入口：顺序有意义 —— token → 底子 → 屏幕布局 → 特效覆盖。 */
+@import "./tokens.css";
+@import "./base.css";
+@import "./screens.css";
+@import "./fx.css";

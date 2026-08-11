@@ -1,0 +1,73 @@
+/*
+ * 设计 token —— 弱光玻璃 ＋ 水墨。
+ *
+ * 方向沿用 3D 版 HUD 比稿的 C 案（docs/plans/shiling/2026-08-07-hud-mockups.html）：
+ * 深色弱光底、玻璃质感面板、克制的发光点缀；颜色与 3D 版 palette.ts 同源，
+ * 保证两个壳看起来是同一个世界。
+ *
+ * 只在这里放字面量。组件样式一律用 var()，改色改一处。
+ */
+
+:root {
+  /* — 墨底：从近乎全黑到石青，五档够铺层次，再多就分不清了 — */
+  --ink-950: #07090c;
+  --ink-900: #0b0e13;
+  --ink-850: #0f131a;
+  --ink-800: #141922;
+  --ink-700: #1b2029;
+
+  /* — 玻璃：半透明面板 ＋ 内描边发丝线（C 案的签名手法） — */
+  --glass: rgba(20, 25, 34, 0.6);
+  --glass-hi: rgba(31, 38, 50, 0.55);
+  --glass-lo: rgba(13, 17, 23, 0.62);
+  --hair: rgba(232, 236, 242, 0.1);
+  --hair-2: rgba(232, 236, 242, 0.18);
+  --hair-3: rgba(232, 236, 242, 0.28);
+
+  /* — 文字：暖白纸色，不用纯白（纯白在墨底上会发飘） — */
+  --txt: #e6e2d8;
+  --txt-2: #b3aea3;
+  --txt-3: #837e74;
+  --txt-4: #5f5b53;
+
+  /* — 强调 — */
+  --gold: #e8b45f;
+  --gold-soft: #d9c48a;
+  --cyan: #7fd4e8;
+  --cinnabar: #c23b22;
+  --cinnabar-lt: #e2694c;
+
+  /* — 四属性（猛朱／灵青／体素／德金） — */
+  --c-meng: #d9563a;
+  --c-ling: #7fd4e8;
+  --c-ti: #c3ccd6;
+  --c-de: #d9c48a;
+
+  /* — 四精气：与 3D 版 essence*Glow 同源；「穴」在 2D 暗底上提亮一档才辨得出 — */
+  --e-zu: #e8b45f;
+  --e-lin: #6fd8e8;
+  --e-xue: #b8915a;
+  --e-meng: #d9432a;
+
+  /* — 字体：正文与标题一律楷体系统栈。严禁复用 3D 版 public/fonts 的子集字体
+       （只有 41 个码位，动态文本必炸字形）。数字与键帽走无衬线，读数更准。 — */
+  --kai: "Kaiti SC", "STKaiti", "KaiTi", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* — 尺度 — */
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 16px;
+  --gap: 18px;
+
+  /* — 阴影：一层内高光 ＋ 一层很散的落影，别叠出塑料感 — */
+  --sh-1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 44px -28px rgba(0, 0, 0, 0.95);
+  --sh-2: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 28px 64px -30px rgba(0, 0, 0, 1);
+
+  /* — 节奏 — */
+  --t-fast: 140ms;
+  --t: 260ms;
+  --t-slow: 620ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
