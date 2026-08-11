@@ -7,7 +7,7 @@
 export * from "./types.js";
 export * from "./engine.js";
 export { BASELINE_TUNING } from "./tuning.js";
-export { ENGINE_MESSAGES, render } from "./messages.js";
+export { ENGINE_MESSAGES, cnNumeral, render } from "./messages.js";
 export {
   nextRandom,
   createCursor,

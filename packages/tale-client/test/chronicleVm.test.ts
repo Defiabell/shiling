@@ -74,8 +74,21 @@ describe("buildChronicleVm", () => {
     expect(vm.epitaph).toContain("饥馑");
     expect(vm.yearsCn).toBe("十一");
     expect(vm.organCount).toBe(2);
+    // 卷轴元信息与正文同一套数字体例（汉字）——同屏不并置两种
+    expect(vm.organCountCn).toBe("二");
     // 一次蜕变 + 满 10 岁一次 = 2
     expect(vm.bloodlineGain).toBe(2);
+  });
+
+  it("卷轴带「其形」画像，阶段按终局器官数取", () => {
+    const state = deadState();
+    const cub = buildChronicleVm(composeChronicle(state, FIXTURE_CONTENT), 0, FIXTURE_CONTENT);
+    expect(cub.portrait.label).toBe("幼兽");
+    expect(cub.portrait.src).toContain("portraits/self-1-cub");
+
+    const grown = deadState({ organIds: [...state.organIds, "a", "b", "c"] });
+    const vm = buildChronicleVm(composeChronicle(grown, FIXTURE_CONTENT), 0, FIXTURE_CONTENT);
+    expect(vm.portrait.label).toBe("近神");
   });
 
   it("登神走另一套标签", () => {

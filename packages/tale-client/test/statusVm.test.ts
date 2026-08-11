@@ -66,4 +66,30 @@ describe("buildStatusVm", () => {
     const vm = buildStatusVm(withPatch(newState(), { records: [] }), FIXTURE_CONTENT);
     expect(vm.seedName).toBe("无名神种");
   });
+
+  /**
+   * 状态栏那枚立绘随器官数换阶 —— 它是玩家在界面上唯一「看得见自己」的地方，
+   * 也是攒到第三枚器官时的视觉兑现。分档与登神门槛（器官 ≥5）对齐。
+   */
+  it("立绘按器官数分阶：幼兽 → 成兽 → 近神", () => {
+    const base = newState();
+    const cub = buildStatusVm(base, FIXTURE_CONTENT);
+    expect(cub.portrait.stage).toBe("cub");
+    expect(cub.portrait.label).toBe("幼兽");
+    expect(cub.portrait.src).toContain("portraits/self-1-cub");
+
+    const adult = buildStatusVm(
+      withPatch(base, { organIds: [...base.organIds, "a", "b"] }),
+      FIXTURE_CONTENT,
+    );
+    expect(adult.portrait.stage).toBe("adult");
+    expect(adult.portrait.src).toContain("self-2-adult");
+
+    const neargod = buildStatusVm(
+      withPatch(base, { organIds: [...base.organIds, "a", "b", "c", "d"] }),
+      FIXTURE_CONTENT,
+    );
+    expect(neargod.portrait.stage).toBe("neargod");
+    expect(neargod.portrait.label).toBe("近神");
+  });
 });

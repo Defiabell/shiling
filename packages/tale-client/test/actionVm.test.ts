@@ -10,12 +10,14 @@ describe("buildActionVms", () => {
     expect(vms.map((vm) => vm.id)).toEqual(["hunt", "explore", "rest", "dormant"]);
   });
 
-  it("蛰伏置灰时说清还差多少精气（差多少来自最高的一型）", () => {
+  it("蛰伏置灰时说清还差多少精气（差多少来自最高的一型）＋攒它干什么", () => {
     const state = withPatch(newState(), { essence: { zu: 18, lin: 4, xue: 0, meng: 0 } });
     const dormant = buildActionVms(state, FIXTURE_CONTENT)[3]!;
     expect(dormant.enabled).toBe(false);
     expect(dormant.highlight).toBe(false);
-    expect(dormant.disabledReason).toBe(`尚需足之精气 ${T.moltThreshold - 18}`);
+    expect(dormant.disabledReason).toContain(`尚需足之精气 ${T.moltThreshold - 18}`);
+    // 禁用时 hint 被 disabledReason 顶掉，所以「蛰伏＝换器官」得在这句里说清
+    expect(dormant.disabledReason).toContain("器官");
   });
 
   it("任一精气达阈值 → 蛰伏点亮并高亮", () => {

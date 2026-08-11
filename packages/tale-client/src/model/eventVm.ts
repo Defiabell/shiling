@@ -17,6 +17,7 @@ import {
   type TaleEvent,
   type TaleState,
 } from "@shiling/tale-sim";
+import { eventArt } from "../art/assets.js";
 import { ESSENCE_LABELS, ESSENCE_ORDER, STAT_LABELS, STAT_ORDER } from "./format.js";
 
 export interface MediaAsset {
@@ -24,6 +25,13 @@ export interface MediaAsset {
   src: string;
   /** Ken Burns 缓推镜的落点（0〜1 归一化），缺省居中 */
   focus?: { x: number; y: number };
+  /**
+   * 画幅比（CSS `aspect-ratio` 的值，如 `"4 / 3"`）。
+   *
+   * 卡片图位按它开框，图就**整幅显示不裁切** —— B4 的插图是 4:3 册页，立绘是 3:4，
+   * 头像 1:1，硬塞进同一个固定高度的横幅会切掉主体（详见 b4-report 第七节）。缺省 4:3。
+   */
+  aspect?: string;
 }
 
 export type RequirementKind = "stat" | "organ" | "essence";
@@ -57,8 +65,8 @@ export interface EventCardVm {
   deadlocked: boolean;
 }
 
-/** 事件插图在 public 下的目录（B4 美术管线的产出落点）。 */
-export const ART_DIR = "/art/";
+/** 事件插图在 public 下的目录（B4 美术管线的产出落点）。路径规则的正本在 `art/assets.ts`。 */
+export { ART_DIR } from "../art/assets.js";
 
 /**
  * 把一个 organTag 说成人话：列出内容库里带此 tag 的器官名，用「／」连接。
@@ -160,7 +168,7 @@ export function buildEventCardVm(
     eventId: event.id,
     title: event.title,
     paragraphs: splitParagraphs(event.body),
-    media: event.illustration ? { kind: "image", src: ART_DIR + event.illustration } : null,
+    media: event.illustration ? { kind: "image", src: eventArt(event.illustration) } : null,
     choices,
     deadlocked: choices.length > 0 && choices.every((choice) => !choice.enabled),
   };

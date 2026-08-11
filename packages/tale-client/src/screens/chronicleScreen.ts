@@ -29,14 +29,20 @@ export function renderChronicle(props: ChronicleProps): HTMLElement {
           [
             el("div", { class: "scroll__stamp", text: vm.endingLabel }),
             el("h1", { class: "scroll__title", text: vm.title }),
-            // 元信息用阿拉伯数字：卷轴正文是引擎按内容模板生成的（「凡历4岁，成器官2」），
-            // 这里若写「寿 四岁」，同屏相邻三行就会出现两种数字体系。
+            // 元信息跟着正文用汉字数字：B5 把列传模板改成史书体（「凡历四岁，成器官二」）后，
+            // 这里若还写「寿 4 岁」，同屏相邻三行就会并置两种数字体系。
             el("div", { class: "scroll__meta" }, [
-              el("span", { text: `寿 ${vm.years} 岁` }),
+              el("span", { text: `寿${vm.yearsCn}岁` }),
               el("i", { text: "·" }),
-              el("span", { text: `器官 ${vm.organCount}` }),
+              el("span", { text: `器官${vm.organCountCn}` }),
               el("i", { text: "·" }),
               el("span", { text: vm.epitaph }),
+            ]),
+            // 「其形」：终局形貌的立绘，靠右浮着让正文绕排 —— 旧书里的插图就是这么嵌的。
+            // 画像随器官数分阶（幼兽／成兽／近神），所以它也是这一世 build 的一句总结。
+            el("figure", { class: "scroll__figure" }, [
+              el("img", { attrs: { src: vm.portrait.src, alt: "", "data-portrait": "1" } }),
+              el("figcaption", { text: `其形　${vm.portrait.label}` }),
             ]),
             el("p", { class: "scroll__opening", text: vm.opening }),
             vm.middle.length > 0

@@ -4,40 +4,27 @@
  * 全部无 DOM 依赖，单测直接盖。中文文案一律全角标点。
  */
 
-import type { EndingType, EssenceType, Season } from "@shiling/tale-sim";
-
-const CN_DIGITS = ["〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
-
-/**
- * 0〜99 的汉字数字；越界返回 null（调用方自己决定退回阿拉伯数字还是别的说法）。
- */
-function cnNumber(value: number): string | null {
-  const n = Math.floor(value);
-  if (!Number.isFinite(n) || n < 0 || n > 99) return null;
-  if (n < 10) return CN_DIGITS[n] ?? null;
-  const tens = Math.floor(n / 10);
-  const ones = n % 10;
-  const tensPart = tens === 1 ? "十" : `${CN_DIGITS[tens] ?? ""}十`;
-  return ones === 0 ? tensPart : `${tensPart}${CN_DIGITS[ones] ?? ""}`;
-}
+import { cnNumeral, type EndingType, type EssenceType, type Season } from "@shiling/tale-sim";
 
 /**
  * 岁数汉字化：0 → "初"，1〜99 → "一"…"九十九"，≥100 退回阿拉伯数字。
  *
- * 数字风格的分工（全局一致，别混）：**岁数出现在散文与标题里用汉字**（「三岁 · 秋 · 青丘」，
- * 混排 "3 岁" 会把状态栏拉回仪表盘气质）；**可比对的量值用阿拉伯数字**（属性／饱食／
- * 精气／器官件数）。列传卷轴正文是引擎按内容模板生成的（那边用阿拉伯数字），所以卷轴上
- * 我这一侧的元信息也跟着用阿拉伯数字，免得同屏三行里两种数字并置。
+ * 数字风格的分工（全局一致，别混）：**散文里的数字一律汉字** —— 状态栏的岁数
+ * （「三岁 · 秋 · 青丘」）、列传卷轴的正文与元信息、死亡屏摘要；**只有要横向比对的量值
+ * 用阿拉伯数字**（属性／饱食／精气／血统点这些盯着看涨跌的）。列传正文由引擎按 B2 的
+ * 模板生成，那边同样是汉字（`{{years|cn}}`），所以卷轴上下不会并置两种数字体系。
+ *
+ * 汉字数字表只有一份，在 tale-sim（`cnNumeral`）—— 界面与列传模板共用它。
  */
 export function formatYearCn(year: number): string {
   const y = Math.floor(year);
-  if (!Number.isFinite(y) || y < 0 || y === 0) return "初";
-  return cnNumber(y) ?? String(y);
+  if (!Number.isFinite(y) || y <= 0) return "初";
+  return cnNumeral(y);
 }
 
 /** 计数汉字化（器官件数、蜕变次数等）：0〜99 给汉字，越界退回阿拉伯数字。 */
 export function formatCountCn(count: number): string {
-  return cnNumber(count) ?? String(Math.floor(count));
+  return cnNumeral(count);
 }
 
 export const SEASON_NAMES: readonly [string, string, string, string] = ["春", "夏", "秋", "冬"];

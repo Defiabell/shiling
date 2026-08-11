@@ -1,16 +1,15 @@
 /**
- * 开发期内容源。
+ * 内容源 —— 全客户端**唯一**一处 import 内容库的地方。
  *
- * B2 的 `@shiling/tale-content` 就绪后，B5 只改这一个文件的 import：
- * `import { TALE_CONTENT as CONTENT } from "@shiling/tale-content";`
- * 界面其余部分一律从这里取 content，不许再有第二处 import 内容库 ——
- * 换真内容时才不会漏改。
+ * B5 已把开发期的 `FIXTURE_CONTENT`（tale-sim 的 3 事件最小 fixture）换成 B2 交付的
+ * 真内容 `TALE_CONTENT`（44 事件／12 器官／3 神种／8 敌人／列传模板）。界面其余部分
+ * 一律从这里取 content，不许再有第二处 import 内容库 —— 换内容时才不会漏改。
  */
 
-import { FIXTURE_CONTENT } from "@shiling/tale-sim/test/fixtures";
+import { TALE_CONTENT } from "@shiling/tale-content";
 import type { TaleContent } from "@shiling/tale-sim";
 
-export const CONTENT: TaleContent = FIXTURE_CONTENT;
+export const CONTENT: TaleContent = TALE_CONTENT;
 
-/** 开发期标记：真内容接入后置 false，界面上的「fixture 内容」水印随之消失。 */
-export const USING_FIXTURE_CONTENT = true;
+/** 开发期标记：真内容已接入，题字画面的「fixture 内容」水印随之消失。 */
+export const USING_FIXTURE_CONTENT = false;

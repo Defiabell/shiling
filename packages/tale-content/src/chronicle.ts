@@ -11,6 +11,14 @@
  *
  * 可用占位（引擎 `render`）：`seedName` `years` `organCount` `moltCount` `killCount`
  * `meng` `ling` `ti` `de`；`middleLine` 额外可用 `year` `season` `text`。
+ *
+ * ## 数字体例（B5 定，勿混）
+ * 列传正文里的数字**一律汉字**（`{{years|cn}}`）—— 「凡历4岁，成器官2，蜕1，杀3」是
+ * 报表话，摆在史记笔法的正文里当场破文气。阿拉伯数字只留给界面上那些要横向比对的量值
+ * （状态栏属性／饱食／精气），那些不在这个文件里。
+ *
+ * 零值另有措辞，用条件段 `{{#key}}…{{/key}}`／`{{^key}}…{{/key}}` 表达：一世未曾蜕形、
+ * 未曾杀生、未及一岁而死都是常见结局，而「蜕〇，杀〇」「凡历〇岁」读起来是机器在说话。
  */
 
 import type { ChronicleTemplates } from "@shiling/tale-sim";
@@ -19,9 +27,9 @@ export const CHRONICLE_TEMPLATES: ChronicleTemplates = {
   titleTemplate: "食灵列传·{{seedName}}",
 
   opening:
-    "食灵者，无名，凭{{seedName}}降于青丘，托身幼兽。凡历{{years}}岁，成器官{{organCount}}，蜕{{moltCount}}，杀{{killCount}}。其为兽也，猛{{meng}}、灵{{ling}}、体{{ti}}、德{{de}}。",
+    "食灵者，无名，凭{{seedName}}降于青丘，托身幼兽。{{#years}}凡历{{years|cn}}岁{{/years}}{{^years}}未及一岁{{/years}}，成器官{{organCount|cn}}{{#moltCount}}，蜕{{moltCount|cn}}{{/moltCount}}{{^moltCount}}，未尝蜕形{{/moltCount}}{{#killCount}}，杀{{killCount|cn}}{{/killCount}}{{^killCount}}，未尝杀生{{/killCount}}。其为兽也，猛{{meng|cn}}、灵{{ling|cn}}、体{{ti|cn}}{{#de}}、德{{de|cn}}{{/de}}{{^de}}，而德无可称{{/de}}。",
 
-  middleLine: "{{year}}岁{{season}}，{{text}}",
+  middleLine: "{{#year}}{{year|cn}}岁{{/year}}{{^year}}初岁{{/year}}{{season}}，{{text}}",
 
   endings: {
     starve: "末年荐饥，山无可食之物，遂以饥馑不振，殒于青丘之野。",
@@ -59,7 +67,10 @@ export const CHRONICLE_TEMPLATES: ChronicleTemplates = {
       id: "cruel-violent-end",
       endings: ["slain"],
       maxDe: 6,
-      text: "其行暴，同类畏之；所得者众，所存者寡。以杀始，以杀终，宜也。",
+      // 不要写「以杀始，以杀终」：赞语只吃 de 与 ending，而 de 归零的路子有一半是弃卵、
+      // 见死不救、取人之食这类**不仁而未必杀生**的抉择 —— 实测真出现过「未尝杀生」的
+      // 一世配上这句评语，读起来是史官在瞎写。措辞只说得起 de 与横死这两件事。
+      text: "其取也无让，其行也无恤。终毙于爪牙之下，青丘无为之惜者。",
     },
     {
       id: "cruel",

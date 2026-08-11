@@ -74,13 +74,28 @@ function statusBar(status: StatusVm): HTMLElement {
   const organs = status.organNames.length > 0 ? status.organNames.join("、") : "尚无";
   return el("header", { class: "statusbar" }, [
     el("div", { class: "statusbar__when", attrs: { "data-anchor": "when" } }, [
-      el("div", { class: "when__main", text: status.when }),
-      el("div", { class: "when__sub" }, [
-        el("span", { text: status.seedName }),
-        el("i", { text: "·" }),
-        el("span", { text: `器官 ${status.organCount}`, title: organs }),
-        el("i", { text: "·" }),
-        el("span", { text: `寿限 ${status.lifespanMax}` }),
+      // 立绘按器官数分阶（幼兽→成兽→近神）。这是玩家在界面上唯一「看得见自己」的地方，
+      // 也是蜕变攒到第三枚器官时的一次视觉兑现 —— 所以贴在最常看的岁月旁边。
+      el(
+        "figure",
+        { class: `self self--${status.portrait.stage}`, title: `此身　${status.portrait.label}` },
+        [
+          el("img", {
+            class: "self__img",
+            attrs: { src: status.portrait.src, alt: "", "data-portrait": status.portrait.stage },
+          }),
+          el("figcaption", { class: "self__zi", text: status.portrait.label }),
+        ],
+      ),
+      el("div", { class: "statusbar__when-text" }, [
+        el("div", { class: "when__main", text: status.when }),
+        el("div", { class: "when__sub" }, [
+          el("span", { text: status.seedName }),
+          el("i", { text: "·" }),
+          el("span", { text: `器官 ${status.organCount}`, title: organs }),
+          el("i", { text: "·" }),
+          el("span", { text: `寿限 ${status.lifespanMax}` }),
+        ]),
       ]),
     ]),
 
@@ -126,8 +141,19 @@ function statusBar(status: StatusVm): HTMLElement {
   ]);
 }
 
+/**
+ * 卡片图位。
+ *
+ * **图位按画幅比开框，不再是固定高度的横幅** —— B4 的插图是 4:3 册页，而原先
+ * `height: clamp(132px, 22vh, 240px)` ＋ `object-fit: cover` 实测把图位压成 780×198
+ * （≈3.9:1），只留中间那条横带：44 条 brief 里 21 条把主体放在画幅上下极端，切完主体
+ * 整个不在画面里（「白泽问路」切完既没有白泽的头也没有仰望的幼兽）。
+ * 比例交给内容声明（`MediaAsset.aspect`），缺省 4:3；卡片在宽屏改成图文并排（见 CSS
+ * `.card--split`），所以整幅显示也不会把正文挤出屏幕。
+ */
 function artFigure(media: MediaAsset | null, fallbackKey: string, kind: "event" | "seed"): HTMLElement {
-  const src = media?.src ?? inkArt(kind, fallbackKey);
+  // 占位图按 4:3 出（与真插图同比例），否则换图时排版会跳一下
+  const src = media?.src ?? inkArt(kind, fallbackKey, { width: 1024, height: 768 });
   const node =
     media?.kind === "video"
       ? el("video", {
@@ -136,7 +162,11 @@ function artFigure(media: MediaAsset | null, fallbackKey: string, kind: "event" 
         })
       : el("img", { class: "card__art-el", attrs: { src, alt: "", loading: "lazy" } });
   if (media?.kind === "video") (node as HTMLVideoElement).muted = true;
-  return el("figure", { class: "card__art" }, [node, el("span", { class: "card__art-veil" })]);
+  return el(
+    "figure",
+    { class: "card__art", style: `aspect-ratio:${media?.aspect ?? "4 / 3"}` },
+    [node, el("span", { class: "card__art-veil" })],
+  );
 }
 
 function requirementChip(requirement: EventCardVm["choices"][number]["requirements"][number]): HTMLElement {
@@ -153,7 +183,7 @@ function requirementChip(requirement: EventCardVm["choices"][number]["requiremen
 }
 
 function eventCard(card: EventCardVm, key: string, props: PlayProps): HTMLElement {
-  return el("section", { class: "card card--event", attrs: { "data-key": key } }, [
+  return el("section", { class: "card card--event card--split", attrs: { "data-key": key } }, [
     artFigure(card.media, card.eventId, "event"),
     el("div", { class: "card__body" }, [
       el("h2", { class: "card__title", text: card.title }),
@@ -206,7 +236,7 @@ function narrationCard(center: Extract<CenterVm, { kind: "narration" }>, props: 
   return el(
     "section",
     {
-      class: `card card--narration${hasArt ? "" : " card--plain"}`,
+      class: `card card--narration${hasArt ? " card--split" : " card--plain"}`,
       attrs: { "data-key": center.key },
     },
     [
@@ -257,15 +287,31 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
       attrs: { "data-key": `combat:${combat.enemyName}` },
     },
     [
-      // 敌人图位：现在是程序化占位，B4 的 8 张敌人头像到位后直接换 media
-      artFigure(null, `enemy:${combat.enemyName}`, "event"),
+      /*
+       * 敌人头像是 B4 出的 1:1 胸像，所以**不能**走顶部横幅图位 —— 一张方形胸像塞进
+       * 780×130 的横幅里只剩眼睛一条缝。改成头像在左、名号与描述在右（三国志式的遭遇版式），
+       * 顺带把战斗卡的纵向高度让给血条与四指令：打架时最不该出现的就是滚屏。
+       */
       el("div", { class: "combat__head" }, [
-        el("div", { class: "combat__kicker" }, [
-          el("span", { text: "遭遇" }),
-          el("em", { text: `第 ${combat.round + 1} 合` }),
-          combat.primed ? el("b", { class: "combat__primed", text: "蓄势·下击倍之" }) : null,
+        el("figure", { class: "foe" }, [
+          el("img", {
+            class: "foe__img",
+            attrs: {
+              src: combat.enemyPortrait?.src ?? inkArt("event", `enemy:${combat.enemyName}`, { width: 768, height: 768 }),
+              alt: "",
+              "data-foe": "1",
+            },
+          }),
         ]),
-        el("p", { class: "combat__desc", text: combat.enemyDesc }),
+        el("div", { class: "combat__intro" }, [
+          el("div", { class: "combat__kicker" }, [
+            el("span", { text: "遭遇" }),
+            el("em", { text: `第 ${combat.round + 1} 合` }),
+            combat.primed ? el("b", { class: "combat__primed", text: "蓄势·下击倍之" }) : null,
+          ]),
+          el("h2", { class: "combat__name", text: combat.enemyName }),
+          el("p", { class: "combat__desc", text: combat.enemyDesc }),
+        ]),
       ]),
       el("div", { class: "combat__bars" }, [
         hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
@@ -349,7 +395,11 @@ function logRail(props: PlayProps): HTMLElement {
                 class: `rail__item tone-${line.tone}${props.freshLogIds.has(line.id) ? " is-fresh" : ""}`,
               },
               [
-                el("span", { class: "rail__stamp", text: line.stamp }),
+                el("div", { class: "rail__head" }, [
+                  el("span", { class: "rail__stamp", text: line.stamp }),
+                  // 连续重复的同一句合成一条，省下的可见位留给真正发生过的事
+                  line.repeat > 1 ? el("em", { class: "rail__repeat", text: `×${line.repeat}` }) : null,
+                ]),
                 el("p", { class: "rail__text", text: line.text }),
               ],
             ),

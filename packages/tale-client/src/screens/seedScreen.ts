@@ -7,7 +7,8 @@
 
 import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
-import { ENDING_LABELS, formatYearCn } from "../model/format.js";
+import { seedArt } from "../art/assets.js";
+import { ENDING_LABELS, formatCountCn, formatYearCn } from "../model/format.js";
 import type { SeedCardVm, SeedScreenVm } from "../model/seedVm.js";
 import type { EndingType } from "@shiling/tale-sim";
 
@@ -38,9 +39,19 @@ function seedCard(card: SeedCardVm, props: SeedProps): HTMLElement {
           on: { click: () => props.onUnlock(card.id) },
         });
 
+  /*
+   * 神种卡的图：B4 没画神种专用图，但三枚神种的对象本身都有成图（常胎＝幼兽立绘、
+   * 白泽遗种＝「白泽问路」、应龙遗种＝「垂死应龙」），零积分复用同一个对象的画。
+   * 立绘是 3:4 竖构图，塞进 4:3 的卡首图位要靠 `contain` 整幅显示（cover 会切掉头）。
+   */
+  const art = seedArt(card.id);
+  const portraitFit = art !== null && art.includes("/portraits/");
   return el("article", { class: `seedcard is-${card.lock}` }, [
     el("figure", { class: "seedcard__art" }, [
-      el("img", { attrs: { src: inkArt("seed", card.id, { width: 640, height: 640 }), alt: "" } }),
+      el("img", {
+        class: portraitFit ? "is-contained" : undefined,
+        attrs: { src: art ?? inkArt("seed", card.id, { width: 1024, height: 768 }), alt: "" },
+      }),
       el("span", { class: "card__art-veil" }),
     ]),
     el("div", { class: "seedcard__body" }, [
@@ -79,7 +90,11 @@ function chronicleRow(
     el("summary", { class: "pastlife__head" }, [
       el("span", { class: "pastlife__idx", text: `第${formatYearCn(index + 1)}世` }),
       el("b", { class: "pastlife__title", text: entry.title }),
-      el("span", { class: "pastlife__meta", text: `${formatYearCn(entry.years)}岁 · 器官 ${entry.organCount}` }),
+      // 前传目录跟列传正文同一套数字体例（汉字）——同一行里不并置两种数字
+      el("span", {
+        class: "pastlife__meta",
+        text: `${formatYearCn(entry.years)}岁 · 器官${formatCountCn(entry.organCount)}`,
+      }),
       el("em", { class: "pastlife__ending", text: ENDING_LABELS[ending] ?? entry.ending }),
     ]),
     el(

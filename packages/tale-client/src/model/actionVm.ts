@@ -50,8 +50,10 @@ export function buildActionVms(state: TaleState, content: TaleContent): ActionBu
       } else if (state.combat) {
         disabledReason = "战事未了";
       } else if (id === "dormant") {
+        // 差多少 ＋ **攒它干什么**：按钮禁用时 hint 被 disabledReason 顶掉，而「蛰伏＝换器官」
+        // 恰恰是新玩家头一个小时最需要知道的一句（不然精气条只是四根会涨的柱子）。
         const need = Math.max(0, threshold - Math.round(state.essence[best]));
-        disabledReason = `尚需${ESSENCE_LABELS[best]}之精气 ${need}`;
+        disabledReason = `尚需${ESSENCE_LABELS[best]}之精气 ${need}　满则蜕一器官`;
       } else {
         disabledReason = "此刻不可行";
       }

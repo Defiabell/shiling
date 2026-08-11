@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bloodlineGain,
+  cnNumeral,
   composeChronicle,
   createLife,
   render,
@@ -201,6 +202,68 @@ describe("render 占位替换", () => {
   it("已知占位替换，未知占位原样保留", () => {
     expect(render("{{a}}与{{b}}", { a: "甲", b: 2 })).toBe("甲与2");
     expect(render("{{a}}与{{missing}}", { a: "甲" })).toBe("甲与{{missing}}");
+  });
+
+  it("`|cn` 把数字渲染成汉字（列传的史书体靠这一支笔）", () => {
+    expect(render("凡历{{years|cn}}岁", { years: 4 })).toBe("凡历四岁");
+    expect(render("凡历{{years|cn}}岁", { years: 12 })).toBe("凡历十二岁");
+    expect(render("{{n|cn}}", { n: 0 })).toBe("〇");
+    expect(render("{{n|cn}}", { n: 20 })).toBe("二十");
+    // 字符串值不该被当数字处理，原样输出
+    expect(render("{{s|cn}}", { s: "常胎" })).toBe("常胎");
+  });
+
+  it("未知格式化器与未知占位同待遇：原样保留，不静默退回未格式化的值", () => {
+    // 静默降级会让「模板写错」看起来像「数字风格没生效」——最难查的一类
+    expect(render("{{n|roman}}", { n: 4 })).toBe("{{n|roman}}");
+    expect(render("{{missing|cn}}", {})).toBe("{{missing|cn}}");
+    // 原型链上的名字也必须算「未知」（对象查表会把 constructor 当成一个能调的格式化器）
+    expect(render("{{n|constructor}}", { n: 4 })).toBe("{{n|constructor}}");
+    expect(render("{{n|toString}}", { n: 4 })).toBe("{{n|toString}}");
+  });
+
+  it("超出 0〜99 的数退回阿拉伯数字（列传里「一百二十」不如 120 好读）", () => {
+    expect(render("{{n|cn}}", { n: 120 })).toBe("120");
+    expect(render("{{n|cn}}", { n: -3 })).toBe("-3");
+  });
+
+  it("条件段：非零留内层、零去掉，`^` 反之", () => {
+    const tpl = "{{#kill}}，杀{{kill|cn}}{{/kill}}{{^kill}}，未尝杀生{{/kill}}";
+    expect(render(tpl, { kill: 3 })).toBe("，杀三");
+    expect(render(tpl, { kill: 0 })).toBe("，未尝杀生");
+    // 空字符串同样算「无」
+    expect(render("{{#s}}有{{/s}}{{^s}}无{{/s}}", { s: "" })).toBe("无");
+  });
+
+  it("条件段的 key 未知时整段原样保留（内容 bug 要看得见）", () => {
+    expect(render("{{#nope}}甲{{/nope}}", {})).toBe("{{#nope}}甲{{/nope}}");
+  });
+
+  it("同一模板里多个条件段互不串味", () => {
+    const tpl = "{{#a}}A{{/a}}{{#b}}B{{/b}}{{^a}}a{{/a}}";
+    expect(render(tpl, { a: 1, b: 0 })).toBe("A");
+    expect(render(tpl, { a: 0, b: 1 })).toBe("Ba");
+  });
+});
+
+describe("cnNumeral", () => {
+  it("0〜9 单字、10〜19 以「十」起、整十不带尾数", () => {
+    expect(cnNumeral(0)).toBe("〇");
+    expect(cnNumeral(7)).toBe("七");
+    expect(cnNumeral(10)).toBe("十");
+    expect(cnNumeral(11)).toBe("十一");
+    expect(cnNumeral(30)).toBe("三十");
+    expect(cnNumeral(99)).toBe("九十九");
+  });
+
+  it("越界与非有限数退回阿拉伯数字", () => {
+    expect(cnNumeral(100)).toBe("100");
+    expect(cnNumeral(-1)).toBe("-1");
+    expect(cnNumeral(Number.NaN)).toBe("NaN");
+  });
+
+  it("小数向下取整（岁数一律取整年）", () => {
+    expect(cnNumeral(4.9)).toBe("四");
   });
 });
 

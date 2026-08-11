@@ -152,6 +152,61 @@
   backdrop-filter: blur(14px);
 }
 
+.statusbar__when {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* 此身：立绘缩略（3:4 竖构图，取上部＝头肩），随器官数换阶 */
+.self {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 60px;
+  margin: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ink-900);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+}
+
+.self__img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  /* 立绘是全身像，48×60 的框里要保住头 —— 取景往上提 */
+  object-position: 50% 16%;
+  filter: saturate(0.9) contrast(1.05);
+}
+
+.self__zi {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 1px 0 2px;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-align: center;
+  color: var(--txt-2);
+  background: linear-gradient(180deg, rgba(7, 9, 12, 0), rgba(7, 9, 12, 0.86) 46%);
+}
+
+/* 近神一阶给一圈青光：它是这一世 build 攒到位的证据，值得被看见 */
+.self--neargod {
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.42), 0 0 18px -6px rgba(127, 212, 232, 0.7);
+}
+
+.self--neargod .self__zi {
+  color: #d5eaf1;
+}
+
+.statusbar__when-text {
+  min-width: 0;
+}
+
 .when__main {
   font-size: 21px;
   letter-spacing: 0.14em;
@@ -383,11 +438,23 @@
   animation: ink-rise var(--t-slow) var(--ease) both;
 }
 
+/*
+ * 图位：**按画幅比开框，整幅显示，不裁切**。
+ *
+ * 原先是 `height: clamp(132px, 22vh, 240px)` 的横幅 ＋ `object-fit: cover`，实测在
+ * 1440×900 下渲染成 780×198（≈3.9:1），而 B4 的插图是 4:3 —— cover 只留中间那条横带，
+ * 上下各切掉三分之一。44 条 brief 里 21 条把主体放在画幅上下极端，切完主体整个不在画面里。
+ *
+ * 直接把高度换成 `aspect-ratio: 4/3` 是不行的（B4 报告里的那个一行建议）：780 宽的卡
+ * 会长出 585px 高的图，正文与四个抉择只剩 80px 可视高度，玩家得在小窗里滚着读 ——
+ * 用一个更糟的病换掉这个病。真正的解法是**宽屏改图文并排**（下面的 `.card--split`）：
+ * 高度给死、宽度由画幅比推出来，图不裁切，也不吃正文的纵向预算。
+ */
 .card__art {
   position: relative;
   margin: 0;
   flex: 0 0 auto;
-  height: clamp(132px, 22vh, 240px);
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   background: var(--ink-900);
 }
@@ -398,6 +465,56 @@
   object-fit: cover;
   display: block;
   filter: saturate(0.92) contrast(1.04);
+}
+
+/*
+ * 图文并排（≥1100px）：图在左、正文与抉择在右。
+ *
+ * 图位高度给死（`clamp`），宽度按各自画幅比推出 —— 4:3 的事件插图得到横幅、3:4 的立绘
+ * 得到竖幅，同一套规则同时容下两种画幅，且两种都是整幅。
+ */
+@media (min-width: 1100px) {
+  .card--split {
+    flex-direction: row;
+  }
+
+  /*
+   * 只有事件卡与战斗卡撑到 940：它们右栏要放正文＋四抉择／血条＋四指令，宽一点才不挤；
+   * 两者同宽也是必要的 —— 一世里两种卡交替出现，宽度跳动会让整屏跟着一宽一窄地呼吸。
+   * 旁白卡（降世、抉择结果、战斗收束）内容常常只有两三行，撑到 940 会在右侧空出一大片。
+   */
+  .card--event,
+  .card--combat {
+    max-width: 940px;
+  }
+
+  .card--split .card__art {
+    height: clamp(220px, 38vh, 340px);
+    /* height ＋ aspect-ratio 一起给，宽度就由画幅比算出来（flex 里必须显式禁伸缩） */
+    flex: 0 0 auto;
+    width: auto;
+    /*
+     * 图竖向居中：正文比图高时（四抉择＋门槛提示），图若钉在顶上，左栏下半会空出一块
+     * 无意义的暗area；居中后上下等距，读起来是一幅装裱在绢上的册页。
+     * 只居中图 —— 正文那一栏必须保持 stretch，否则整卡超高时它会被上下裁掉且滚不到
+     * （`align-items: center` 就是这个陷阱，B3 已经踩过一次）。
+     */
+    align-self: center;
+  }
+
+  /* 并排时压墨的方向要从「下缘」改成「右缘」，否则墨会横在画面底部像一道脏边 */
+  .card--split .card__art-veil {
+    background: linear-gradient(
+      90deg,
+      rgba(7, 9, 12, 0.22) 0%,
+      rgba(7, 9, 12, 0) 30%,
+      rgba(20, 25, 34, 0.55) 100%
+    );
+  }
+
+  .card--split .card__body {
+    padding: 22px 30px 24px;
+  }
 }
 
 /* 图底交界处压一层墨，避免图片硬边切在文字上方 */
@@ -425,6 +542,12 @@
  */
 .card--plain {
   animation: card-fade var(--t) var(--ease) both;
+  /*
+   * 纯旁白卡收窄：它常常只有一句（「伏草间半日，猎得野雉」），撑满 780 就是一条一句话的
+   * 空板子，读起来像「什么都没发生」。收到 620 后它是一枚安静的小告示，与事件卡的宽幅
+   * 形成节奏差 —— 一世八十回合，最常看的就是这张。
+   */
+  max-width: 620px;
 }
 
 .card__title {
@@ -593,15 +716,48 @@
 /* — 战斗 — */
 
 /*
- * 战斗卡比事件卡多两块（血条＋四指令），图位得压成一条横幅，否则整卡超过舞台高度要滚
- * ——打架的时候滚屏是最糟的体验。B4 的敌人头像按同一比例出图即可。
+ * 战斗卡比事件卡多两块（血条＋四指令），纵向最紧 —— 打架时滚屏是最糟的体验。
+ * 所以敌人的画不走顶部图位，而是 1:1 胸像摆在名号左边（三国志式的遭遇版式）：
+ * 头像看得清，纵向还省下 100px 给血条与四指令。
  */
-.card--combat .card__art {
-  height: clamp(92px, 13vh, 138px);
+.card--combat .combat__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 22px 32px 0;
 }
 
-.card--combat .combat__head {
-  padding: 20px 32px 0;
+.foe {
+  position: relative;
+  flex: 0 0 auto;
+  width: clamp(96px, 12vw, 132px);
+  aspect-ratio: 1 / 1;
+  margin: 0;
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--ink-900);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.34), 0 10px 26px -16px rgba(0, 0, 0, 1);
+}
+
+.foe__img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: saturate(0.92) contrast(1.05);
+}
+
+.combat__intro {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.combat__name {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: #f2ede1;
 }
 
 .combat__kicker {
@@ -631,9 +787,9 @@
 }
 
 .combat__desc {
-  margin-top: 10px;
-  font-size: 16px;
-  line-height: 1.95;
+  margin-top: 8px;
+  font-size: 15.5px;
+  line-height: 1.9;
   color: var(--txt-2);
 }
 
@@ -814,12 +970,28 @@
   animation: log-in var(--t) var(--ease) both;
 }
 
-.rail__stamp {
+.rail__head {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rail__stamp {
   font-family: var(--sans);
   font-size: 10.5px;
   letter-spacing: 0.1em;
   color: var(--txt-4);
+}
+
+/* ×N：连续重复的同一句合成一条 */
+.rail__repeat {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--gold-soft);
+  opacity: 0.75;
 }
 
 .rail__text {
@@ -1072,11 +1244,13 @@
   box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.34), 0 30px 60px -34px rgba(0, 0, 0, 1);
 }
 
+/* 卡首图位按 4:3（与事件插图同比例）；立绘是 3:4，靠 is-contained 整幅显示 */
 .seedcard__art {
   position: relative;
   margin: 0;
-  height: 158px;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
+  background: var(--ink-900);
 }
 
 .seedcard__art img {
@@ -1084,6 +1258,11 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* 竖构图立绘：cover 会把头切掉，改成整幅居中，两侧留墨底当装裱 */
+.seedcard__art img.is-contained {
+  object-fit: contain;
 }
 
 .seedcard__body {
@@ -1388,6 +1567,31 @@
   opacity: 0.6;
 }
 
+/* 其形：终局立绘靠右浮着，正文绕排 —— 旧书插图的嵌法，不额外吃一屏高度 */
+.scroll__figure {
+  position: relative;
+  float: right;
+  width: clamp(112px, 22%, 158px);
+  margin: 18px 0 12px 22px;
+}
+
+.scroll__figure img {
+  width: 100%;
+  display: block;
+  border-radius: 3px;
+  background: rgba(9, 8, 6, 0.6);
+  box-shadow: 0 0 0 1px rgba(214, 178, 94, 0.28), 0 14px 30px -18px rgba(0, 0, 0, 1);
+  filter: saturate(0.86) contrast(1.04) brightness(0.94);
+}
+
+.scroll__figure figcaption {
+  margin-top: 7px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-align: center;
+  color: #9a8b6e;
+}
+
 .scroll__opening,
 .scroll__closing {
   position: relative;
@@ -1439,7 +1643,15 @@
   color: #f0e3c8;
 }
 
+/*
+ * 结算条钉在视口底部：一世够长时列传能有九行编年（`chronicleMaxExcerpts` 8 ＋出生），
+ * 卷轴就超过一屏，「转世」按钮会掉到折线以下 —— 玩家读完最后一行会以为游戏卡住了。
+ * sticky 让它始终在手边，同时不影响长卷正常滚动。
+ */
 .chronicle__foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1486,6 +1698,21 @@
 /* ==========================================================================
    窄屏兜底：主界面改为纵向堆叠（M0 的目标机型是桌面，这里只保证不塌）
    ========================================================================== */
+
+/*
+ * 窄屏（不并排时）：图位仍按画幅比开框，但封顶 42vh —— 780 宽的 4:3 图会长到 585px 高，
+ * 在 768 高的屏上玩家得先滚过整张画才看得见抉择。封顶后用 `contain` 整幅居中显示
+ * （宁可左右留墨底，也不回到「切掉上下三分之一」那条老路）。
+ */
+@media (max-width: 1099px) {
+  .card__art {
+    max-height: 42vh;
+  }
+
+  .card__art-el {
+    object-fit: contain;
+  }
+}
 
 @media (max-width: 1080px) {
   .play {

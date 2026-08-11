@@ -13,7 +13,9 @@ import {
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
+import { enemyArt } from "../art/assets.js";
 import { toPercent } from "./format.js";
+import type { MediaAsset } from "./eventVm.js";
 
 export type CombatActId = "fight" | "flee" | "feint" | "organ";
 
@@ -30,6 +32,11 @@ export interface CombatVm {
   enemyName: string;
   enemyDesc: string;
   enemyTags: string[];
+  /**
+   * 敌人头像（1:1 胸像）。内容库里查不到这个 id 时为 null —— 那是内容 bug，
+   * 界面退回程序化占位，不去请求一个必然 404 的路径。
+   */
+  enemyPortrait: MediaAsset | null;
   enemyHp: number;
   enemyHpMax: number;
   enemyPercent: number;
@@ -85,6 +92,7 @@ export function buildCombatVm(
     enemyName: enemy?.name ?? combat.enemyId,
     enemyDesc: enemy?.desc ?? "",
     enemyTags: enemy?.tags ?? [],
+    enemyPortrait: enemy ? { kind: "image", src: enemyArt(enemy.id), aspect: "1 / 1" } : null,
     enemyHp: Math.max(0, combat.enemyHp),
     enemyHpMax,
     enemyPercent: toPercent(combat.enemyHp / enemyHpMax),

@@ -67,17 +67,39 @@ export interface LogLineVm {
   stamp: string;
   text: string;
   tone: LogTone;
+  /** 连续重复的条数（>1 时界面显示「×N」）；不重复为 1 */
+  repeat: number;
 }
 
-/** 最近 N 条，**最新在前**（右侧栏自上而下读）。 */
+/**
+ * 最近 N 条，**最新在前**（右侧栏自上而下读），并把**连续重复**的同一句合成一条 ×N。
+ *
+ * 为什么要合：引擎对「探索但没抽到事件」只有一句固定旁白（「循青丘旧径独行，草木皆是生面。」），
+ * 连探三季就在 6 条可见位里占掉三格一模一样的字，读起来像界面坏了 —— 而且把真正发生过的事
+ * 挤出了栏外。合成「×3」既省位子，又如实表达「这几季什么都没发生」。
+ * 只合**相邻且同句**的，不做全局去重（隔了别的事再发生一次是新的一次）。
+ */
 export function recentLogVm(buffer: LogBuffer, limit: number = LOG_VISIBLE): LogLineVm[] {
-  return buffer.entries
-    .slice(-limit)
-    .reverse()
-    .map((entry) => ({
+  const merged: LogLineVm[] = [];
+  // 从最新往旧走，遇到与上一条同句就并进去（并进去的 id／时间戳取这一组里最新那条）。
+  // 注意 limit 只拦「要新起一条」的时候：若把它写进循环条件，凑满 6 条就停，
+  // 最后那一组的 ×N 会少算（明明重复了五次却显示 ×2）。
+  for (let i = buffer.entries.length - 1; i >= 0; i -= 1) {
+    const entry = buffer.entries[i];
+    if (!entry) continue;
+    const last = merged[merged.length - 1];
+    if (last && last.text === entry.text && last.tone === entry.tone) {
+      last.repeat += 1;
+      continue;
+    }
+    if (merged.length >= limit) break;
+    merged.push({
       id: entry.id,
       stamp: `${formatYearCn(entry.year)}岁${formatSeason(entry.season)}`,
       text: entry.text,
       tone: entry.tone,
-    }));
+      repeat: 1,
+    });
+  }
+  return merged;
 }

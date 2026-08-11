@@ -53,6 +53,9 @@ importers:
 
   packages/tale-client:
     dependencies:
+      '@shiling/tale-content':
+        specifier: workspace:*
+        version: link:../tale-content
       '@shiling/tale-sim':
         specifier: workspace:*
         version: link:../tale-sim

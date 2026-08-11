@@ -1,4 +1,4 @@
 { "name": "@shiling/tale-client", "type": "module",
   "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
-  "dependencies": { "@shiling/tale-sim": "workspace:*" },
+  "dependencies": { "@shiling/tale-sim": "workspace:*", "@shiling/tale-content": "workspace:*" },
   "devDependencies": { "vite": "^5.4.0" } }

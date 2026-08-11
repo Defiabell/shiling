@@ -7,7 +7,14 @@
  */
 
 import type { ChronicleEntry, EndingType, TaleContent, TaleState } from "@shiling/tale-sim";
+import { PORTRAIT_LABELS, portraitArt, portraitStage } from "../art/assets.js";
 import { ENDING_EPITAPHS, ENDING_LABELS, formatCountCn, formatYearCn } from "./format.js";
+
+/** 卷轴上的「其形」画像：一世终局的形貌（幼兽／成兽／近神）。 */
+export interface PortraitStage {
+  label: string;
+  src: string;
+}
 
 export interface ChronicleVm {
   title: string;
@@ -26,8 +33,11 @@ export interface ChronicleVm {
   years: number;
   yearsCn: string;
   organCount: number;
+  organCountCn: string;
   /** 本世结算的血统点 */
   bloodlineGain: number;
+  /** 终局形态的立绘（按器官数分阶），用于卷轴上的「其形」画像 */
+  portrait: PortraitStage;
 }
 
 /** 按 praisePrefix 把 body 拆成 开篇／中段／结局／赞语 四段。 */
@@ -63,6 +73,7 @@ export function buildChronicleVm(
 ): ChronicleVm {
   const praisePrefix = content.chronicleTemplates.praisePrefix;
   const parts = splitChronicleBody(entry.body, praisePrefix);
+  const stage = portraitStage(entry.organCount, content.tuning.ascendMinOrgans);
   return {
     title: entry.title,
     opening: parts.opening,
@@ -76,7 +87,9 @@ export function buildChronicleVm(
     years: entry.years,
     yearsCn: formatYearCn(entry.years),
     organCount: entry.organCount,
+    organCountCn: formatCountCn(entry.organCount),
     bloodlineGain,
+    portrait: { label: PORTRAIT_LABELS[stage], src: portraitArt(stage) },
   };
 }
 

@@ -7,7 +7,7 @@
  */
 
 import { el } from "../dom.js";
-import { inkArt } from "../art/placeholders.js";
+import { TITLE_HERO } from "../art/assets.js";
 import { createCinematic, type CinematicHandle } from "../fx/cinematic.js";
 
 export interface TitleProps {
@@ -25,7 +25,8 @@ export interface ScreenHandle {
 
 export function renderTitle(props: TitleProps): ScreenHandle {
   const backdrop: CinematicHandle = createCinematic({
-    media: { kind: "image", src: inkArt("title", "shiling-liezhuan", { width: 1600, height: 900 }) },
+    // B4 的题字主视觉（16:9，上方三分之二是特意留空的绢面，正好落标题排版）
+    media: { kind: "image", src: TITLE_HERO },
     durationMs: 6000,
     hold: true,
     skippable: false,

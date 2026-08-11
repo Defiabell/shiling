@@ -12,7 +12,8 @@
     "art:anchors": "node --import ./src/tsResolveHook.mjs src/generate-art.ts --anchors",
     "art:promote": "node --import ./src/tsResolveHook.mjs src/generate-art.ts --promote",
     "art:backfill": "node --import ./src/tsResolveHook.mjs src/backfill-illustrations.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "balance": "node --import ./src/tsResolveHook.mjs src/balance-sim.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

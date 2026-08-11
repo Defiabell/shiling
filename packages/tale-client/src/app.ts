@@ -27,7 +27,7 @@ import {
 
 import { CONTENT, USING_FIXTURE_CONTENT } from "./content.js";
 import { el, nextFrame } from "./dom.js";
-import { inkArt } from "./art/placeholders.js";
+import { endingArt, eventArt, portraitArt } from "./art/assets.js";
 import { buildActionVms } from "./model/actionVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm, type CombatActId } from "./model/combatVm.js";
@@ -182,7 +182,9 @@ export class TaleApp {
       key: `birth:${seedId}:${seedNum}`,
       title: "降　世",
       lines: [birth?.text ?? "", BIRTH_LEDE],
-      media: { kind: "image", src: inkArt("event", `birth:${seedId}`) },
+      // 降世这一屏用幼兽立绘（3:4 竖构图）：「托身青丘幼兽」说的就是画上这只，
+      // 也是一世里第一次让玩家看见「我是什么」。
+      media: { kind: "image", src: portraitArt("cub"), aspect: "3 / 4" },
       continueLabel: null,
     };
     this.screen = "play";
@@ -201,6 +203,20 @@ export class TaleApp {
     return this.state?.ending === "ascend" ? CLOSE_LABELS.ascend : CLOSE_LABELS.other;
   }
 
+  /**
+   * 死亡那句旁白 —— 引擎只把它写进 `records`，**不进 `notices` 也不进 `roundLog`**。
+   *
+   * 不捞出来的后果是实测出来的：寿终那一回合，玩家看到的最后一张卡是「蜷于石隙间敛息养神。」
+   * 加一颗「瞑目」按钮 —— 一句与死无关的旁白配一个不知为何要按的按钮，人根本不知道自己
+   * 刚刚死了（引擎的「寿数已尽，卧于旧穴不复起。」只在后面的演出里出现）。三条死亡入口
+   * （行动／抉择／战斗）统一在这里补上。
+   */
+  private deathLines(state: TaleState): string[] {
+    if (state.alive) return [];
+    const death = state.records.findLast((record) => record.kind === "death");
+    return death ? [death.text] : [];
+  }
+
   async doAction(action: ActionId): Promise<void> {
     const prev = this.state;
     if (!prev || this.busy || this.pendingEvent || prev.combat || !prev.alive) return;
@@ -210,11 +226,11 @@ export class TaleApp {
     const next = result.state;
     this.state = next;
     this.pendingEvent = result.pendingEvent;
-    this.appendLog(
-      prev.year,
-      prev.season,
-      result.notices.map((text) => ({ text, tone: noticeTone(text, result.moltResult !== null) })),
-    );
+    const dying = this.deathLines(next);
+    this.appendLog(prev.year, prev.season, [
+      ...result.notices.map((text) => ({ text, tone: noticeTone(text, result.moltResult !== null) })),
+      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
+    ]);
 
     if (result.pendingEvent) {
       this.center = {
@@ -229,7 +245,7 @@ export class TaleApp {
         kind: "narration",
         key: `act:${action}:${next.rngState}`,
         title: null,
-        lines: result.notices,
+        lines: [...result.notices, ...dying],
         media: null,
         continueLabel: next.alive ? null : this.closeLabel(),
       };
@@ -256,18 +272,18 @@ export class TaleApp {
     const next = result.state;
     this.state = next;
     this.pendingEvent = null;
+    const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
       { text: result.outcomeText, tone: outcomeTone(result) },
+      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
 
     this.center = {
       kind: "narration",
       key: `outcome:${event.id}:${idx}`,
       title: event.title,
-      lines: [result.outcomeText],
-      media: event.illustration
-        ? { kind: "image", src: `/art/${event.illustration}` }
-        : { kind: "image", src: inkArt("event", event.id) },
+      lines: [result.outcomeText, ...dying],
+      media: event.illustration ? { kind: "image", src: eventArt(event.illustration) } : null,
       continueLabel: !next.alive ? this.closeLabel() : next.combat ? "迎　敌" : null,
     };
 
@@ -284,11 +300,11 @@ export class TaleApp {
     const turn = combatAct(prev, act, CONTENT);
     const next = turn.state;
     this.state = next;
-    this.appendLog(
-      prev.year,
-      prev.season,
-      turn.roundLog.map((text) => ({ text, tone: "combat" as LogTone })),
-    );
+    const dying = this.deathLines(next);
+    this.appendLog(prev.year, prev.season, [
+      ...turn.roundLog.map((text) => ({ text, tone: "combat" as LogTone })),
+      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
+    ]);
 
     if (turn.over === null && next.combat) {
       this.center = {
@@ -302,7 +318,7 @@ export class TaleApp {
         kind: "narration",
         key: `combat-end:${turn.over}:${next.rngState}`,
         title,
-        lines: turn.roundLog,
+        lines: [...turn.roundLog, ...dying],
         media: null,
         continueLabel: next.alive ? null : this.closeLabel(),
       };
@@ -343,13 +359,8 @@ export class TaleApp {
     const death = buildDeathVm(state);
     await playCinematic(
       {
-        media: {
-          kind: "image",
-          src: inkArt(ascending ? "ascend" : "death", `${state.ending}:${state.seed}`, {
-            width: 1600,
-            height: 900,
-          }),
-        },
+        // B4 的四张结局图（16:9），文件名恒等于 EndingType —— 饿殍／横死／寿终／登神各一张
+        media: { kind: "image", src: endingArt(state.ending) },
         durationMs: 4400,
         // 第一行是结局二字（当标题排），第二行是引擎写的那句死亡旁白，第三行是收束统计。
         // 刻意**不放** epitaph：它和引擎的 deathStarve 旁白几乎同义，并排两行会读成重复。

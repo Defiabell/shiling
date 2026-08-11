@@ -6,6 +6,7 @@
  */
 
 import { ownedOrgans, type EssenceType, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import { PORTRAIT_LABELS, portraitArt, portraitStage, type PortraitStage } from "../art/assets.js";
 import {
   ESSENCE_LABELS,
   ESSENCE_ORDER,
@@ -48,10 +49,19 @@ export interface EssenceBarVm {
   ripe: boolean;
 }
 
+/** 状态栏那枚小立绘：形貌随器官数长，是玩家在界面上唯一能「看见自己」的地方。 */
+export interface PortraitVm {
+  stage: PortraitStage;
+  /** 「幼兽」／「成兽」／「近神」 */
+  label: string;
+  src: string;
+}
+
 export interface StatusVm {
   when: string;
   /** 神种名（出生记录的 refId 解出），查不到时给兜底 */
   seedName: string;
+  portrait: PortraitVm;
   /** 器官件数（含神种），主界面用来给「蜕变」进度一点存在感 */
   organCount: number;
   organNames: string[];
@@ -94,9 +104,12 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     };
   });
 
+  const stage = portraitStage(state.organIds.length, t.ascendMinOrgans);
+
   return {
     when: formatWhen(state.year, state.season, state.region),
     seedName: seed?.name ?? "无名神种",
+    portrait: { stage, label: PORTRAIT_LABELS[stage], src: portraitArt(stage) },
     organCount: state.organIds.length,
     organNames: organs.map((organ) => organ.name),
     lifespanMax: state.lifespanMax,
