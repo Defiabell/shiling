@@ -136,8 +136,13 @@ export interface TaleEvent {
   trigger: EventTrigger;
   title: string;
   body: string;
-  /** public/art/ 下文件名，B4 接立绘 */
+  /** public/art/ 下文件名，B4 美术管线产出后回填 */
   illustration?: string;
+  /**
+   * 给 text-to-image 的画面描述（B2 与正文同笔撰写，B4 美术管线消费）。
+   * 引擎不读它 —— 纯粹随事件数据一起流转。
+   */
+  illustrationBrief?: string;
   /** 1-4 个 */
   choices: EventChoice[];
 }

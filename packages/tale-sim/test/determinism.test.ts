@@ -14,7 +14,12 @@ import {
   type TaleContent,
   type TaleState,
 } from "../src/index.js";
-import { FIXTURE_CONTENT, FIXTURE_SEED_ID, makeContent } from "./fixtures.js";
+import {
+  FIXTURE_CONTENT,
+  FIXTURE_SEED_ID,
+  contentWithoutEvents,
+  makeContent,
+} from "./fixtures.js";
 
 /** 事件多一点的 content：让确定性回归尽量把各条分支都走到。 */
 const BUSY = makeContent({ tuning: { eventChanceBase: 0.6 } });
@@ -64,6 +69,33 @@ function playLife(
   return { state, log, steps: step };
 }
 
+/**
+ * 第二套完全确定的策略：一路狩猎、能蛰伏就蛰伏、战斗死磕。
+ * 存在的意义是让 golden 覆盖到蜕变与击杀 —— `playLife` 的轮转策略精气攒不够，
+ * 一世下来一次都不蜕变。
+ */
+function huntOnly(
+  seed: number,
+  content: TaleContent,
+  maxSteps = 120,
+): { state: TaleState; steps: number } {
+  let state = createLife(seed, FIXTURE_SEED_ID, content);
+  let step = 0;
+  while (state.alive && step < maxSteps) {
+    if (state.combat) {
+      state = combatAct(state, "fight", content).state;
+      step += 1;
+      continue;
+    }
+    const action: ActionId = availableActions(state, content).includes("dormant")
+      ? "dormant"
+      : "hunt";
+    state = performAction(state, action, content).state;
+    step += 1;
+  }
+  return { state, steps: step };
+}
+
 describe("确定性回归", () => {
   it("同种子＋同操作序列 → 同终态", () => {
     for (const seed of [1, 20260811, 777777, 0xdeadbeef]) {
@@ -72,6 +104,66 @@ describe("确定性回归", () => {
       expect(a.state).toEqual(b.state);
       expect(a.log).toEqual(b.log);
       expect(a.steps).toBe(b.steps);
+    }
+  });
+
+  // ⚠️ 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
+  // 它们钉的是抽取顺序本身：把 resolveHunt 里两次 cursor.next() 调换、或把 drawEvent
+  // 的概率掷骰挪进/挪出分支，行为分布可能一模一样，但每个已存种子的剧本都被重掷 ——
+  // 只有字面量能抓到这种漂移。**改动引擎的随机消耗顺序时这两条必红，届时要么改回去，
+  // 要么确认是有意的破坏性变更再更新期望值。**
+  it("golden：轮转策略下 3 个种子的终态逐字锁定", () => {
+    const golden = [
+      { seed: 20260811, steps: 32, rngState: 892708669, year: 7, ending: "starve", organs: 1 },
+      { seed: 1, steps: 59, rngState: 3264331845, year: 12, ending: "starve", organs: 1 },
+      { seed: 4242, steps: 18, rngState: 120310336, year: 4, ending: "starve", organs: 1 },
+    ] as const;
+    for (const expected of golden) {
+      const { state, steps } = playLife(expected.seed, BUSY);
+      expect({
+        seed: expected.seed,
+        steps,
+        rngState: state.rngState,
+        year: state.year,
+        ending: state.ending,
+        organs: state.organIds.length,
+      }).toEqual(expected);
+    }
+  });
+
+  it("golden：狩猎流策略锁定蜕变与击杀路径", () => {
+    const quiet = contentWithoutEvents();
+    const golden = [
+      {
+        seed: 20260811,
+        steps: 37,
+        rngState: 260872999,
+        year: 7,
+        organIds: ["organ-ling-yun", "ji-zu", "lin-jia", "gou-chi"],
+        molts: 3,
+        kills: 3,
+      },
+      {
+        seed: 7,
+        steps: 35,
+        rngState: 2576131284,
+        year: 8,
+        organIds: ["organ-ling-yun", "wu-mu", "gou-chi", "lin-jia"],
+        molts: 3,
+        kills: 0,
+      },
+    ] as const;
+    for (const expected of golden) {
+      const { state, steps } = huntOnly(expected.seed, quiet);
+      expect({
+        seed: expected.seed,
+        steps,
+        rngState: state.rngState,
+        year: state.year,
+        organIds: state.organIds,
+        molts: state.records.filter((record) => record.kind === "molt").length,
+        kills: state.records.filter((record) => record.kind === "combat").length,
+      }).toEqual(expected);
     }
   });
 

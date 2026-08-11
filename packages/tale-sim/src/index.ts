@@ -12,6 +12,7 @@ export {
   nextRandom,
   createCursor,
   weightedPick,
+  weightedPickIndex,
   weightedSample,
   type RngDraw,
   type RngCursor,

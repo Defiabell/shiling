@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createLife, performAction, type TaleState } from "../src/index.js";
+import { createLife, performAction, resolveChoice, type TaleState } from "../src/index.js";
 import {
   ENEMY_YE_ZHI,
   EVENT_SPROUT,
   FIXTURE_SEED_ID,
+  ORGAN_WU_MU,
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
   makeContent,
+  withOrgans,
 } from "./fixtures.js";
 
 /** 不扣饱食的 content：测季推进/记录时不想被饿死打断。 */
@@ -101,18 +103,47 @@ describe("回合结算顺序：事件抽取", () => {
     expect(pendingEvent).toBeNull();
   });
 
-  it("once 事件抽出即进 firedOnceIds，之后不再入池", () => {
+  it("once 事件在**结算后**才进 firedOnceIds，之后不再入池", () => {
     // 只留 once 的丛中窥影，狩猎行动触发
     const content = makeContent({
       events: [makeContent().events.find((event) => event.trigger.once === true)!],
       tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
     });
-    const life = createLife(21, FIXTURE_SEED_ID, content);
+    // 带雾目才能选不开战的那个抉择（抉择 0 会 startCombat，之后不能再 performAction）
+    const life = withOrgans(createLife(21, FIXTURE_SEED_ID, content), ORGAN_WU_MU);
     const first = performAction(life, "hunt", content);
     expect(first.pendingEvent).not.toBeNull();
-    expect(first.state.firedOnceIds).toEqual([first.pendingEvent!.id]);
-    const second = performAction(first.state, "hunt", content);
-    expect(second.pendingEvent).toBeNull();
+    // 抽出但未结算 → 还没烧掉
+    expect(first.state.firedOnceIds).toEqual([]);
+    const resolved = resolveChoice(first.state, first.pendingEvent!, 1, content).state;
+    expect(resolved.combat).toBeNull();
+    expect(resolved.firedOnceIds).toEqual([first.pendingEvent!.id]);
+    expect(performAction(resolved, "hunt", content).pendingEvent).toBeNull();
+  });
+
+  it("未结算就进下一回合的 once 事件不会本世永久消失（还能重抽）", () => {
+    const content = makeContent({
+      events: [makeContent().events.find((event) => event.trigger.once === true)!],
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
+    });
+    const life = createLife(21, FIXTURE_SEED_ID, content);
+    const dropped = performAction(life, "hunt", content);
+    expect(dropped.pendingEvent).not.toBeNull();
+    // 界面把事件丢了、直接又行动一次 —— 引擎无从强制，但至少不该吞掉稀有内容
+    const again = performAction(dropped.state, "hunt", content);
+    expect(again.pendingEvent?.id).toBe(dropped.pendingEvent?.id);
+  });
+
+  it("结算同一 once 事件两次不会写重复 id", () => {
+    const content = makeContent({
+      events: [makeContent().events.find((event) => event.trigger.once === true)!],
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
+    });
+    const event = content.events[0]!;
+    const life = withOrgans(createLife(21, FIXTURE_SEED_ID, content), ORGAN_WU_MU);
+    const once = resolveChoice(life, event, 1, content).state;
+    const twice = resolveChoice(once, event, 1, content).state;
+    expect(twice.firedOnceIds).toEqual([event.id]);
   });
 });
 

@@ -7,8 +7,9 @@ import type { TaleTuning } from "./types.js";
  * **基线常量**，让 B2 直接 `{ ...BASELINE_TUNING, huntPreyIds: [...] }` 而不必从计划
  * 文档里手抄数字（抄一次就会漂移一次）。B4 平衡粗校时改 B2 的覆写值，或直接改这里。
  *
- * `huntPreyIds` 引用 EnemyDef.id，基线无法预知内容 id，故留空 —— **B2 必须填**，
- * 否则狩猎永远返回「山野寂寂」。
+ * `huntPreyIds` 引用 EnemyDef.id，基线无法预知内容 id，故留空 —— **B2 必须填**。
+ * 留空不会静默失效：第一次狩猎就会抛错（空猎物表＝狩猎永久失效＝每一世饿死，
+ * 这种内容 bug 宁可当场吵）。
  */
 export const BASELINE_TUNING: TaleTuning = {
   // 出生：meng 10／ling 10／ti 20／de 5，lifespanMax = 16 + floor(ti/10)

@@ -61,14 +61,25 @@ export interface TurnResult {
   moltResult: MoltResult | null;
 }
 
-/** 蛰伏开奖结果。`candidates` 是加权抽出的候选，`chosen` 是其中等权抽中的那个。 */
+/**
+ * 蛰伏开奖结果。`candidates` 是加权抽出的候选，`chosen` 是其中等权抽中的那个。
+ *
+ * ⚠️ `candidates`／`chosen` 是 `content.organs` 里那些对象的**只读引用**（不拷贝，
+ * 因为 OrganDef 是纯静态定义）。界面渲染开奖卷轴时只读不写。
+ */
 export interface MoltResult {
   candidates: OrganDef[];
   chosen: OrganDef;
   essenceType: EssenceType;
 }
 
-/** `resolveChoice` 的结果。`delta` 是被抽中分支**声明**的 effects（未夹紧的原始值）。 */
+/**
+ * `resolveChoice` 的结果。
+ *
+ * `delta` 是被抽中分支**声明**的 effects（未夹紧的原始值，供界面做数值飘字）。它是
+ * 内容对象的**深拷贝** —— 界面可以随便就地归一化它，不会污染 `TaleContent` 里那份
+ * 事件数据（否则同种子同抉择的下一次结算就变了，直接击穿确定性承诺）。
+ */
 export interface ChoiceResult {
   state: TaleState;
   outcomeText: string;
@@ -142,6 +153,30 @@ function withFlags(flags: readonly string[], add: readonly string[]): string[] {
   return out;
 }
 
+/** `sys:` 前缀是引擎保留命名空间，内容侧只读不写。 */
+const SYS_FLAG_PREFIX = "sys:";
+
+/**
+ * 过滤掉内容想写的 `sys:` flag。
+ *
+ * 不是洁癖：`addFlags: ["sys:starving"]` 会让玩家**一个饥荒季就饿死**（规格要求连续
+ * 两季），`removeFlags: ["sys:starving"]` 则等于饿死免疫 —— 内容一个手误就能改掉规则。
+ * 光靠注释约定挡不住 44 个手写事件，这里做成硬约束。
+ */
+function contentFlags(flags: readonly string[]): string[] {
+  return flags.filter((flag) => !flag.startsWith(SYS_FLAG_PREFIX));
+}
+
+/** 深拷贝一个 EffectDelta，切断与 content 里那份事件数据的引用关系。 */
+function cloneDelta(delta: EffectDelta): EffectDelta {
+  const out: EffectDelta = { ...delta };
+  if (delta.stats) out.stats = { ...delta.stats };
+  if (delta.essence) out.essence = { ...delta.essence };
+  if (delta.addFlags) out.addFlags = [...delta.addFlags];
+  if (delta.removeFlags) out.removeFlags = [...delta.removeFlags];
+  return out;
+}
+
 /** 浅拷贝 state 并把所有可变容器换成新实例，之后只改这个 draft。 */
 function draftOf(state: TaleState): TaleState {
   return {
@@ -158,15 +193,22 @@ function draftOf(state: TaleState): TaleState {
 
 // ===== 内容查询 =====
 
-/** 器官查表：content.organs ∪ 各神种自带的第 0 器官（神种器官不在 organs 池里）。 */
-function organIndex(content: TaleContent): Map<string, OrganDef> {
+/**
+ * 器官查表：`content.organs` ∪ 各神种自带的第 0 器官。
+ *
+ * ⚠️ 神种器官**只**存在于 `content.seeds[].organ`，在 `content.organs` 里查不到 ——
+ * 任何「把 organIds 还原成 OrganDef」的地方都必须走这个并集，否则玩家的神种 tag
+ * 会凭空消失。所以下面三个查询是**公开** API，B3 别自己重写。
+ */
+export function organIndex(content: TaleContent): Map<string, OrganDef> {
   const index = new Map<string, OrganDef>();
   for (const organ of content.organs) index.set(organ.id, organ);
   for (const seed of content.seeds) index.set(seed.organ.id, seed.organ);
   return index;
 }
 
-function ownedOrgans(state: TaleState, content: TaleContent): OrganDef[] {
+/** 当前持有的器官定义（顺序同 `state.organIds`，[0] 为神种器官）。查不到的 id 跳过。 */
+export function ownedOrgans(state: TaleState, content: TaleContent): OrganDef[] {
   const index = organIndex(content);
   const owned: OrganDef[] = [];
   for (const id of state.organIds) {
@@ -176,12 +218,26 @@ function ownedOrgans(state: TaleState, content: TaleContent): OrganDef[] {
   return owned;
 }
 
-function ownedTags(state: TaleState, content: TaleContent): Set<string> {
+/**
+ * 当前持有的全部器官 tag 并集。
+ * B3 渲染「不满足门槛的抉择置灰并显示原因」时用它算缺哪个 tag。
+ */
+export function ownedTags(state: TaleState, content: TaleContent): Set<string> {
   const tags = new Set<string>();
   for (const organ of ownedOrgans(state, content)) {
     for (const tag of organ.tags) tags.add(tag);
   }
   return tags;
+}
+
+/**
+ * 提供战斗技的器官（多个则取 `organIds` 里最早的那个）；没有则 null。
+ *
+ * B3 用它决定战斗界面第四个按钮是否点亮、显示什么技名 —— `combatAct(state, "organ", …)`
+ * 在返回 null 时会抛错。
+ */
+export function combatSkillOrgan(state: TaleState, content: TaleContent): OrganDef | null {
+  return ownedOrgans(state, content).find((organ) => organ.combatSkill) ?? null;
 }
 
 function enemyById(content: TaleContent, id: string): EnemyDef | undefined {
@@ -306,14 +362,18 @@ function resolveHunt(
   notices: string[],
 ): void {
   const t = content.tuning;
-  const pool = t.huntPreyIds
-    .map((id) => enemyById(content, id))
-    .filter((enemy): enemy is EnemyDef => enemy !== undefined);
-  const prey = pool.length > 0 ? pool[cursor.int(pool.length)] : undefined;
-  if (!prey) {
-    notices.push(ENGINE_MESSAGES.huntNoPrey);
-    return;
+  // 猎物表配错是内容 bug，要吵不要静默：空表或悬空 id 都会让狩猎永久失效、每一世饿死，
+  // 而「山野寂寂」那种氛围旁白会把它伪装成正常玩法。
+  if (t.huntPreyIds.length === 0) {
+    throw new Error("resolveHunt: tuning.huntPreyIds 为空，狩猎无从掷骰（B2 必须填猎物表）");
   }
+  const pool = t.huntPreyIds.map((id) => {
+    const enemy = enemyById(content, id);
+    if (!enemy) throw new Error(`resolveHunt: 猎物表里的未知敌人 ${id}`);
+    return enemy;
+  });
+  const prey = pool[cursor.int(pool.length)];
+  if (!prey) throw new Error("resolveHunt: 猎物表抽取失败");
   if (cursor.next() < huntSuccessRate(draft, content)) {
     draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
     draft.essence = addEssence(draft.essence, prey.essence);
@@ -459,9 +519,13 @@ function die(draft: TaleState, ending: EndingType, text: string, refId?: string)
  * 4. 死亡判定：饱食 ≤0 连续两季 → starve；year > lifespanMax → oldage
  * 5. records 追加（步骤 1-4 攒下的记录一次性并入，各条按产生时的岁/季打戳）
  *
- * 步骤 4 判定出死亡时会撤掉本回合抽出的事件（`pendingEvent` 返回 null，也不写
- * `firedOnceIds`）并清空 `combat` —— 死亡覆盖一切未结算的东西，界面不会拿到
- * 「已死却还要选抉择」的状态。
+ * 步骤 4 判定出死亡时会撤掉本回合抽出的事件（`pendingEvent` 返回 null）并清空 `combat`
+ * —— 死亡覆盖一切未结算的东西，界面不会拿到「已死却还要选抉择」的状态。
+ *
+ * ⚠️ **调用方纪律**：拿到非 null 的 `pendingEvent` 后必须先 `resolveChoice` 再进下一个
+ * 回合。`TaleState` 没有承载未决事件的字段，引擎无从强制；直接再调 performAction 不会
+ * 报错，事件会被静默丢掉。`once` 事件的 id 记在 `resolveChoice` 而不是抽取时，所以丢掉
+ * 的稀有事件只是下一季可能重抽，不会本世永久消失。
  *
  * @throws 已死亡、战斗未结束、或该行动当前不可用时抛错
  */
@@ -528,13 +592,8 @@ export function performAction(
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
 
-  const pendingEvent = draft.alive ? drawn : null;
-  if (pendingEvent?.trigger.once) {
-    draft.firedOnceIds = [...draft.firedOnceIds, pendingEvent.id];
-  }
-
   refreshAscendFlag(draft, content);
-  return { state: draft, pendingEvent, notices, moltResult };
+  return { state: draft, pendingEvent: draft.alive ? drawn : null, notices, moltResult };
 }
 
 // ===== 事件抉择 =====
@@ -548,9 +607,15 @@ function meetsChoiceRequirement(
   if (!requires) return true;
   if (!meetsStats(state.stats, requires.stats)) return false;
   if (requires.organTags && requires.organTags.length > 0) {
-    // tags 为 null = 调用方没传 content，无从校验器官 tag → 保守判为不满足
-    // （宁可界面上置灰一个本该可选的抉择，也不能放行一个 resolveChoice 会抛错的抉择）。
-    if (!tags) return false;
+    // tags 为 null = 调用方没传 content，无从校验器官 tag。这里**抛错而不是保守判否**：
+    // 判否会让所有 organTags 门槛的抉择永久置灰，变成谁都发现不了的死内容
+    // （B2 按计划要写 ≥4 处这类门槛）；抛错则让漏传 content 在第一次遇到这类事件时
+    // 就当场暴露。
+    if (!tags) {
+      throw new Error(
+        "eligibleChoiceIdxs: 该抉择带 organTags 门槛，必须传第三参 content 才能校验",
+      );
+    }
     if (!requires.organTags.some((tag) => tags.has(tag))) return false;
   }
   if (requires.essenceMin) {
@@ -565,10 +630,13 @@ function meetsChoiceRequirement(
 /**
  * 当前满足门槛的抉择下标。
  *
- * ⚠️ 接口正本的签名是 `(state, event)` 两参，但 `EventChoice.requires.organTags` 要靠
- * `content` 才能把 `organIds` 解析成 tag —— 第三参 `content` 为**可选**（两参调用仍然
- * 合法、类型不变），**B3 请务必传 content**，否则带 organTags 门槛的抉择会被保守判为
- * 不可选。已在 B1 报告里列为待仲裁的接口缺口。
+ * ⚠️ **接口缺口（待仲裁）**：正本的签名是 `(state, event)` 两参，但
+ * `EventChoice.requires.organTags` 必须靠 `content` 才能把 `organIds` 解析成 tag
+ * （神种器官还只存在于 `seeds[].organ`，见 `organIndex`）。为不破坏正本签名，第三参
+ * `content` 做成**可选**；但只要碰到带 organTags 门槛的抉择又没传 content 就**抛错**，
+ * 不静默置灰。
+ *
+ * **B3 一律传 content。** 建议正本把签名改成三参必填，B1 报告已列为第一号仲裁项。
  */
 export function eligibleChoiceIdxs(
   state: TaleState,
@@ -626,8 +694,10 @@ function applyEffects(
       });
     }
   }
-  if (effects.addFlags) draft.flags = withFlags(draft.flags, effects.addFlags);
-  if (effects.removeFlags) draft.flags = withoutFlags(draft.flags, effects.removeFlags);
+  if (effects.addFlags) draft.flags = withFlags(draft.flags, contentFlags(effects.addFlags));
+  if (effects.removeFlags) {
+    draft.flags = withoutFlags(draft.flags, contentFlags(effects.removeFlags));
+  }
   if (effects.startCombat !== undefined) {
     const enemy = enemyById(content, effects.startCombat);
     if (!enemy) throw new Error(`applyEffects: 未知敌人 ${effects.startCombat}`);
@@ -679,6 +749,11 @@ export function resolveChoice(
   if (!outcome) throw new Error(`resolveChoice: 抉择 ${choiceIdx} 没有 outcomes（事件 ${event.id}）`);
 
   const draft = draftOf(state);
+  // once 事件在**结算时**才烧掉 id（而不是 performAction 抽出时）：这样界面若因为
+  // 刷新/误操作丢了未结算的稀有事件，它下一季还能再抽出来，而不是本世永久消失。
+  if (event.trigger.once && !draft.firedOnceIds.includes(event.id)) {
+    draft.firedOnceIds = [...draft.firedOnceIds, event.id];
+  }
   const records: LifeRecord[] = [
     {
       year: draft.year,
@@ -696,7 +771,7 @@ export function resolveChoice(
   return {
     state: draft,
     outcomeText: outcome.text,
-    delta: outcome.effects,
+    delta: cloneDelta(outcome.effects),
   };
 }
 
@@ -737,7 +812,7 @@ export function combatAct(
   if (!enemy) throw new Error(`combatAct: 未知敌人 ${current.enemyId}`);
 
   const t = content.tuning;
-  const skillOrgan = ownedOrgans(state, content).find((organ) => organ.combatSkill);
+  const skillOrgan = combatSkillOrgan(state, content);
   if (act === "organ" && !skillOrgan) throw new Error("combatAct: 未持有带战斗技的器官");
 
   const cursor = createCursor(state.rngState);

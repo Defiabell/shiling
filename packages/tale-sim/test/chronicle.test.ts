@@ -13,7 +13,9 @@ import {
   EVENT_MANDATE,
   EVENT_SPROUT,
   FIXTURE_SEED_ID,
+  FIXTURE_SEED_ORGAN_ID,
   ORGAN_GOU_CHI,
+  ORGAN_WU_MU,
   contentWithoutEvents,
 } from "./fixtures.js";
 
@@ -89,7 +91,7 @@ describe("composeChronicle 输出结构", () => {
     const state = finishedLife({
       ending: "slain",
       year: 11,
-      organIds: ["organ-ling-yun", ORGAN_GOU_CHI, "wu-mu"],
+      organIds: [FIXTURE_SEED_ORGAN_ID, ORGAN_GOU_CHI, ORGAN_WU_MU],
       extraRecords: [MOLT_RECORD, KILL_RECORD],
     });
     const entry = composeChronicle(state, CONTENT);

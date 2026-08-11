@@ -63,26 +63,36 @@ export function createCursor(rngState: number): RngCursor {
 }
 
 /**
- * 按权重抽一个元素。总权重 ≤ 0 时退化为等权抽取（不静默返回 null，避免内容
- * 权重写错时整条链路无声失效）。
+ * 按权重抽一个元素的**下标**。总权重 ≤ 0 时退化为等权抽取（不静默返回 null，避免
+ * 内容权重写错时整条链路无声失效）。
  *
  * 恒定消耗 1 次抽取（items 为空时消耗 0 次），保证确定性可推演。
  */
+export function weightedPickIndex<T>(
+  cursor: RngCursor,
+  items: readonly T[],
+  weightOf: (item: T) => number,
+): number | null {
+  if (items.length === 0) return null;
+  const weights = items.map((item) => Math.max(0, weightOf(item)));
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  if (total <= 0) return cursor.int(items.length);
+  let roll = cursor.next() * total;
+  for (let i = 0; i < items.length; i += 1) {
+    roll -= weights[i] ?? 0;
+    if (roll < 0) return i;
+  }
+  return items.length - 1;
+}
+
+/** `weightedPickIndex` 的取值版。 */
 export function weightedPick<T>(
   cursor: RngCursor,
   items: readonly T[],
   weightOf: (item: T) => number,
 ): T | null {
-  if (items.length === 0) return null;
-  const weights = items.map((item) => Math.max(0, weightOf(item)));
-  const total = weights.reduce((sum, w) => sum + w, 0);
-  if (total <= 0) return items[cursor.int(items.length)] ?? null;
-  let roll = cursor.next() * total;
-  for (let i = 0; i < items.length; i += 1) {
-    roll -= weights[i] ?? 0;
-    if (roll < 0) return items[i] ?? null;
-  }
-  return items[items.length - 1] ?? null;
+  const idx = weightedPickIndex(cursor, items, weightOf);
+  return idx === null ? null : items[idx] ?? null;
 }
 
 /**
@@ -99,10 +109,14 @@ export function weightedSample<T>(
   const picked: T[] = [];
   const want = Math.min(k, pool.length);
   for (let n = 0; n < want; n += 1) {
-    const chosen = weightedPick(cursor, pool, weightOf);
-    if (chosen === null) break;
+    // 按**下标**取并按下标删：若 items 里出现同一个对象两次（内容重复条目），
+    // indexOf 会反复删掉第一个，让同一元素被抽出多次。
+    const idx = weightedPickIndex(cursor, pool, weightOf);
+    if (idx === null) break;
+    const chosen = pool[idx];
+    if (chosen === undefined) break;
     picked.push(chosen);
-    pool.splice(pool.indexOf(chosen), 1);
+    pool.splice(idx, 1);
   }
   return picked;
 }

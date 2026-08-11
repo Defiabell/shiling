@@ -13,7 +13,6 @@ export const ENGINE_MESSAGES = {
 
   huntSuccess: "伏草间半日，猎得{{enemy}}，饱食稍安。",
   huntFail: "追逐无果，空腹而返。",
-  huntNoPrey: "山野寂寂，竟无兽踪可循。",
   huntEncounter: "循迹而行，反被{{enemy}}盯上。",
   explore: "循青丘旧径独行，草木皆是生面。",
   rest: "蜷于石隙间敛息养神。",

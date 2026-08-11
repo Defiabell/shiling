@@ -213,6 +213,9 @@ const FIXTURE_EVENTS: TaleEvent[] = [
     },
     title: "天命",
     body: "云自四方合拢，中开一隙，白光垂落如柱，正照在你伏身之处。光里没有声音，却有一句话直接落进识海：可去矣。",
+    // illustrationBrief 是可选字段，这里给一条给 B2 当格式参照
+    illustrationBrief:
+      "水墨。青丘夜山之巅，浓云中开一道竖隙，一柱冷白光垂落至山石；光柱下一头小兽伏地仰首，只见剪影。留白占三分之一，无文字。",
     choices: [
       {
         label: "应命而升",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { availableActions, createLife, performAction } from "../src/index.js";
 import {
+  ENEMY_QIONG_QI,
   ENEMY_YE_ZHI,
   FIXTURE_CONTENT,
   FIXTURE_SEED_ID,
@@ -108,13 +109,16 @@ describe("狩猎", () => {
     expect(notices.join("")).toContain("盯上");
   });
 
-  it("猎物表为空时只给一条 notice，什么都不变", () => {
+  it("猎物表为空直接抛错（不伪装成「今天没猎到」）", () => {
     const barren = contentWithoutEvents({ tuning: { huntPreyIds: [] } });
     const life = createLife(3, FIXTURE_SEED_ID, barren);
-    const { state, notices } = performAction(life, "hunt", barren);
-    expect(notices.join("")).toContain("无兽踪");
-    expect(state.essence).toEqual({ zu: 0, lin: 0, xue: 0, meng: 0 });
-    expect(state.combat).toBeNull();
+    expect(() => performAction(life, "hunt", barren)).toThrow(/huntPreyIds 为空/);
+  });
+
+  it("猎物表引用了不存在的敌人也抛错", () => {
+    const dangling = contentWithoutEvents({ tuning: { huntPreyIds: ["no-such-beast"] } });
+    const life = createLife(3, FIXTURE_SEED_ID, dangling);
+    expect(() => performAction(life, "hunt", dangling)).toThrow(/未知敌人 no-such-beast/);
   });
 
   it("hunter tag 的加成真的进了成功率", () => {
@@ -194,7 +198,7 @@ describe("探索与休憩", () => {
 
   it("猎物表有多个时会等权轮到不同猎物", () => {
     const twoPrey = contentWithoutEvents({
-      tuning: { ...UNCLAMPED_CHANCE, huntBase: 1, huntPreyIds: [ENEMY_YE_ZHI, "qiong-qi-you"] },
+      tuning: { ...UNCLAMPED_CHANCE, huntBase: 1, huntPreyIds: [ENEMY_YE_ZHI, ENEMY_QIONG_QI] },
     });
     const seen = new Set<string>();
     for (let seed = 0; seed < 40; seed += 1) {

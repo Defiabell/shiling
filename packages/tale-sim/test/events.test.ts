@@ -17,6 +17,8 @@ import {
   FIXTURE_CONTENT,
   FIXTURE_SEED_ID,
   ORGAN_GOU_CHI,
+  ORGAN_JI_ZU,
+  ORGAN_LIN_JIA,
   ORGAN_WU_MU,
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
@@ -63,13 +65,16 @@ describe("eligibleChoiceIdxs 门槛过滤", () => {
     expect(eligibleChoiceIdxs(biter, THICKET, CONTENT)).toEqual([0]);
   });
 
-  it("不传 content 时 organTags 门槛保守判为不满足（其余门槛照常生效）", () => {
+  it("碰到 organTags 门槛却没传 content → 抛错（不静默把抉择置灰成死内容）", () => {
     const seer = withOrgans(life(), ORGAN_WU_MU);
-    expect(eligibleChoiceIdxs(seer, THICKET)).toEqual([0]);
+    expect(() => eligibleChoiceIdxs(seer, THICKET)).toThrow(/必须传第三参 content/);
     expect(eligibleChoiceIdxs(seer, THICKET, CONTENT)).toEqual([0, 1]);
-    // 纯 stats 门槛不依赖 content，两参调用结果一致
-    const bright = { ...seer, stats: { ...seer.stats, ling: 20 } };
+  });
+
+  it("不含 organTags 门槛的事件两参调用照常可用（正本签名仍然有效）", () => {
+    const bright = { ...life(), stats: { ...life().stats, ling: 20 } };
     expect(eligibleChoiceIdxs(bright, SPROUT)).toEqual(eligibleChoiceIdxs(bright, SPROUT, CONTENT));
+    expect(eligibleChoiceIdxs(bright, SPROUT)).toEqual([0, 1]);
   });
 
   it("多门槛同时存在时全部满足才算过", () => {
@@ -345,7 +350,7 @@ describe("trigger 匹配", () => {
     expect(notYet.flags).not.toContain(SYS_FLAG_ASCEND_READY);
     expect(performAction(notYet, "rest", content).pendingEvent).toBeNull();
 
-    const ready = withOrgans(notYet, ORGAN_GOU_CHI, ORGAN_WU_MU, "lin-jia", "ji-zu");
+    const ready = withOrgans(notYet, ORGAN_GOU_CHI, ORGAN_WU_MU, ORGAN_LIN_JIA, ORGAN_JI_ZU);
     const turn = performAction(ready, "rest", content);
     expect(turn.state.flags).toContain(SYS_FLAG_ASCEND_READY);
     expect(turn.pendingEvent?.id).toBe(EVENT_MANDATE);
