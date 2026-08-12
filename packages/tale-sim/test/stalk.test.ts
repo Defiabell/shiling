@@ -208,20 +208,27 @@ describe("绕至上风与屏息等待", () => {
 });
 
 describe("扑击", () => {
+  /*
+   * 期望值是**手算的字面量**，不是把 `pounceChanceAt` 的算式在测试里再抄一遍 ——
+   * 抄一遍的写法在系数写错位（比如距离项与警觉项对调）时会跟着一起错，什么也拦不住。
+   * 基线：0.95 − 距离×0.035 − 警觉×0.008 + 猛×0.004。
+   */
   it("命中率＝正本公式（距离、警觉各自都能把它压死，猛只是微调）", () => {
     const t = QUIET.tuning;
     const chance = (distance: number, alertness: number, meng: number): number => {
       const base = stalking({ distance, alertness });
       return stalkPreview({ ...base, stats: { ...base.stats, meng } }, QUIET).pounceChance;
     };
-    const at = (distance: number, alertness: number, meng: number): number =>
-      t.stalkPounceBase -
-      distance * t.stalkPouncePerDistance -
-      alertness * t.stalkPouncePerAlert +
-      meng * t.stalkPouncePerMeng;
 
-    expect(chance(0, 20, 10)).toBeCloseTo(at(0, 20, 10), 10);
-    expect(chance(8, 30, 10)).toBeCloseTo(at(8, 30, 10), 10);
+    // 贴身、警觉 20、猛 10：0.95 − 0 − 0.16 + 0.04
+    expect(chance(0, 20, 10)).toBeCloseTo(0.83, 10);
+    // 8 步、警觉 30、猛 10：0.95 − 0.28 − 0.24 + 0.04
+    expect(chance(8, 30, 10)).toBeCloseTo(0.47, 10);
+    // 距离与警觉是两个独立的项：只挪距离 8 步 ＝ −0.28，只挪警觉 10 点 ＝ −0.08
+    expect(chance(0, 30, 10) - chance(8, 30, 10)).toBeCloseTo(0.28, 10);
+    expect(chance(8, 20, 10) - chance(8, 30, 10)).toBeCloseTo(0.08, 10);
+    // 猛只是微调：+10 猛 ＝ +0.04
+    expect(chance(8, 30, 20) - chance(8, 30, 10)).toBeCloseTo(0.04, 10);
     // 远距离被 minChance 兜住（「必失手」在界面上是明确警告，不是 0%）
     expect(chance(40, 90, 10)).toBe(t.minChance);
     // 贴身且完全未觉被 maxChance 封顶
@@ -341,6 +348,19 @@ describe("预览不骗人（信息可见性的地基）", () => {
       if (!afterCreep.stalk) continue;
       expect(stalkPreview(afterCreep, QUIET).pounceChance).toBeCloseTo(promised, 10);
     }
+  });
+
+  it("警觉贴近上限时，预览的增量按剩余空间截断（不多报那 1〜2 点）", () => {
+    const t = QUIET.tuning;
+    const brink = stalking({ distance: 30, alertness: t.stalkAlertMax - 2, wind: "with" });
+    const preview = stalkPreview(brink, QUIET);
+    expect(preview.creepAlertGain).toBe(2);
+    expect(preview.circleAlertGain).toBe(2);
+    // 真跑一步：警觉封顶（这一步同时会把猎物惊走，所以只对账警觉本身）
+    const after = act(brink, "circle").state;
+    expect(after.stalk).toBeNull();
+    const calm = stalking({ distance: 30, alertness: t.stalkAlertMax - 2 });
+    expect(stalkPreview(calm, QUIET).circleAlertGain).toBe(2);
   });
 
   it("waitAlertDrop／circleAlertGain 与真跑一致", () => {

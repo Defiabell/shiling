@@ -559,8 +559,14 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
   const tags = ownedTags(state, content);
 
   const creepGain = creepDistanceGain(state, content, tags);
-  const alertGain = creepAlertGain(state, content, tags);
   const meng = state.stats.meng;
+  /*
+   * 两处警觉增量都按上限截断（同 `waitAlertDrop` 的体例）：警觉快满时真实增幅会被
+   * `clamp(…, 0, stalkAlertMax)` 削掉，预览若照原样报，就在最后一步上多说了 1〜2 点 ——
+   * 「预览不骗人」这条不该留窄窗口例外，而那恰是玩家最盯着这个数的时候。
+   */
+  const headroom = Math.max(0, t.stalkAlertMax - stalk.alertness);
+  const alertGain = Math.min(headroom, creepAlertGain(state, content, tags));
 
   return {
     pounceChance: pounceChanceAt(stalk.distance, stalk.alertness, meng, t),
@@ -575,7 +581,7 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
       meng,
       t,
     ),
-    circleAlertGain: t.stalkCircleAlert,
+    circleAlertGain: Math.min(headroom, t.stalkCircleAlert),
     alreadyUpwind: stalk.wind === "into",
     waitAlertDrop: Math.min(stalk.alertness, t.stalkWaitAlertDrop),
     retaliates: prey.retaliates === true,

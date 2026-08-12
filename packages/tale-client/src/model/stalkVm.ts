@@ -119,7 +119,7 @@ const DISTANCE_BANDS: readonly { max: number; label: string }[] = [
  * 得手率 42%，比无脑硬冲（56%）还低。信息模糊是**该有的 build 差异**，信息无用不是。
  * 七档把最常落的中段切细（每档 ~13 个点），一个动作的收益就看得出来了。
  */
-const CHANCE_BANDS: readonly { max: number; label: string }[] = [
+export const CHANCE_BANDS: readonly { max: number; label: string }[] = [
   { max: 0.12, label: "几无可能" },
   { max: 0.26, label: "渺茫" },
   { max: 0.4, label: "略有指望" },

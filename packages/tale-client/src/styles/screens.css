@@ -1721,7 +1721,8 @@
 }
 
 .card--stalk {
-  max-width: 940px;
+  /* 全屏模式收掉了右栏与行动面板，横向空间是白给的 —— 比事件卡再宽一档 */
+  max-width: 1000px;
   padding-bottom: 4px;
 }
 
@@ -1734,9 +1735,9 @@
 }
 
 .foe--stalk .foe__img {
-  /* 追猎时猎物还在远处：头像比战斗小一档，且压暗 —— 「还没看清」也是信息 */
-  width: 92px;
-  height: 92px;
+  /* 追猎时猎物还在远处：压暗一档 —— 「还没看清」也是信息 */
+  width: 108px;
+  height: 108px;
   filter: saturate(0.8) contrast(1.02) brightness(0.88);
 }
 
@@ -1959,8 +1960,20 @@
   color: var(--cinnabar-lt);
 }
 
+/*
+ * 追猎日志：**高度给死**（约四行），不随内容增长。
+ *
+ * 不是排版洁癖：日志从一行长到六行的过程中，下面四颗按钮会一步一步往下挪 ——
+ * 玩家的手在原地，按钮跑了，于是每一步都要重新找按钮，连点还会点错。
+ * 追猎是一屏之内连按四五次的界面，按钮的位置必须钉住。
+ */
 .stalk__log {
   margin: 8px 26px 0;
+  height: 104px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 /* — 四个动作：每颗按钮都必须把「按下去会发生什么」写在脸上 — */

@@ -11,8 +11,6 @@
 export const ENGINE_MESSAGES = {
   birth: "食灵凭{{seedName}}降世，托身青丘幼兽。",
 
-  huntFail: "追逐无果，空腹而返。",
-  huntEncounter: "循迹而行，反被{{enemy}}盯上。",
   explore: "循青丘旧径独行，草木皆是生面。",
   rest: "蜷于石隙间敛息养神。",
   restHeal: "旧创渐合，痛意稍退。",

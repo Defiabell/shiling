@@ -10,7 +10,8 @@
  *   pnpm -C packages/gen balance                # 200 世，谨慎玩家
  *   pnpm -C packages/gen balance -- --lives 500 --profile reckless
  *   pnpm -C packages/gen balance -- --json      # 只吐 JSON，便于对比两次调参
- *   pnpm -C packages/gen balance -- --lab       # 追猎实验台：打法×风向×build 的得手率
+ *   pnpm -C packages/gen balance -- --lab --lives 400   # 追猎实验台：打法×风向×build 的得手率
+ *       （--lives 就是每格的场数，缺省沿用整世模式的 200；手感判据的实测值都是按 400 报的）
  *   pnpm -C packages/gen balance -- --stalk-plan rush   # 整世模式里换机器猎手的打法
  *
  * 纪律：数值不达标只调 `tale-content/src/tuning.ts` 与事件 `effects`，**不改引擎**。
@@ -35,6 +36,7 @@ import {
   type TaleState,
   type WindDir,
 } from "../../tale-sim/src/index.ts";
+import { CHANCE_BANDS } from "../../tale-client/src/model/stalkVm.ts";
 import {
   EVENTS,
   FLAG_SICK,
@@ -232,26 +234,24 @@ function isHurt(state: TaleState): boolean {
 export type StalkPlan = "patient" | "rush" | "screen" | "nowait" | "waiter" | "salvage";
 
 /**
- * 命中率档位的**中点** —— 与 tale-client `model/stalkVm.ts` 的 `CHANCE_BANDS` 一一对应
- * （那边是正本，这里只取中点）。
+ * 命中率档位的**中点** —— 从 tale-client 的 `CHANCE_BANDS` **直接算出来**，不再手抄一份。
  *
- * 为什么实验台需要它：没有 `night-eye`／`insight` 的 build 在屏幕上**只看得见档位**
- * （「参半」覆盖 0.34〜0.60）。若机器猎手照 `stalkPreview` 的精确值决策，它就在用一个真人
- * 拿不到的信息，于是 bare 与 seer 两组会跑出**逐字相同**的成绩，「信息本身就是器官奖励」
- * 这条设计主张也就无从验证（第一版实验台正是这样，两行数一模一样）。
+ * 为什么实验台需要它：没有 `night-eye`／`insight` 的 build 在屏幕上**只看得见档位**。
+ * 若机器猎手照 `stalkPreview` 的精确值决策，它就在用一个真人拿不到的信息，于是 bare 与 seer
+ * 两组会跑出**逐字相同**的成绩，「信息本身就是器官奖励」这条设计主张也就无从验证
+ * （第一版实验台正是这样，两行数一模一样）。
+ *
+ * 为什么直接 import 界面那份表：档位阈值改了而这里没跟着改，实验台就会在**量一个玩家看不到
+ * 的世界**，而两处数字长得都对，没人会发现。宁可让工具依赖界面常量，也不要留一份靠注释同步的抄本。
  */
-const BAND_MIDPOINTS: readonly { max: number; mid: number }[] = [
-  { max: 0.12, mid: 0.06 },
-  { max: 0.26, mid: 0.19 },
-  { max: 0.4, mid: 0.33 },
-  { max: 0.55, mid: 0.47 },
-  { max: 0.7, mid: 0.62 },
-  { max: 0.85, mid: 0.77 },
-  { max: 1, mid: 0.92 },
-];
+const BAND_MIDPOINTS: readonly { max: number; mid: number }[] = CHANCE_BANDS.map((band, index) => ({
+  max: band.max,
+  mid: ((CHANCE_BANDS[index - 1]?.max ?? 0) + band.max) / 2,
+}));
 
 function banded(chance: number): number {
-  return BAND_MIDPOINTS.find((band) => chance <= band.max)?.mid ?? 0.91;
+  const last = BAND_MIDPOINTS[BAND_MIDPOINTS.length - 1];
+  return BAND_MIDPOINTS.find((band) => chance <= band.max)?.mid ?? last?.mid ?? 1;
 }
 
 /**

@@ -263,8 +263,10 @@ export interface StalkState {
    * 就恒为 true —— **自己刚做过的事自己知道**。
    *
    * 为什么这一位必须在 `TaleState` 里、而不是记在客户端：不记的话，读不出风向的 build 会
-   * 反复绕圈（每次都不敢确定自己已在上风），把 6 点体力全花在绕风上 —— 实验台实测这条
-   * 让基础 build 的得手率从 53% 掉到 18%，而且**玩家无从察觉自己在浪费回合**。
+   * 反复绕圈（每次都不敢确定自己已在上风），把 6 点体力全花在绕风上。实验台同一批 400 场
+   * 实测（`pnpm -C packages/gen balance -- --lab --lives 400`，bare build），加这一位前 → 后：
+   * 「明理猎手」53.3% → **74.3%**，「照界面提示打」18.5% → **76.8%**（后者更惨是因为界面的
+   * 推荐链更早就劝绕风，于是绕得更多）。而且**玩家无从察觉自己在浪费回合**。
    * 而放在客户端会击穿「TaleState 完整自描述」这条纪律（determinism 测试正盯着它）：
    * 界面能显示什么，必须能从 state 重建出来。
    */
@@ -372,7 +374,7 @@ export interface TaleTuning {
   // 这一段的每个数都直接决定「一场追猎里玩家是不是在做判断」，所以逐项写清它在博弈里
   // 扮演什么角色。基线值的实测依据见 tale-content/src/tuning.ts 的追猎小节。
 
-  /** 起手距离缺省值（步）；`EnemyDef.startDistance` 优先 */
+  /** 起手距离缺省值（步），对齐接口正本的 34；`EnemyDef.startDistance` 优先（8 头全都自带） */
   stalkStartDistance: number;
   /** 起手距离的抖动幅度：实际 = 基准 ±[0, jitter]，让同一头猎物每次的步数计划都要重算 */
   stalkStartDistanceJitter: number;

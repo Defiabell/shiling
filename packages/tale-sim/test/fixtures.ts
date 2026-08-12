@@ -314,8 +314,8 @@ export interface ContentOverrides {
 }
 
 /**
- * 造一份改了某几项的 content。测试用它把概率钉死（例如 `{ huntBase: 1, minChance: 0,
- * maxChance: 1 }` 让狩猎必成），从而在**不猜种子**的前提下测边界分支。
+ * 造一份改了某几项的 content。测试用它把概率钉死（例如 `{ stalkPounceBase: 1, minChance: 0,
+ * maxChance: 1 }` ＝ `ALWAYS_POUNCE`，让扑击必中），从而在**不猜种子**的前提下测边界分支。
  */
 export function makeContent(overrides: ContentOverrides = {}): TaleContent {
   return {

@@ -88,9 +88,14 @@ def press(page: Page, act: str) -> None:
 
 
 def start_life(page: Page, seed: int, *, organs: list[str] | None = None) -> None:
-    """开一世并停在主界面。`organs` 只是为了对照 —— 通过 URL 传 seed，器官靠真玩攒不到，
-    所以带器官那一组改用引擎侧的等价对照（见 report 里的说明），这里只开局。"""
-    page.goto(f"{BASE}?seed={seed}&reset=1", wait_until="networkidle")
+    """开一世并停在主界面。
+
+    `organs` 走 dev 专用的 `?organs=`（只借 tag、不叠属性）：夜瞳靠真玩要攒好几年，
+    而 P1 要证明「带 night-eye 与不带」的信息差 —— 同一种子、同一场追猎的两张对照截图
+    是唯一说得清的证据。
+    """
+    grant = f"&organs={','.join(organs)}" if organs else ""
+    page.goto(f"{BASE}?seed={seed}&reset=1{grant}", wait_until="networkidle")
     page.wait_for_timeout(300)
     page.click("[data-start]")
     page.wait_for_timeout(320)
@@ -151,20 +156,15 @@ def play_stalk(page: Page, plan: str, shots: list[str], out: Path, tag: str) -> 
         hopeless = acts[POUNCE]["warn"] is not None and "必空" in acts[POUNCE]["warn"]
 
         if plan == "rush":
+            # 无脑硬冲：不绕风、不屏息，贴身就扑
             act = POUNCE if distance <= 0 else CREEP
         else:
-            upwind = view["wind"] == "逆风"
-            if not upwind and not view["windVague"] and i == 0:
-                act = CIRCLE
-            elif distance > 0:
-                act = CREEP
-            elif acts[POUNCE]["hot"]:
-                act = POUNCE
-            elif not waited:
-                act = WAIT
-                waited = True
-            else:
-                act = POUNCE
+            # 「照屏幕提示打」：点那颗发金光的按钮。这是唯一诚实的验法 ——
+            # 若跟着界面打成绩不好，那就是界面在误导玩家，而这种 bug 不会有测试变红。
+            hot = [a["id"] for a in view["acts"] if a["hot"]]
+            if len(hot) > 1:
+                raise RuntimeError(f"同一时刻有 {len(hot)} 颗按钮发金光：{hot}")
+            act = hot[0] if hot else POUNCE
         steps[-1]["chose"] = act
         steps[-1]["pounceShown"] = pounce_effect
         steps[-1]["pounceHopeless"] = hopeless
@@ -187,7 +187,7 @@ def play_stalk(page: Page, plan: str, shots: list[str], out: Path, tag: str) -> 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     shots: list[str] = []
-    report: dict = {"patient": [], "rush": []}
+    report: dict = {}
     errors: list[str] = []
 
     with sync_playwright() as pw:
@@ -196,17 +196,18 @@ def main() -> int:
         page.on("console", lambda m: errors.append(f"console:{m.type}:{m.text}") if m.type == "error" else None)
         page.on("pageerror", lambda e: errors.append(f"pageerror:{e}"))
 
-        for plan in ("patient", "rush"):
+        for plan, organs in (("screen", None), ("rush", None), ("seer", ["ye-tong"])):
+            report.setdefault(plan, [])
             caught = 0
             tried = 0
-            for k in range(6):
-                seed = SEED0 + k * 7919 + (0 if plan == "patient" else 104729)
-                start_life(page, seed)
+            for k in range(8):
+                seed = SEED0 + k * 7919
+                start_life(page, seed, organs=organs)
                 if not hunt_until_stalk(page):
                     continue
                 tried += 1
                 tag = f"{plan}-{k}"
-                result = play_stalk(page, plan, shots, OUT, tag)
+                result = play_stalk(page, "screen" if plan != "rush" else "rush", shots, OUT, tag)
                 if result["endTitle"] and "得" in result["endTitle"]:
                     caught += 1
                 report[plan].append(result)
@@ -215,11 +216,23 @@ def main() -> int:
         browser.close()
 
     (OUT / "stalk-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf8")
-    print(f"[追猎实机] 稳扎稳打 得手 {report['patient_rate']}　顺风硬冲 得手 {report['rush_rate']}")
-    for plan in ("patient", "rush"):
+    print(
+        f"[追猎实机] 照提示打 {report['screen_rate']}　无脑硬冲 {report['rush_rate']}"
+        f"　照提示打＋夜瞳 {report['seer_rate']}"
+    )
+    for plan in ("screen", "rush", "seer"):
         for run in report[plan]:
             shown = [f"{s['chose']}:{s.get('pounceShown')}" for s in run["steps"]]
-            print(f"  {plan:8s} {run['endTitle']}｜{' → '.join(shown)}")
+            print(f"  {plan:6s} {run['endTitle']}｜{' → '.join(shown)}")
+    # 信息差：同一批种子下，第一屏上到底看得见什么
+    for plan in ("screen", "seer"):
+        first = report[plan][0]["steps"][0] if report[plan] and report[plan][0]["steps"] else None
+        if first:
+            print(
+                f"  {plan:6s} 第一屏：风向 {first['wind']}（模糊 {first['windVague']}）"
+                f"｜警觉 {[m for m in first['meters'] if m['zi'] == '警觉']}"
+                f"｜扑击 {first['acts'][3]['effect']}"
+            )
     print(f"控制台错误 {len(errors)}：{errors[:5]}")
     print(f"截图 {len(shots)} 张 → {OUT}")
     return 1 if errors else 0

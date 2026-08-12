@@ -333,6 +333,69 @@ describe("数量与分布", () => {
     }
   });
 
+  /*
+   * 追猎战术档案（M1-P1）。这一组守的是三条**内容改动时最容易静默出错**的不变量：
+   *
+   * 1. `startDistance` 超过 `tuning.stalkLoseDistance` 的敌人是**一出场就死的内容**：
+   *    第一个动作还没做完就判「跟丢」，玩家做什么都没用，而没有任何别的测试会红。
+   * 2. 猎物表里的四头必须写全 `stalkFlavor` —— 它们是玩家真会读到那些句子的猎物；
+   *    漏写只会静默退回引擎兜底池（四头说同一套话，正是 M0 被 owner 说「廉价」的那件事）。
+   * 3. 每个填了的槽必须 ≥2 条变体：一场追猎要潜行三四次，一句到底就是复读。
+   */
+  it("追猎战术档案：距离/警觉在可玩量程内", () => {
+    for (const enemy of ENEMIES) {
+      if (enemy.startDistance !== undefined) {
+        expect(enemy.startDistance, `${enemy.id} 起手距离 ≤0`).toBeGreaterThan(0);
+        /*
+         * 连**起手抖动**都不许越过跟丢线：越过就是「第一个动作还没做完就判跟丢」的死内容。
+         * 起追之后被屏息的挪位推过线是**设计里的风险**（界面明写「也可能就此走远」），
+         * 所以这里只卡起手，不留一整次潜行的余量。
+         */
+        expect(
+          enemy.startDistance + TUNING.stalkStartDistanceJitter,
+          `${enemy.id} 起手距离 ${enemy.startDistance} 加抖动后越过跟丢线 ${TUNING.stalkLoseDistance}`,
+        ).toBeLessThanOrEqual(TUNING.stalkLoseDistance);
+      }
+      if (enemy.wariness !== undefined) {
+        expect(enemy.wariness).toBeGreaterThanOrEqual(0);
+        // 起手警觉就贴着惊走线的猎物，第一次潜行必然把它惊走
+        expect(
+          enemy.wariness,
+          `${enemy.id} 起手警觉 ${enemy.wariness} 太接近惊走线`,
+        ).toBeLessThanOrEqual(TUNING.stalkAlertMax - 2 * TUNING.stalkCreepAlert);
+      }
+    }
+  });
+
+  it("追猎旁白：猎物表四头必须写全，每槽 ≥2 条变体且占位合法", () => {
+    const SLOTS = ["begin", "creep", "circle", "wait", "stir", "catch", "miss", "escape"] as const;
+    const KNOWN_VARS = /\{\{(enemy|steps)\}\}/g;
+    for (const id of TUNING.huntPreyIds) {
+      const prey = ENEMIES.find((enemy) => enemy.id === id);
+      const flavor = prey?.stalkFlavor;
+      expect(flavor, `猎物 ${id} 没写 stalkFlavor（会退回引擎兜底池，四头说同一套话）`).toBeDefined();
+      for (const slot of SLOTS) {
+        const pool = flavor?.[slot];
+        expect(pool, `猎物 ${id} 缺 ${slot} 槽`).toBeDefined();
+        expect(pool?.length, `猎物 ${id} 的 ${slot} 只有一条变体`).toBeGreaterThanOrEqual(2);
+        for (const line of pool ?? []) {
+          expect(line.length, `猎物 ${id} 的 ${slot} 有空句`).toBeGreaterThan(4);
+          // 未知占位会原样渲染到屏幕上（引擎的 render 刻意不静默吞掉）
+          expect(
+            line.replace(KNOWN_VARS, ""),
+            `猎物 ${id} 的 ${slot} 有未知占位：${line}`,
+          ).not.toMatch(/\{\{/);
+        }
+      }
+    }
+    // 反扑的猎物要有自己的反扑旁白（那是一世里最戏剧化的一句）
+    for (const enemy of ENEMIES) {
+      if (enemy.retaliates && TUNING.huntPreyIds.includes(enemy.id)) {
+        expect(enemy.stalkFlavor?.retaliate?.length, `${enemy.id} 会反扑却没写反扑旁白`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
   it("8 敌人，含 ≥1 divine，数值量程合理", () => {
     expect(ENEMIES.length).toBe(8);
     expect(ENEMIES.some((enemy) => enemy.tags.includes("divine"))).toBe(true);
