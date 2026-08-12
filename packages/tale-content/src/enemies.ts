@@ -43,6 +43,27 @@ import type { EnemyDef } from "@shiling/tale-sim";
  * 于是「扑还是再等一息」变成一道算得清的题。掷骰决定要不要打，就又回到翻牌了。
  */
 
+/*
+ * ## 搏杀战术档案（M1-P2）
+ *
+ * 两个字段决定「同一套按钮，面对不同兽要打出不同的顺序」—— 这是「三个部位各有适用局面」
+ * 唯一的来源。若八头兽的守备与意图分布一样，那三颗咬击按钮就退化成「挑伤害最高那颗」。
+ *
+ * | 敌人 | 常护 | 意图偏好 | 它逼玩家怎么打 |
+ * |---|---|---|---|
+ * | 野雉 | 后腿（靠腿逃） | 逃很多、几乎不扑 | 想要这顿肉就得**咬腿**拦住它 |
+ * | 文鳐鱼 | 眼（离水就只剩瞪着你） | 常规咬、也会溜 | 同上，且它血薄，咬喉两下就完 |
+ * | 穴鼠 | 后腿（一惊往洞里钻） | 逃最多 | 拦腿，否则连影子都没有 |
+ * | 岩羊 | 咽喉（双角正压在喉前） | **扑很多、几乎不逃** | 喉打不动 → 扑眼／伏低熬它那几记顶 |
+ * | 草狐 | 眼（它一直盯着你） | 均衡、会守 | 眼被护着 → 致盲这条路不通，改咬腿放血 |
+ * | 山魈 | 咽喉（两臂护在胸前） | 扑与咬各半 | 硬碰硬：靠姿态与器官技 |
+ * | 玄蟒 | 咽喉，其次眼 | **守最多、绝不逃** | 守势多 → 用它的守回合免费换姿态 |
+ * | 穷奇幼崽 | 均等 | 扑极多、绝不逃 | 伤害最高的一堵墙：扑眼买回合，或干脆逃 |
+ *
+ * 权重是**相对**的（同一头兽内部比大小），缺省吃 `tuning.combatIntentWeights`。
+ * 「逃」还额外受 `combatFleeIntentHpRatio` 约束：血厚时根本不入池。
+ */
+
 export const ENEMY_YE_ZHI = "ye-zhi";
 export const ENEMY_WEN_YAO = "wen-yao";
 export const ENEMY_XUE_SHU = "xue-shu";
@@ -64,6 +85,17 @@ export const ENEMIES: readonly EnemyDef[] = [
     desc: "羽色斑驳，惊则疾走十余步方起，起则不远。",
     startDistance: 24,
     wariness: 18,
+    // 靠腿逃的鸟：护后腿、动不动就想走 —— 它是「咬腿拦逃」这条机制的教具
+    guardBias: { throat: 1, leg: 3, eye: 1 },
+    intentBias: { pounce: 4, bite: 34, guard: 12, flee: 40 },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}张开翅膀，要往你脸上扑。", "它把翅根一抬 —— 要拍上来了。"],
+        bite: ["{{enemy}}伸颈来啄。", "它侧过头，喙对着你的眼。"],
+        guard: ["{{enemy}}把翅膀收拢护住身子。", "它缩起脖子，一动不动。"],
+        flee: ["{{enemy}}贴地小跑了两步 —— 它要起飞。", "它的头一直朝着树梢。"],
+      },
+    },
     stalkFlavor: {
       begin: [
         "草窠里一团斑驳的影子在啄食，尾羽一翘一翘。",
@@ -107,6 +139,9 @@ export const ENEMIES: readonly EnemyDef[] = [
     desc: "银鳞，胸鳍宽张如翼，夜则跃出水面滑行数丈。",
     startDistance: 34,
     wariness: 10,
+    // 离了水就只剩瞪着你：护眼，且滑不留手（会溜）
+    guardBias: { throat: 1, leg: 1, eye: 3 },
+    intentBias: { pounce: 8, bite: 40, guard: 14, flee: 30 },
     stalkFlavor: {
       begin: [
         "浅滩上银光一闪 —— 一尾文鳐鱼搁在半露的石背上晒鳞。",
@@ -147,6 +182,9 @@ export const ENEMIES: readonly EnemyDef[] = [
     desc: "土黄短毛，前爪宽厚，一惊便往地下去，地下是它的天。",
     startDistance: 22,
     wariness: 16,
+    // 一惊往洞里钻：护后腿，逃意最重
+    guardBias: { throat: 1, leg: 3, eye: 1 },
+    intentBias: { pounce: 4, bite: 30, guard: 12, flee: 46 },
     stalkFlavor: {
       begin: [
         "土坡上新翻出一堆浮土，一只穴鼠正把头探在洞口外。",
@@ -186,6 +224,24 @@ export const ENEMIES: readonly EnemyDef[] = [
     wariness: 8,
     // 唯一一头会反扑的猎物：远、沉稳、扑空就是一场真打 —— 「值不值得扑」这道题的正主
     retaliates: true,
+    /*
+     * 双角后弯，正压在咽喉前 —— 咬喉这条路对它基本走不通（减半＋反击）。而它扑得多、
+     * 逼到崖边也不退（几乎不逃），所以正解是**扑眼买回合 ＋ 伏低熬它那几记顶**。
+     * 它是玩家第一次被迫放弃「咬喉最高伤」的那头兽。
+     */
+    guardBias: { throat: 4, leg: 1, eye: 1 },
+    intentBias: { pounce: 44, bite: 34, guard: 20, flee: 2 },
+    combatFlavor: {
+      intent: {
+        pounce: [
+          "{{enemy}}把双角压低，后蹄蹬住石棱 —— 这一顶会重。",
+          "它退了两步取势。石屑从蹄下滚落。",
+        ],
+        bite: ["{{enemy}}甩头来撞。", "它侧过角尖，要挑你的肋。"],
+        guard: ["{{enemy}}把角横在身前，稳住四蹄。", "它把脖子压到胸口，只留一片硬角对着你。"],
+        flee: ["{{enemy}}朝崖线看了一眼。", "它的蹄子换了方向，要走。"],
+      },
+    },
     stalkFlavor: {
       begin: [
         "半坡上一头岩羊在啃石缝里的草，双角朝后压着。",
@@ -234,6 +290,17 @@ export const ENEMIES: readonly EnemyDef[] = [
     startDistance: 30,
     wariness: 44,
     retaliates: true,
+    // 眼极亮、也一直盯着你：护眼 → 致盲这条路对它不通，得改咬腿放血
+    guardBias: { throat: 2, leg: 1, eye: 4 },
+    intentBias: { pounce: 24, bite: 44, guard: 22, flee: 14 },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}的脊背压成一道弓 —— 它要扑。", "它后腿一沉，眼睛盯住你的喉。"],
+        bite: ["{{enemy}}贴着地绕上来，齿已经露出来了。", "它一口一口地试，寻你的空隙。"],
+        guard: ["{{enemy}}把尾扫到身侧，不进不退。", "它眯起眼，等你先动。"],
+        flee: ["{{enemy}}往林影里退了半步 —— 狐都记路。", "它的耳朵转向来路了。"],
+      },
+    },
   },
   {
     id: ENEMY_SHAN_XIAO,
@@ -247,6 +314,17 @@ export const ENEMIES: readonly EnemyDef[] = [
     startDistance: 32,
     wariness: 30,
     retaliates: true,
+    // 两臂过膝，护在胸前：护咽喉；打法只有硬碰硬（靠姿态与器官技）
+    guardBias: { throat: 4, leg: 2, eye: 1 },
+    intentBias: { pounce: 38, bite: 40, guard: 16, flee: 6 },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}把两臂张开 —— 它要整个人压下来。", "它弓起背，长臂在地上一撑。"],
+        bite: ["{{enemy}}挥手来抓。", "它伸出长臂，探你的肩。"],
+        guard: ["{{enemy}}把两臂交在胸前。", "它护住脸，退了半步。"],
+        flee: ["{{enemy}}回头看了看山脊。", "它松开手，像要退走。"],
+      },
+    },
   },
   {
     id: ENEMY_XUAN_MANG,
@@ -260,6 +338,21 @@ export const ENEMIES: readonly EnemyDef[] = [
     startDistance: 20,
     wariness: 8,
     retaliates: true,
+    /*
+     * 「不追不扑，只等你自己走进它的一圈」—— 守意最重、绝不逃。它是**用敌人的守回合
+     * 免费换姿态**这条技巧的教具：守着的那一合你不挨伤，正好把姿态调到位。
+     * `leg` 权重压低不是数值考虑：它没有腿（咬「下身」的措辞已在引擎兜底池里兼容）。
+     */
+    guardBias: { throat: 4, leg: 1, eye: 2 },
+    intentBias: { pounce: 20, bite: 30, guard: 48, flee: 2 },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}的前段忽然离地 —— 它要弹出来。", "它把身子绷成一条直线。"],
+        bite: ["{{enemy}}张口吐信，头缓缓前移。", "它的头低到与你齐平。"],
+        guard: ["{{enemy}}把自己盘成一圈，只露出头。", "它一动不动 —— 它有的是时间等。"],
+        flee: ["{{enemy}}的尾梢已经缩进石缝。", "它慢慢往阴影里退。"],
+      },
+    },
   },
   {
     id: ENEMY_QIONG_QI,
@@ -273,6 +366,16 @@ export const ENEMIES: readonly EnemyDef[] = [
     startDistance: 38,
     wariness: 20,
     retaliates: true,
+    // 全内容库最硬的一堵墙：守备均等（没有软肋可挑）、扑极多、绝不逃 —— 该做的判断是「逃不逃」
+    guardBias: { throat: 2, leg: 2, eye: 2 },
+    intentBias: { pounce: 52, bite: 34, guard: 14, flee: 0 },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}肩上的小翼张开了 —— 这一下躲不掉。", "它把爪抵在石上，虎身压低。"],
+        bite: ["{{enemy}}啼了一声，扑过来咬。", "它伸颈来叼你的背。"],
+        guard: ["{{enemy}}把猬毛竖起，浑身是刺。", "它收起翼，静静看着你。"],
+      },
+    },
   },
 ];
 

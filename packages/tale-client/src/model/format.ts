@@ -4,7 +4,13 @@
  * 全部无 DOM 依赖，单测直接盖。中文文案一律全角标点。
  */
 
-import { cnNumeral, type EndingType, type EssenceType, type Season } from "@shiling/tale-sim";
+import {
+  cnNumeral,
+  type AscendGateId,
+  type EndingType,
+  type EssenceType,
+  type Season,
+} from "@shiling/tale-sim";
 
 /**
  * 岁数汉字化：0 → "初"，1〜99 → "一"…"九十九"，≥100 退回阿拉伯数字。
@@ -70,12 +76,34 @@ export const ENDING_LABELS: Record<EndingType, string> = {
   ascend: "登神",
 };
 
-/** 死亡屏的一句话定性（列传正文之外的门楣题字）。 */
+/**
+ * 死亡屏的一句话定性（列传正文之外的门楣题字）。
+ *
+ * [M1-P2] `oldage` 改成**明确的失败**：原句「寿数既尽，卧于旧穴而化」读起来像一件圆满的事，
+ * 而 owner 验收 M0 的原话是「最后寿终正寝，让人没有再次玩的欲望」。中性的收尾不会让人
+ * 追问「我差了什么」—— 这一屏的下一行正是差距报告，题字得先把人推到那个问题上。
+ */
 export const ENDING_EPITAPHS: Record<EndingType, string> = {
   starve: "饥馑连季，形销骨立。",
   slain: "力尽爪牙之下，血沃荒原。",
-  oldage: "寿数既尽，卧于旧穴而化。",
+  oldage: "终未成器，与草木同朽。",
   ascend: "白光贯顶，脱兽籍而列神班。",
+};
+
+/** 登神四门槛的汉字名（`AscendGate.id` → 屏幕上的字）。 */
+export const ASCEND_GATE_LABELS: Record<AscendGateId, string> = {
+  year: "寿",
+  organs: "器",
+  ling: "灵",
+  de: "德",
+};
+
+/** 差距报告里的说法：「差二件器官」「灵性差九」。 */
+export const ASCEND_GATE_SHORTFALL: Record<AscendGateId, (short: number) => string> = {
+  year: (short) => `寿数差${formatCountCn(short)}岁`,
+  organs: (short) => `差${formatCountCn(short)}件器官`,
+  ling: (short) => `灵性差${formatCountCn(short)}`,
+  de: (short) => `德行差${formatCountCn(short)}`,
 };
 
 /** 带符号的增量文案：+6 / −2 / 0 用全角减号，避免与连字符混淆。 */

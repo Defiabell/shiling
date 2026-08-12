@@ -61,13 +61,33 @@ export function renderChronicle(props: ChronicleProps): HTMLElement {
         ),
         el("div", { class: "scroll__rod scroll__rod--bottom" }),
       ]),
+      /*
+       * [M1-P2] 差距报告摆在「转世」按钮**旁边**。
+       *
+       * 死亡演出上那一行一闪而过，而卷轴是玩家按下转世之前盯着的最后一屏 —— 那颗按钮
+       * 旁边就该写着「离登神：差二件器官、灵性差三六」。这一行是整个结局重构的目的：
+       * 让人合上这一世时想的是「我差两件器官」，而不是「哦，死了」。
+       */
       el("div", { class: "chronicle__foot" }, [
         el("div", { class: "chronicle__gain" }, [
           el("div", { class: "chronicle__gain-row" }, [
             el("span", { text: "血统" }),
             el("b", { text: `+${vm.bloodlineGain}`, attrs: { "data-gain": "1" } }),
           ]),
-          el("em", { text: "蜕变、寿数与登神所积，可用于解开新的神种。" }),
+          el("em", { text: "蜕变、寿数与登神门槛所积，可用于解开新的神种。" }),
+          el(
+            "div",
+            {
+              class: `chronicle__gap${vm.ascendGapItems.length === 0 ? " is-done" : ""}`,
+              attrs: { "data-gap": String(vm.ascendGapItems.length) },
+            },
+            [
+              el("b", { text: vm.ascendGap }),
+              el("em", {
+                text: `登神门槛　${vm.ascendMet}／${vm.ascendTotal}`,
+              }),
+            ],
+          ),
         ]),
         el("button", {
           class: "btn btn--seal",

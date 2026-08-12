@@ -87,12 +87,48 @@ export const BASELINE_TUNING: TaleTuning = {
   fleeBase: 0.5,
   fleePerLingDiff: 0.005,
   fleeBiasFactor: 0.01,
-  feintPerLing: 0.008,
-  feintFailDamageMul: 1.5,
-  feintBonusDamageMul: 2,
   organSkillDamageMul: 2,
   minChance: 0.05,
   maxChance: 0.95,
+
+  /*
+   * 搏杀（M1-P2）。这一组数被三条**手感**约束钉住（复算：
+   * `pnpm -C packages/gen balance -- --lab combat --lives 400`，末尾判据是它们的可执行版）：
+   *
+   * 1. 三个部位各有**自己赢**的局面 —— 没有一个部位在所有敌人上都最优。
+   * 2. 「照屏幕金光打」不比手写的最优启发式差（同 P1：界面的推荐就该是当前最好的打法）。
+   * 3. 读得出意图（洞察类器官）比读不出**明显**更强 —— 差在存活，不在伤害。
+   *
+   * 为什么咬腿／扑眼的伤害倍率压得这么低：它们换回来的是**跨回合的控制**（拦逃／致盲），
+   * 若伤害也不差，咬喉就没有存在的理由。低伤是它们的价格。
+   */
+  combatBiteMul: { throat: 1.6, leg: 0.7, eye: 0.35 },
+  combatGuardDamageMul: 0.5,
+  combatGuardIntentMul: 0.5,
+  combatGuardCounterChance: 0.5,
+  combatCounterDamageMul: 1,
+  combatStanceMul: {
+    low: { out: 0.75, in: 0.7 },
+    square: { out: 1, in: 1 },
+    lunge: { out: 1.35, in: 1.25 },
+  },
+  // 扑 2.2 倍是刻意的：一次重击要**大到值得为它花一个回合换姿态**，否则姿态系统只是装饰
+  combatIntentDamageMul: { pounce: 2.2, bite: 1, guard: 0, flee: 0 },
+  combatIntentWeights: { pounce: 26, bite: 46, guard: 18, flee: 10 },
+  combatFleeIntentHpRatio: 0.5,
+  combatBlindRounds: 2,
+  combatBlindMissChance: 0.55,
+  combatBlindFleeBonus: 0.2,
+  combatSlowRounds: 2,
+  // 0.6 太强了：配上「扑被压低」，只会咬腿一手对岩羊就有 99.5% 胜率（实验台实测）
+  combatSlowDamageMul: 0.75,
+  combatSlowPounceMul: 0.5,
+  combatWardRounds: 2,
+  combatWardDamageMul: 0.5,
+  combatSkillCooldown: 3,
+  combatSkillHealAmount: 8,
+  combatVenomSlowRounds: 3,
+  combatIntentTags: ["insight", "night-eye"],
 
   // 登神：year≥15 且 organIds≥5 且 ling≥60 且 de≥40
   ascendMinYear: 15,

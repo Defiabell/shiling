@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  SYS_FLAG_ASCEND_READY,
+  ascendProgress,
   bloodlineGain,
   cnNumeral,
   composeChronicle,
   createLife,
+  performAction,
   render,
   type EndingType,
   type LifeRecord,
@@ -267,9 +270,16 @@ describe("cnNumeral", () => {
   });
 });
 
-describe("bloodlineGain 三来源", () => {
+describe("bloodlineGain 四来源（M1-P2 加了「距登神多近」）", () => {
+  /*
+   * `finishedLife` 缺省是 year 7／de 5／单器官／ling 13 —— 四条登神门槛（15 岁／5 器官／
+   * ling 60／de 40）**一条都没达成**，所以下面这些只量前三项的断言不受第四项干扰。
+   * 第四项自己的断言在本 describe 末尾，逐条把门槛顶上去。
+   */
+  const gain = (state: TaleState): number => bloodlineGain(state, CONTENT);
+
   it("什么都没做则为 0", () => {
-    expect(bloodlineGain(finishedLife({ ending: "starve", year: 3 }))).toBe(0);
+    expect(gain(finishedLife({ ending: "starve", year: 3 }))).toBe(0);
   });
 
   it("每次蜕变 +1", () => {
@@ -278,37 +288,38 @@ describe("bloodlineGain 三来源", () => {
       year: 3,
       extraRecords: [MOLT_RECORD, { ...MOLT_RECORD, year: 3 }],
     });
-    expect(bloodlineGain(state)).toBe(2);
+    expect(gain(state)).toBe(2);
   });
 
   it("每满 10 岁 +1", () => {
-    expect(bloodlineGain(finishedLife({ ending: "oldage", year: 9 }))).toBe(0);
-    expect(bloodlineGain(finishedLife({ ending: "oldage", year: 10 }))).toBe(1);
-    expect(bloodlineGain(finishedLife({ ending: "oldage", year: 25 }))).toBe(2);
+    expect(gain(finishedLife({ ending: "oldage", year: 9 }))).toBe(0);
+    expect(gain(finishedLife({ ending: "oldage", year: 10 }))).toBe(1);
+    // 25 岁：2 个十年 ＋ 已过 15 岁那条登神门槛（第四项）
+    expect(gain(finishedLife({ ending: "oldage", year: 25 }))).toBe(3);
   });
 
   it("登神 +3，其余结局无此项", () => {
-    expect(bloodlineGain(finishedLife({ ending: "ascend", year: 3 }))).toBe(3);
-    expect(bloodlineGain(finishedLife({ ending: "slain", year: 3 }))).toBe(0);
+    expect(gain(finishedLife({ ending: "ascend", year: 3 }))).toBe(3);
+    expect(gain(finishedLife({ ending: "slain", year: 3 }))).toBe(0);
   });
 
-  it("三来源叠加", () => {
+  it("四来源叠加", () => {
     const state = finishedLife({
       ending: "ascend",
       year: 21,
       extraRecords: [MOLT_RECORD, { ...MOLT_RECORD, year: 4 }, { ...MOLT_RECORD, year: 9 }],
     });
-    // 3 蜕变 ＋ 2 个十年 ＋ 3 登神
-    expect(bloodlineGain(state)).toBe(8);
+    // 3 蜕变 ＋ 2 个十年 ＋ 3 登神 ＋ 1 条门槛（21 ≥ 15 岁）
+    expect(gain(state)).toBe(9);
   });
 
-  it("击杀不计入血统点（正本只认蜕变/岁数/登神）", () => {
+  it("击杀不计入血统点", () => {
     const state = finishedLife({
       ending: "slain",
       year: 5,
       extraRecords: [KILL_RECORD, { ...KILL_RECORD, year: 4 }],
     });
-    expect(bloodlineGain(state)).toBe(0);
+    expect(gain(state)).toBe(0);
   });
 
   it("事件赠予的器官也算蜕变（同为 molt 记录）", () => {
@@ -319,6 +330,81 @@ describe("bloodlineGain 三来源", () => {
         { year: 1, season: 0, kind: "molt", text: "身内又生狩齿。", refId: ORGAN_GOU_CHI },
       ],
     });
-    expect(bloodlineGain(state)).toBe(1);
+    expect(gain(state)).toBe(1);
+  });
+
+  /**
+   * 第四项存在的理由（计划 P2「血统结算按距登神多近加权」）：让「差一点」也算数。
+   *
+   * 原来的三项只认寿数 —— 一个活到十八岁、攒了五件器官、灵性六十的一世，与一个活到十八岁
+   * 什么都没干的一世拿一样的血统点，于是「往登神走」在跨世层面**没有回报**，玩家死后
+   * 没有任何理由觉得「这一世比上一世更近了」。
+   */
+  it("每达成一条登神门槛 +1（同寿同蜕变，走得更近的那一世给得更多）", () => {
+    const plain = finishedLife({ ending: "oldage", year: 18 });
+    // 18 岁那条已达成
+    expect(gain(plain)).toBe(1 + 1);
+    const closer: TaleState = {
+      ...plain,
+      organIds: ["a", "b", "c", "d", "e"],
+      stats: { ...plain.stats, ling: 60 },
+    };
+    // 岁数 ＋ 器官 ＋ 灵 三条达成，德还差 → 1 个十年 ＋ 3
+    expect(gain(closer)).toBe(1 + 3);
+    const almost: TaleState = { ...closer, stats: { ...closer.stats, ling: 60, de: 40 } };
+    expect(gain(almost)).toBe(1 + 4);
+    expect(gain(almost)).toBeGreaterThan(gain(plain));
+  });
+
+  it("四项全满但没登神，也比什么都没做的同龄人高出 4 点", () => {
+    const wasted = finishedLife({ ending: "oldage", year: 18 });
+    const ready: TaleState = {
+      ...wasted,
+      organIds: ["a", "b", "c", "d", "e"],
+      stats: { ...wasted.stats, ling: 70, de: 45 },
+    };
+    expect(gain(ready) - gain(wasted)).toBe(3);
+  });
+});
+
+describe("ascendProgress（主界面进度条与死亡屏差距报告共用一份判据）", () => {
+  it("四条门槛按固定顺序给出，have/need/short 都是原始数值", () => {
+    const state = finishedLife({ ending: "oldage", year: 9 });
+    const progress = ascendProgress(state, CONTENT);
+    expect(progress.gates.map((gate) => gate.id)).toEqual(["year", "organs", "ling", "de"]);
+    const [year, organs, ling, de] = progress.gates;
+    expect(year).toMatchObject({ have: 9, need: 15, met: false, short: 6 });
+    // 神种器官恒占 organIds[0]
+    expect(organs).toMatchObject({ have: 1, need: 5, met: false, short: 4 });
+    expect(ling?.short).toBe(CONTENT.tuning.ascendMinLing - state.stats.ling);
+    expect(de?.short).toBe(CONTENT.tuning.ascendMinDe - state.stats.de);
+    expect(progress.metCount).toBe(0);
+    expect(progress.ready).toBe(false);
+  });
+
+  it("达成的门槛 short 归零、met 为真", () => {
+    const state: TaleState = { ...finishedLife({ ending: "oldage", year: 20 }) };
+    const [year] = ascendProgress(state, CONTENT).gates;
+    expect(year).toMatchObject({ met: true, short: 0 });
+  });
+
+  it("四项全满 → ready，且与引擎自己挂的 SYS_FLAG_ASCEND_READY 同进同退", () => {
+    const born = createLife(1, FIXTURE_SEED_ID, CONTENT);
+    const ready: TaleState = {
+      ...born,
+      year: 15,
+      organIds: [...born.organIds, "a", "b", "c", "d"],
+      stats: { ...born.stats, ling: 60, de: 40 },
+    };
+    expect(ascendProgress(ready, CONTENT).ready).toBe(true);
+    // 走一个回合让引擎重算 flag：进度说 ready，flag 就必须亮
+    const after = performAction({ ...ready, hunger: 80 }, "rest", CONTENT).state;
+    expect(after.flags).toContain(SYS_FLAG_ASCEND_READY);
+    expect(ascendProgress(after, CONTENT).ready).toBe(true);
+  });
+
+  it("死亡后仍算得出进度（差距报告是在死亡屏上读的）", () => {
+    const dead = finishedLife({ ending: "oldage", year: 12 });
+    expect(ascendProgress(dead, CONTENT).gates[0]?.short).toBe(3);
   });
 });

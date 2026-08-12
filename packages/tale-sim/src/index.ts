@@ -7,7 +7,14 @@
 export * from "./types.js";
 export * from "./engine.js";
 export { BASELINE_TUNING } from "./tuning.js";
-export { ENGINE_MESSAGES, STALK_MESSAGES, cnNumeral, render } from "./messages.js";
+export {
+  BODY_PART_NAMES,
+  COMBAT_MESSAGES,
+  ENGINE_MESSAGES,
+  STALK_MESSAGES,
+  cnNumeral,
+  render,
+} from "./messages.js";
 export {
   nextRandom,
   createCursor,

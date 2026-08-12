@@ -12,12 +12,12 @@
 import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import type { ActionButtonVm } from "../model/actionVm.js";
-import type { CombatActId, CombatVm } from "../model/combatVm.js";
+import type { CombatVm } from "../model/combatVm.js";
 import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { StatusVm } from "../model/statusVm.js";
-import type { ActionId } from "@shiling/tale-sim";
+import type { ActionId, CombatAct } from "@shiling/tale-sim";
 
 export type CenterVm =
   | {
@@ -42,7 +42,7 @@ export interface PlayProps {
   busy: boolean;
   onAction(id: ActionId): void;
   onChoice(idx: number): void;
-  onCombat(act: CombatActId): void;
+  onCombat(act: CombatAct): void;
   onStalk(act: StalkActId): void;
   onContinue(): void;
 }
@@ -69,6 +69,47 @@ function gauge(stat: StatusVm["stats"][number]): HTMLElement {
         el("b", { class: "gauge__zi", text: stat.label }),
         el("span", { class: "gauge__num", text: String(stat.value) }),
       ]),
+    ],
+  );
+}
+
+/**
+ * 登神之路 —— **常驻**在状态栏底沿的一条横带（计划 P2 的第一条）。
+ *
+ * 为什么必须常驻而不是放进某个面板：M0 的登神门槛只存在于引擎里，玩家好几世都不知道
+ * 自己在往哪走，于是一世结束只剩「哦，死了」。摆在最常看的那一栏之后，每一次蜕变、
+ * 每一次德行抉择才有了指向 —— 也让死亡屏那句「你差二件器官」有了前情。
+ */
+function ascendPath(ascend: StatusVm["ascend"]): HTMLElement {
+  return el(
+    "div",
+    {
+      class: `ascend${ascend.ready ? " is-ready" : ""}`,
+      attrs: { "data-anchor": "ascend", "data-ascend-met": String(ascend.metCount) },
+    },
+    [
+      el("span", { class: "ascend__zi", text: ascend.caption }),
+      el(
+        "div",
+        { class: "ascend__gates" },
+        ascend.gates.map((gate) =>
+          el(
+            "div",
+            {
+              class: `agate${gate.met ? " is-met" : ""}`,
+              title: gate.hint,
+              attrs: { "data-gate": gate.id, "data-met": gate.met ? "1" : "0" },
+            },
+            [
+              el("b", { class: "agate__zi", text: gate.label }),
+              el("span", { class: "agate__num", text: `${gate.have}／${gate.need}` }),
+              el("div", { class: "agate__track" }, [
+                el("i", { class: "agate__fill", style: `width:${gate.percent}%` }),
+              ]),
+            ],
+          ),
+        ),
+      ),
     ],
   );
 }
@@ -141,6 +182,8 @@ function statusBar(status: StatusVm): HTMLElement {
         ),
       ),
     ]),
+
+    ascendPath(status.ascend),
   ]);
 }
 
@@ -277,11 +320,21 @@ function hpBar(label: string, name: string, hp: number, max: number, percent: nu
   ]);
 }
 
+/**
+ * 搏杀屏（M1-P2 重做）。
+ *
+ * 与追猎屏同一条骨架，因为它们要回答同一个问题：**按下去会发生什么**。
+ * 从上到下：遭遇头（头像／名号／它护哪儿／它打算干什么）→ 双血条 → 形势一行
+ * （还撑得住几合／它还需几下，「什么时候该逃」的依据）→ 日志（高度给死）→ 指令网格。
+ *
+ * 指令**全部平铺在一屏**（既定裁决第三条：不做多级菜单、不增加每回合的必点次数）：
+ * 三颗咬击 ＋ 两颗姿态（当前姿态不出按钮）＋ 器官技若干 ＋ 遁走。
+ */
 function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
   const log = el(
     "ol",
     { class: "combat__log" },
-    combat.log.slice(-9).map((line) => el("li", { text: line })),
+    combat.log.slice(-6).map((line) => el("li", { text: line })),
   );
   return el(
     "section",
@@ -293,7 +346,7 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
       /*
        * 敌人头像是 B4 出的 1:1 胸像，所以**不能**走顶部横幅图位 —— 一张方形胸像塞进
        * 780×130 的横幅里只剩眼睛一条缝。改成头像在左、名号与描述在右（三国志式的遭遇版式），
-       * 顺带把战斗卡的纵向高度让给血条与四指令：打架时最不该出现的就是滚屏。
+       * 顺带把战斗卡的纵向高度让给血条与指令：打架时最不该出现的就是滚屏。
        */
       el("div", { class: "combat__head" }, [
         el("figure", { class: "foe" }, [
@@ -309,17 +362,44 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
         el("div", { class: "combat__intro" }, [
           el("div", { class: "combat__kicker" }, [
             el("span", { text: "遭遇" }),
-            el("em", { text: `第 ${combat.round + 1} 合` }),
-            combat.primed ? el("b", { class: "combat__primed", text: "蓄势·下击倍之" }) : null,
+            el("em", { text: combat.roundLabel }),
+            // 守备与姿态是两个常驻小牌：它们决定「该咬哪儿」与「出伤受伤各打几折」
+            el("b", { class: "combat__guard", attrs: { "data-guard": combat.guardPart } }, [
+              el("span", { text: combat.guardLabel }),
+            ]),
+            el("b", { class: "combat__stance" }, [el("span", { text: combat.stanceLabel })]),
+            ...combat.marks.map((mark) => el("i", { class: "combat__mark", text: mark })),
           ]),
           el("h2", { class: "combat__name", text: combat.enemyName }),
-          el("p", { class: "combat__desc", text: combat.enemyDesc }),
+          /*
+           * 意图宣告：这一行是整个搏杀屏的意义所在（它相当于追猎屏的风标 ＋ 命中率）。
+           * 读得出意图的 build 看到的是内容写的那句话＋一笔受伤账；读不出的只看到粗档
+           * 「似要动手」＋一句「灵犀之类的器官才读得清」——**差别必须写在脸上**，
+           * 否则器官白给（P1 第一条教训）。
+           */
+          el(
+            "div",
+            {
+              class: `combat__intent${combat.intentHot ? " is-hot" : ""}${combat.intentKnown ? "" : " is-vague"}`,
+              attrs: { "data-intent": combat.intentKnown ? "exact" : "vague" },
+            },
+            [
+              el("b", { class: "combat__intent-text", text: combat.intentLabel }),
+              el("em", { class: "combat__intent-detail", text: combat.intentDetail }),
+            ],
+          ),
         ]),
       ]),
       el("div", { class: "combat__bars" }, [
         hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
         hpBar("我", "此身", combat.playerHp, combat.playerHpMax, combat.playerPercent, "self"),
       ]),
+      // 形势一行：「还撑得住约 3 合 · 它还需 4 下」—— 没有它，「什么时候该逃」就只能凭感觉
+      el("div", {
+        class: `combat__outlook${combat.outlookHot ? " is-hot" : ""}`,
+        text: combat.outlook,
+        attrs: { "data-outlook": "1" },
+      }),
       log,
       el(
         "div",
@@ -328,18 +408,23 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
           el(
             "button",
             {
-              class: `cact${action.enabled ? "" : " is-locked"}`,
+              class: `cact cact--${action.group}${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}`,
               attrs: {
                 type: "button",
                 disabled: !action.enabled || props.busy,
                 "data-combat": action.id,
               },
-              title: action.disabledReason ?? action.hint,
-              on: { click: () => props.onCombat(action.id) },
+              title: action.disabledReason ?? action.warning ?? action.effect,
+              on: { click: () => props.onCombat(action.act) },
             },
             [
-              el("b", { class: "cact__zi", text: action.label }),
-              el("em", { class: "cact__hint", text: action.disabledReason ?? action.hint }),
+              el("span", { class: "cact__seal", text: action.glyph }),
+              el("span", { class: "cact__text" }, [
+                el("b", { text: action.label }),
+                // 预期效果**恒在**：没有预览的按钮就是翻牌
+                el("em", { class: "cact__effect", text: action.disabledReason ?? action.effect }),
+                action.warning ? el("i", { class: "cact__warn", text: action.warning }) : null,
+              ]),
             ],
           ),
         ),
@@ -581,16 +666,24 @@ function centerNode(props: PlayProps): HTMLElement {
 /**
  * 整屏重建，返回新的根节点（调用方负责替换）。
  *
- * 追猎时进**全屏模式**（`play--stalk`）：收掉右栏「近事」、收掉底部四行动（引擎此刻
- * `availableActions` 本来就是空的，留着一排全灰的按钮只会分散注意），把整块横向空间让给
- * 追猎卡。状态栏留着 —— 饱食与精气正是「这一场追不追得起」的前提，藏了反而要玩家凭记忆。
+ * 追猎与搏杀都进**全屏模式**（`play--stalk`／`play--combat`）：收掉右栏「近事」、收掉底部
+ * 四行动（引擎此刻 `availableActions` 本来就是空的，留着一排全灰的按钮只会分散注意），
+ * 把整块横向空间让给动作卡。状态栏留着 —— 饱食、精气与登神进度正是「这一场打不打得起、
+ * 值不值得打」的前提，藏了反而要玩家凭记忆。
+ *
+ * [M1-P2] 搏杀跟着进全屏是**实机逼出来的**：P2 的搏杀卡要装遭遇头＋意图宣告＋双血条＋
+ * 形势＋日志＋六到八颗带两行说明的按钮，在 780px 宽的两栏版式里量到卡片高 608px 而舞台
+ * 只有 588px —— 日志被 flex 压到 24px（一行都读不全）。收掉右栏与行动面板之后横向多 300px、
+ * 纵向多 100px，日志才回到该有的四行。
  */
 export function renderPlay(props: PlayProps): HTMLElement {
-  const stalking = props.center.kind === "stalk";
-  return el("div", { class: `screen screen--play play${stalking ? " play--stalk" : ""}` }, [
+  const kind = props.center.kind;
+  const fullscreen = kind === "stalk" || kind === "combat";
+  const mode = kind === "stalk" ? " play--stalk" : kind === "combat" ? " play--combat" : "";
+  return el("div", { class: `screen screen--play play${mode}` }, [
     statusBar(props.status),
     el("main", { class: "stage" }, [centerNode(props)]),
-    stalking ? null : logRail(props),
-    stalking ? null : actionBar(props),
+    fullscreen ? null : logRail(props),
+    fullscreen ? null : actionBar(props),
   ]);
 }

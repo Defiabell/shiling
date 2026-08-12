@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildActionVms } from "../src/model/actionVm.js";
-import { FIXTURE_CONTENT, newState, withPatch } from "./helpers.js";
+import { FIXTURE_CONTENT, combatState, newState, withPatch } from "./helpers.js";
 
 const T = FIXTURE_CONTENT.tuning;
 
@@ -33,7 +33,7 @@ describe("buildActionVms", () => {
   it("战斗中四个行动全灰，理由一律是「战事未了」", () => {
     const base = newState();
     const state = withPatch(base, {
-      combat: { enemyId: "ye-zhi", enemyHp: 6, playerHp: 20, round: 0, log: [] },
+      combat: combatState({ log: [] }),
     });
     const vms = buildActionVms(state, FIXTURE_CONTENT);
     expect(vms.every((vm) => !vm.enabled)).toBe(true);
@@ -49,7 +49,7 @@ describe("buildActionVms", () => {
     const base = newState();
     const state = withPatch(base, {
       essence: { zu: T.moltThreshold + 5, lin: 0, xue: 0, meng: 0 },
-      combat: { enemyId: "ye-zhi", enemyHp: 6, playerHp: 20, round: 0, log: [] },
+      combat: combatState({ log: [] }),
     });
     const dormant = buildActionVms(state, FIXTURE_CONTENT)[3]!;
     expect(dormant.enabled).toBe(false);

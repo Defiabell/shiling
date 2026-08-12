@@ -6,9 +6,15 @@
  * `chronicleTemplates.praisePrefix`（内容提供的「赞曰：」），不猜行数，行数不足时优雅降级。
  */
 
-import type { ChronicleEntry, EndingType, TaleContent, TaleState } from "@shiling/tale-sim";
+import { ascendProgress, type ChronicleEntry, type EndingType, type TaleContent, type TaleState } from "@shiling/tale-sim";
 import { PORTRAIT_LABELS, portraitArt, portraitStage } from "../art/assets.js";
-import { ENDING_EPITAPHS, ENDING_LABELS, formatCountCn, formatYearCn } from "./format.js";
+import {
+  ASCEND_GATE_SHORTFALL,
+  ENDING_EPITAPHS,
+  ENDING_LABELS,
+  formatCountCn,
+  formatYearCn,
+} from "./format.js";
 
 /** 卷轴上的「其形」画像：一世终局的形貌（幼兽／成兽／近神）。 */
 export interface PortraitStage {
@@ -36,6 +42,14 @@ export interface ChronicleVm {
   organCountCn: string;
   /** 本世结算的血统点 */
   bloodlineGain: number;
+  /**
+   * [M1-P2] 差距报告 —— 死亡演出一闪而过，而**卷轴是玩家按「转世」之前盯着的那一屏**。
+   * 那颗按钮旁边就该写着「你差两件器官」。
+   */
+  ascendGap: string;
+  ascendGapItems: string[];
+  ascendMet: number;
+  ascendTotal: number;
   /** 终局形态的立绘（按器官数分阶），用于卷轴上的「其形」画像 */
   portrait: PortraitStage;
 }
@@ -70,7 +84,10 @@ export function buildChronicleVm(
   entry: ChronicleEntry,
   bloodlineGain: number,
   content: TaleContent,
+  /** 那一世的终态 —— 差距报告要按它算（`ChronicleEntry` 只带岁数与器官数，算不出灵与德） */
+  state: TaleState,
 ): ChronicleVm {
+  const gap = composeAscendGap(state, content);
   const praisePrefix = content.chronicleTemplates.praisePrefix;
   const parts = splitChronicleBody(entry.body, praisePrefix);
   const stage = portraitStage(entry.organCount, content.tuning.ascendMinOrgans);
@@ -89,6 +106,10 @@ export function buildChronicleVm(
     organCount: entry.organCount,
     organCountCn: formatCountCn(entry.organCount),
     bloodlineGain,
+    ascendGap: gap.gap,
+    ascendGapItems: gap.gapItems,
+    ascendMet: gap.met,
+    ascendTotal: gap.total,
     portrait: { label: PORTRAIT_LABELS[stage], src: portraitArt(stage) },
   };
 }
@@ -105,6 +126,21 @@ export interface DeathVm {
   moltCount: number;
   /** 一句史记式收尾（零值有专门说法，不出现「蜕〇」这种话） */
   summary: string;
+  /**
+   * [M1-P2] **差距报告**：「你差二件器官、灵性差三六。」
+   *
+   * 这一行是整个结局重构的目的。M0 的死亡屏只有「凡历四岁，成器官二，蜕一，杀三」——
+   * 一份收支表，读完的念头是「哦，死了」。差距报告把同一件事换成一个**待办**：
+   * 玩家合上这一屏时想的是「我差两件器官」，那才是按下「转世」的理由。
+   *
+   * 登神那一世没有差距，此时是那句「四事既备」的确认。
+   */
+  gap: string;
+  /** 差距报告的逐条形式（界面要逐项排版时用；已达成的不在其中） */
+  gapItems: string[];
+  /** 达成了几条／共几条 —— 死亡屏上那排点亮的门槛 */
+  ascendMet: number;
+  ascendTotal: number;
 }
 
 /**
@@ -124,12 +160,34 @@ export function composeDeathSummary(
   return `${parts.join("，")}。`;
 }
 
-export function buildDeathVm(state: TaleState): DeathVm {
+/**
+ * 「你差二件器官、灵性差三六。」—— 差距报告。
+ *
+ * 只列**没达成**的门槛，且用「差多少」而不是「有多少」：`8/15` 是一个读数，
+ * 「差七岁」是一件没做完的事。两者信息量相同，后者才会让人想再开一世。
+ */
+export function composeAscendGap(
+  state: TaleState,
+  content: TaleContent,
+): { gap: string; gapItems: string[]; met: number; total: number } {
+  const progress = ascendProgress(state, content);
+  const gapItems = progress.gates
+    .filter((gate) => !gate.met)
+    .map((gate) => ASCEND_GATE_SHORTFALL[gate.id](gate.short));
+  const gap =
+    gapItems.length === 0
+      ? "四事既备 —— 天门曾为你开过。"
+      : `离登神：${gapItems.join("、")}。`;
+  return { gap, gapItems, met: progress.metCount, total: progress.gates.length };
+}
+
+export function buildDeathVm(state: TaleState, content: TaleContent): DeathVm {
   const ending: EndingType = state.ending ?? "oldage";
   const death = state.records.findLast((record) => record.kind === "death");
   const organCount = state.organIds.length;
   const killCount = state.records.filter((record) => record.kind === "combat").length;
   const moltCount = state.records.filter((record) => record.kind === "molt").length;
+  const { gap, gapItems, met, total } = composeAscendGap(state, content);
   return {
     endingLabel: ENDING_LABELS[ending],
     epitaph: ENDING_EPITAPHS[ending],
@@ -139,5 +197,9 @@ export function buildDeathVm(state: TaleState): DeathVm {
     killCount,
     moltCount,
     summary: composeDeathSummary(state.year, organCount, moltCount, killCount),
+    gap,
+    gapItems,
+    ascendMet: met,
+    ascendTotal: total,
   };
 }

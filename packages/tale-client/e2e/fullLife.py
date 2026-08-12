@@ -104,13 +104,15 @@ def decide_action(state: dict, page: Page, rest_streak: int) -> str:
 
 
 def decide_combat(state: dict, page: Page) -> str:
-    combat = state["combat"]
-    if combat and combat["playerHp"] <= state["stats"]["ti"] * 0.35:
-        if page.query_selector('[data-combat="flee"]:not([disabled])'):
-            return "flee"
-    if page.query_selector('[data-combat="organ"]:not([disabled])'):
-        return "organ"
-    return "fight"
+    """[M1-P2] 战斗指令 id 从 fight/flee/feint/organ 换成了 bite:*／stance:*／skill:*／flee。
+
+    这里不再自己判断，直接**按屏幕上发金光的那颗打** —— 那是 `recommendCombatAct` 的输出，
+    也是这一批想验的东西（跟着界面打就该是当前最好的打法）。金光缺席时退回咬喉。
+    """
+    hot = page.query_selector(".cact.is-hot:not([disabled])")
+    if hot is not None:
+        return hot.get_attribute("data-combat") or "bite:throat"
+    return "bite:throat"
 
 
 def play(page: Page, shots: Shots) -> dict:

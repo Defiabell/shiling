@@ -777,13 +777,107 @@
   color: var(--txt-3);
 }
 
-.combat__primed {
+/* — [M1-P2] 守备／姿态／场上状态：三种常驻小牌 — */
+
+/* 它护着哪儿 —— 对谁都可见，是「该咬哪儿」的前提 */
+.combat__guard {
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--cinnabar-lt);
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: rgba(194, 59, 34, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.42);
+}
+
+/* 我方姿态 —— 出伤受伤各打几折 */
+.combat__stance {
   font-weight: 400;
   letter-spacing: 0.08em;
   color: var(--gold);
   padding: 1px 9px;
   border-radius: 999px;
-  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4);
+  background: rgba(232, 180, 95, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.36);
+}
+
+/* 致盲／迟滞／护体的剩余回合 */
+.combat__mark {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+  padding: 1px 7px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.32);
+}
+
+/*
+ * 意图宣告 —— 整个搏杀屏的意义所在（相当于追猎屏的风标 ＋ 命中率）。
+ *
+ * 读得出意图（灵犀／夜瞳）时给内容写的那句话 ＋ 一笔受伤账；读不出时给粗档两字 ＋
+ * 一句「读不出来」，并用虚线框表示「这是猜的」（与追猎屏的 `.stalk__wind.is-vague` 同体例）。
+ */
+.combat__intent {
+  margin-top: 8px;
+  padding: 9px 14px;
+  border-radius: var(--r);
+  background: rgba(127, 212, 232, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.24);
+}
+
+.combat__intent-text {
+  display: block;
+  font-family: var(--kai);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 1.7;
+  color: var(--txt);
+}
+
+.combat__intent-detail {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--txt-3);
+}
+
+/* 重击或它要走 —— 最该一眼看到的坏消息 */
+.combat__intent.is-hot {
+  background: rgba(194, 59, 34, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.42);
+}
+
+.combat__intent.is-hot .combat__intent-text {
+  color: var(--cinnabar-lt);
+}
+
+.combat__intent.is-vague {
+  background: transparent;
+  box-shadow: none;
+  border: 1px dashed var(--hair-2);
+}
+
+.combat__intent.is-vague .combat__intent-text {
+  color: var(--txt-2);
+}
+
+/* 形势一行：「还撑得住约 3 合 · 它还需 4 下」—— 「什么时候该逃」的依据 */
+.combat__outlook {
+  margin: 8px 30px 0;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--txt-3);
+}
+
+.combat__outlook.is-hot {
+  color: var(--cinnabar-lt);
 }
 
 .combat__desc {
@@ -795,8 +889,8 @@
 
 .combat__bars {
   display: grid;
-  gap: 12px;
-  padding: 18px 32px 4px;
+  gap: 10px;
+  padding: 12px 30px 2px;
 }
 
 .hp__head {
@@ -860,9 +954,21 @@
   animation: pulse-warn 1.4s ease-in-out infinite;
 }
 
+/*
+ * 战斗日志：**高度给死**（约四行），不随内容增长 —— 同追猎屏那条教训（M1-P1 第五个缺陷）。
+ * P2 的一个回合最多吐五行（咬中／守备减半／反击／附带落地／它的动作），原来的
+ * `max-height` 会让下面那片按钮一步一步往下挪，而搏杀是一屏之内连按五六次的界面。
+ *
+ * `flex: 0 0 auto` 不是装饰：卡片是纵向 flex 容器，光写 `height` 会被 flex 压缩
+ * （实测压到 24px，一行都读不全 —— overflow 让 min-height:auto 解析成 0）。
+ */
 .combat__log {
-  margin: 14px 32px 0;
-  max-height: 118px;
+  margin: 12px 30px 0;
+  height: 108px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   overflow-y: auto;
   padding: 12px 16px;
   border-radius: var(--r);
@@ -880,19 +986,30 @@
   color: var(--txt);
 }
 
+/*
+ * 指令网格（M1-P2）：三颗咬击 ＋ 两颗姿态 ＋ 器官技若干 ＋ 遁走，**全部平铺在一屏**
+ * （既定裁决：不做多级菜单、不增加每回合的必点次数）。四列自动换行，所以技能多一两颗
+ * 也不会挤爆版式。
+ */
 .combat__acts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  padding: 16px 32px 24px;
+  padding: 10px 30px 14px;
+}
+
+/* 全屏模式收掉了右栏与行动面板，横向空间是白给的 —— 与追猎卡同宽 */
+.card--combat {
+  max-width: 1000px;
 }
 
 .cact {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  padding: 12px 8px 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 10px 11px 11px;
+  text-align: left;
   border-radius: var(--r);
   background: var(--glass-lo);
   box-shadow: inset 0 0 0 1px var(--hair);
@@ -908,24 +1025,157 @@
   transform: translateY(-2px);
 }
 
-.cact__zi {
-  font-size: 19px;
+.cact__seal {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  background: rgba(226, 105, 76, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.26);
+  font-family: var(--kai);
+  font-size: 15px;
+  color: var(--cinnabar-lt);
+}
+
+/* 姿态与器官技用金色印章：与「进攻」那三颗分色，一眼看得出是两类东西 */
+.cact--stance .cact__seal,
+.cact--skill .cact__seal {
+  background: rgba(232, 180, 95, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.24);
+  color: var(--gold-soft);
+}
+
+.cact--flee .cact__seal {
+  background: rgba(232, 236, 242, 0.06);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+  color: var(--txt-2);
+}
+
+.cact__text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cact__text b {
+  font-family: var(--kai);
+  font-size: 14.5px;
   font-weight: 400;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   color: var(--txt);
 }
 
-.cact__hint {
+/* 预期效果**恒在**：没有预览的按钮就是翻牌（P1 验过的铁律） */
+.cact__effect {
   font-family: var(--sans);
   font-style: normal;
   font-size: 11px;
-  line-height: 1.6;
-  text-align: center;
-  color: var(--txt-3);
+  line-height: 1.55;
+  color: var(--gold-soft);
+}
+
+.cact__warn {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--cinnabar-lt);
+}
+
+/* 同一时刻只有一颗发金光（recommendCombatAct） */
+.cact.is-hot {
+  background: rgba(232, 180, 95, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4);
+}
+
+.cact.is-hot .cact__seal {
+  background: rgba(232, 180, 95, 0.2);
+  color: var(--gold);
 }
 
 .cact.is-locked {
   opacity: 0.45;
+}
+
+/* — [M1-P2] 登神之路：状态栏底沿那条常驻横带 — */
+
+.ascend {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+.ascend__zi {
+  font-family: var(--kai);
+  font-size: 12.5px;
+  letter-spacing: 0.14em;
+  color: var(--txt-3);
+  white-space: nowrap;
+}
+
+/* 四事既备：整条转金，天门随时可能开 */
+.ascend.is-ready .ascend__zi {
+  color: var(--gold);
+}
+
+.ascend__gates {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.agate__zi {
+  font-family: var(--kai);
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--txt-3);
+}
+
+.agate__num {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--txt-3);
+  white-space: nowrap;
+}
+
+.agate__track {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(232, 236, 242, 0.07);
+  overflow: hidden;
+}
+
+.agate__fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(232, 180, 95, 0.4), rgba(232, 180, 95, 0.7));
+  transition: width var(--t) var(--ease);
+}
+
+/* 点亮：达成的那一项转金 —— 这是「每项达成即点亮」的落地 */
+.agate.is-met .agate__zi,
+.agate.is-met .agate__num {
+  color: var(--gold);
+}
+
+.agate.is-met .agate__fill {
+  background: linear-gradient(90deg, var(--gold-soft), var(--gold));
+  box-shadow: 0 0 10px -2px rgba(232, 180, 95, 0.7);
 }
 
 /* — 右侧近事 — */
@@ -1713,7 +1963,8 @@
    「这一场追不追得起」的前提。
 */
 
-.play--stalk {
+.play--stalk,
+.play--combat {
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "status"
@@ -2074,9 +2325,50 @@
   }
 }
 
+/* — [M1-P2] 卷轴脚上的差距报告：转世按钮旁边那句「你差两件器官」 — */
+
+.chronicle__gap {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  gap: 3px;
+}
+
+.chronicle__gap b {
+  font-family: var(--kai);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--cinnabar-lt);
+}
+
+.chronicle__gap em {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--txt-3);
+}
+
+/* 四事既备（那一世真的登神了）：不再是刺，是确认 */
+.chronicle__gap.is-done b {
+  color: var(--gold);
+}
+
 @media (max-width: 1080px) {
   /* 窄屏：四个动作两两一行（三列量表还挤得下，动作按钮带两行说明字挤不下） */
   .stalk__acts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 登神之路：窄屏改成标题在上、四项在下（横排挤不出四条进度） */
+  .ascend {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .ascend__gates {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

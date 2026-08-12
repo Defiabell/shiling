@@ -23,6 +23,7 @@ import {
   NEVER_POUNCE,
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
+  enterCombat,
   enterStalk,
   makeContent,
   withOrgans,
@@ -86,7 +87,12 @@ describe("寿终（oldage）", () => {
     expect(state.year).toBe(19);
     expect(state.alive).toBe(false);
     expect(state.ending).toBe("oldage");
-    expect(state.records[state.records.length - 1]?.text).toContain("寿数已尽");
+    /*
+     * [M1-P2] 寿终的旁白改成了**明确的失败**（原「寿数已尽，卧于旧穴不复起」是中性的，
+     * owner 读完的反应是「没有再玩的欲望」）。这里钉住「未成器」这三个字：它是这一批
+     * 结局重构的语义核心，改回中性措辞就该变红。
+     */
+    expect(state.records[state.records.length - 1]?.text).toContain("未成器");
   });
 
   it("year 恰等于 lifespanMax 还活着", () => {
@@ -208,11 +214,12 @@ describe("横死（slain）经由战斗", () => {
   it("战斗致死写的是 slain，并记下击杀者", () => {
     const content = contentWithoutEvents({ tuning: { combatDamageJitter: 0 } });
     const life = createLife(1, FIXTURE_SEED_ID, content);
-    const cornered: TaleState = {
-      ...life,
-      combat: { enemyId: ENEMY_YE_ZHI, enemyHp: 99, playerHp: 1, round: 0, log: [] },
-    };
-    const { state, over } = combatAct(cornered, "fight", content);
+    const cornered = enterCombat(life, ENEMY_YE_ZHI, content, {
+      enemyHp: 99,
+      playerHp: 1,
+      guardPart: "eye",
+    });
+    const { state, over } = combatAct(cornered, { kind: "bite", part: "throat" }, content);
     expect(over).toBe("dead");
     expect(state.ending).toBe("slain");
     expect(state.records[state.records.length - 1]?.refId).toBe(ENEMY_YE_ZHI);

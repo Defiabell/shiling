@@ -14,6 +14,8 @@ import {
   BASELINE_TUNING,
   SYS_FLAG_ASCEND_READY,
   type ChronicleTemplates,
+  type CombatSkillEffect,
+  type CombatState,
   type EnemyDef,
   type OrganDef,
   type SeedDef,
@@ -338,11 +340,18 @@ export const UNCLAMPED_CHANCE: Partial<TaleTuning> = { minChance: 0, maxChance: 
 
 // ===== 造状态的小工具（测试用；B3 不需要） =====
 
-/** 手工把状态推进到「正在打某个敌人」，省得靠事件抽取碰运气。 */
+/**
+ * 手工把状态推进到「正在打某个敌人」，省得靠事件抽取碰运气。
+ *
+ * [M1-P2] 缺省摆出「它护着后腿、这一回合要常规咬一口」这张脸 —— 于是「咬喉」是未被护住的
+ * 那一咬，最接近 M0 的「战」，测试写起来最短。守备／意图／计数器全部可覆写：搏杀的边界
+ * （打在守备上、它要逃、它已被致盲、技能还在冷却）靠 `performAction` 碰要试上百个种子。
+ */
 export function enterCombat(
   state: TaleState,
   enemyId: string,
   content: TaleContent = FIXTURE_CONTENT,
+  overrides: Partial<Omit<CombatState, "enemyId">> = {},
 ): TaleState {
   const enemy = content.enemies.find((candidate) => candidate.id === enemyId);
   if (!enemy) throw new Error(`enterCombat: 未知敌人 ${enemyId}`);
@@ -353,10 +362,48 @@ export function enterCombat(
       enemyHp: enemy.hp,
       playerHp: state.stats.ti,
       round: 0,
+      stance: "square",
+      guardPart: "leg",
+      intent: { kind: "bite", text: "它向前逼了半步。" },
+      blind: 0,
+      slow: 0,
+      ward: 0,
+      skillCooldowns: {},
       log: [],
+      ...overrides,
     },
   };
 }
+
+/** 造一个带指定战斗技的器官（`effect` 缺省＝纯伤害），用于覆盖四种 effect 的分支。 */
+export function organWithSkill(
+  id: string,
+  name: string,
+  effect?: CombatSkillEffect,
+  cooldown?: number,
+): OrganDef {
+  return {
+    id,
+    name,
+    slot: "gut",
+    affinity: { meng: 0.5 },
+    tags: [],
+    combatSkill: {
+      name,
+      desc: `试${name}。`,
+      ...(effect === undefined ? {} : { effect }),
+      ...(cooldown === undefined ? {} : { cooldown }),
+    },
+    desc: `试用器官${name}。`,
+  };
+}
+
+/** 反击必中／必不中的 content 开关（`combatGuardCounterChance` 钉成 1 或 0）。 */
+export const ALWAYS_COUNTER: Partial<TaleTuning> = { combatGuardCounterChance: 1 };
+export const NEVER_COUNTER: Partial<TaleTuning> = { combatGuardCounterChance: 0 };
+/** 致盲必打空／必打中。 */
+export const ALWAYS_MISS: Partial<TaleTuning> = { combatBlindMissChance: 1 };
+export const NEVER_MISS: Partial<TaleTuning> = { combatBlindMissChance: 0 };
 
 /**
  * 手工把状态推进到「正在追某头猎物」，四个量逐项可覆写。

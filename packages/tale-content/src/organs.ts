@@ -9,8 +9,21 @@
  * - **龙涎的 affinity 刻意留空**：`resolveMolt` 的候选池只收 `affinity[type] > 0` 的器官，
  *   空 affinity ＝ 永不进开奖池 ＝ 只能靠「垂死应龙」事件的 `addOrganId` 得到。这是唯一的
  *   事件专属器官，也是那条稀有线的全部回报。
- * - 带 `combatSkill` 的四件（狩齿／坚喙／毒腺／龙涎）分散在 tooth／gut／spirit，
- *   `combatSkillOrgan` 取 `organIds` 里最早的一件，所以先蜕出哪件决定战斗第四选项是什么。
+ * - 带 `combatSkill` 的四件（狩齿／坚喙／毒腺／龙涎）分散在 tooth／gut／spirit。
+ *
+ * ## 战斗技的冷却与效果（M1-P2）
+ * 四件各占一种角色，且**都有冷却** —— M0 的器官技没有冷却，于是它是「每回合都能按的更强的
+ * 战」，把别的按钮全废了。有冷却之后「现在用还是留着收官」才是一道题。
+ *
+ * | 器官 | 技 | 效果 | 冷却 | 它在搏杀里是什么 |
+ * |---|---|---|---|---|
+ * | 狩齿 | 撕咬 | 纯伤害 | 2 | 最短的冷却、最直的伤害 —— 收官那一下 |
+ * | 坚喙 | 贯啄 | `stun` 顿挫 | 3 | 「专破骨缝」＝ 把它下一回合压成守势，等于**偷一个回合** |
+ * | 毒腺 | 喷毒 | `venom` 血凝 | 3 | 迟滞三回合：削它出伤、断它退路（比咬腿久） |
+ * | 龙涎 | 龙吟 | `armor` 护体 | 4 | 「兽类先怯三分」＝ 受伤减半几回合，硬仗的续命手段 |
+ *
+ * `heal` 那一档引擎实现了但本库没用（没有一件器官的性格是「疗愈」）—— 它是留给内容的能力，
+ * 不是废弃开关：写上 `effect: "heal"` 就按 `tuning.combatSkillHealAmount` 回血。
  * - `statMods` 总量刻意压在 +6〜+12 之间：一世蜕 2〜4 件，属性增益要看得见但不能让
  *   登神门槛（ling 60／de 40）靠堆器官就够 —— 那两条得靠抉择挣。
  */
@@ -57,7 +70,7 @@ export const ORGANS: readonly OrganDef[] = [
     affinity: { meng: 0.9, zu: 0.15 },
     statMods: { meng: 7 },
     tags: [TAG_HUNTER, TAG_FANG],
-    combatSkill: { name: "撕咬", desc: "咬定咽喉不放，伤害倍出。" },
+    combatSkill: { name: "撕咬", desc: "咬定咽喉不放，伤害倍出。", cooldown: 2 },
     desc: "颌骨外翻，齿如列锯。咬住的东西不会再走。",
   },
   {
@@ -67,7 +80,7 @@ export const ORGANS: readonly OrganDef[] = [
     affinity: { zu: 0.5, xue: 0.35 },
     statMods: { meng: 4, ti: 2 },
     tags: [TAG_PIERCE, TAG_HUNTER],
-    combatSkill: { name: "贯啄", desc: "自上而下一啄，专破骨缝。" },
+    combatSkill: { name: "贯啄", desc: "自上而下一啄，专破骨缝 —— 它下一合只守得住。", cooldown: 3, effect: "stun" },
     desc: "唇吻硬化成角质的喙，啄石有声。",
   },
 
@@ -139,7 +152,7 @@ export const ORGANS: readonly OrganDef[] = [
     affinity: { meng: 0.5, xue: 0.4 },
     statMods: { meng: 5 },
     tags: [TAG_VENOM],
-    combatSkill: { name: "喷毒", desc: "吐出一线腥液，中者血凝。" },
+    combatSkill: { name: "喷毒", desc: "吐出一线腥液，中者血凝，数合不得起势。", cooldown: 3, effect: "venom" },
     desc: "颊内藏腺，自身先受其苦，而后能施于人。",
   },
   {
@@ -170,7 +183,7 @@ export const ORGANS: readonly OrganDef[] = [
     affinity: {},
     statMods: { ling: 6, ti: 4, de: 2 },
     tags: [TAG_DIVINE, TAG_DRAGON_KIN],
-    combatSkill: { name: "龙吟", desc: "喉中一声闷响，兽类先怯三分。" },
+    combatSkill: { name: "龙吟", desc: "喉中一声闷响，兽类先怯三分，数合不敢近身。", cooldown: 4, effect: "armor" },
     desc: "舌下一泓凉涎，是龙属死时留在世上的一点余息。",
   },
 ];

@@ -22,6 +22,7 @@ import {
   stalkAct,
   type ActionId,
   type ChronicleEntry,
+  type CombatAct,
   type TaleEvent,
   type TaleState,
 } from "@shiling/tale-sim";
@@ -31,7 +32,7 @@ import { el, nextFrame } from "./dom.js";
 import { endingArt, eventArt, portraitArt } from "./art/assets.js";
 import { buildActionVms } from "./model/actionVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
-import { buildCombatVm, type CombatActId } from "./model/combatVm.js";
+import { buildCombatVm } from "./model/combatVm.js";
 import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
 import { buildEventCardVm } from "./model/eventVm.js";
 import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type LogTone } from "./model/logVm.js";
@@ -363,7 +364,7 @@ export class TaleApp {
     this.showDelta(prev, next, turn.over === null ? 0 : seasonHungerCost(prev));
   }
 
-  async doCombat(act: CombatActId): Promise<void> {
+  async doCombat(act: CombatAct): Promise<void> {
     const prev = this.state;
     if (!prev || !prev.combat || this.busy || !prev.alive) return;
     this.busy = true;
@@ -384,7 +385,7 @@ export class TaleApp {
         combat: buildCombatVm(next, next.combat, CONTENT),
       };
     } else {
-      const title = turn.over === "win" ? "得　胜" : turn.over === "fled" ? "遁　去" : "力　尽";
+      const title = COMBAT_END_TITLES[turn.over ?? "dead"];
       this.center = {
         kind: "narration",
         key: `combat-end:${turn.over}:${next.rngState}`,
@@ -427,15 +428,19 @@ export class TaleApp {
     const ascending = state.ending === "ascend";
     const blot = ascending ? null : await playInkBlot(this.overlayHost);
 
-    const death = buildDeathVm(state);
+    const death = buildDeathVm(state, CONTENT);
     await playCinematic(
       {
         // B4 的四张结局图（16:9），文件名恒等于 EndingType —— 饿殍／横死／寿终／登神各一张
         media: { kind: "image", src: endingArt(state.ending) },
         durationMs: 4400,
-        // 第一行是结局二字（当标题排），第二行是引擎写的那句死亡旁白，第三行是收束统计。
-        // 刻意**不放** epitaph：它和引擎的 deathStarve 旁白几乎同义，并排两行会读成重复。
-        lines: [death.endingLabel, death.lastWords, death.summary],
+        /*
+         * 第一行是结局二字（当标题排），第二行是引擎写的那句死亡旁白，第三行是收束统计，
+         * **第四行是 M1-P2 的差距报告**（「离登神：差二件器官、灵性差三六。」）——
+         * 这一屏原来读完只会想「哦，死了」，差距那一行才把它变成一件没做完的事。
+         * 刻意**不放** epitaph：它和引擎的死亡旁白几乎同义，并排两行会读成重复。
+         */
+        lines: [death.endingLabel, death.lastWords, death.summary, death.gap],
         tintRgb: ascending ? "244,240,228" : "194,59,34",
         motion: ascending ? "rise" : "out",
         label: `${death.endingLabel}：${death.epitaph}`,
@@ -445,10 +450,10 @@ export class TaleApp {
     );
 
     const entry: ChronicleEntry = composeChronicle(state, CONTENT);
-    const gain = bloodlineGain(state);
+    const gain = bloodlineGain(state, CONTENT);
     this.bloodline = recordLife(this.bloodline, gain, entry);
     saveBloodline(this.storage, this.bloodline);
-    this.chronicleVm = buildChronicleVm(entry, gain, CONTENT);
+    this.chronicleVm = buildChronicleVm(entry, gain, CONTENT, state);
 
     this.screen = "chronicle";
     this.particles.setAmbient([]);
@@ -634,6 +639,14 @@ function noticeTone(text: string, molted: boolean): LogTone {
   if (text.includes("当道") || text.includes("盯上")) return "combat";
   return "plain";
 }
+
+/** 搏杀收束四态的门楣题字（[M1-P2] `escaped` 是新的：它走了，你什么也没拿到）。 */
+const COMBAT_END_TITLES: Record<"win" | "fled" | "dead" | "escaped", string> = {
+  win: "得　胜",
+  fled: "遁　去",
+  dead: "力　尽",
+  escaped: "失　之",
+};
 
 /** 追猎收束四态的门楣题字。 */
 const STALK_END_TITLES: Record<"caught" | "escaped" | "exhausted" | "combat", string> = {

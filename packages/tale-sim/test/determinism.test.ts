@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   availableActions,
   combatAct,
+  combatPreview,
   composeChronicle,
   createLife,
   eligibleChoiceIdxs,
@@ -13,6 +14,8 @@ import {
   stalkAct,
   stalkPreview,
   type ActionId,
+  type BodyPart,
+  type CombatAct,
   type StalkAct,
   type TaleContent,
   type TaleState,
@@ -28,7 +31,47 @@ import {
 /** 事件多一点的 content：让确定性回归尽量把各条分支都走到。 */
 const BUSY = makeContent({ tuning: { eventChanceBase: 0.6 } });
 
-const COMBAT_SCRIPT = ["fight", "feint", "fight", "flee"] as const;
+/**
+ * 搏杀的**固定剧本**（不看状态，只按步数轮转）——「乱来的打法」。
+ *
+ * [M1-P2] 从四个字符串换成四个 `CombatAct`：刻意混进换姿态与逃，好让确定性回归覆盖到
+ * 「换姿态那一回合不出手」「逃失败继续打」这些分支。
+ */
+const COMBAT_SCRIPT: readonly CombatAct[] = [
+  { kind: "bite", part: "throat" },
+  { kind: "stance", to: "low" },
+  { kind: "bite", part: "eye" },
+  { kind: "flee" },
+];
+
+/**
+ * 剧本 → 合法指令。
+ *
+ * 唯一的加工是「已经是这个姿态就改咬一口」：`combatAct` 对「换成当前姿态」抛错（那只是
+ * 白费一回合，界面本来也不给这颗按钮），而按步数轮转的剧本迟早会撞上。仍是纯函数、
+ * 完全确定 —— 它只读 `state.combat.stance`。
+ */
+function scriptedCombat(state: TaleState, step: number): CombatAct {
+  const plan = COMBAT_SCRIPT[step % COMBAT_SCRIPT.length] ?? { kind: "bite", part: "throat" };
+  if (plan.kind === "stance" && plan.to === (state.combat?.stance ?? "square")) {
+    return { kind: "bite", part: "leg" };
+  }
+  return plan;
+}
+
+/**
+ * 明理但不作弊的打法：只读 `combatPreview`（界面摆给玩家看的那些数）。
+ *
+ * 优先级链就是一份可执行的手感说明：它要走就咬腿拦住（否则整顿肉白丢）、撑不住了就逃、
+ * 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处）。
+ */
+function decideCombat(state: TaleState, content: TaleContent): CombatAct {
+  const preview = combatPreview(state, content);
+  if (preview.enemyWillFlee) return { kind: "bite", part: "leg" };
+  if (preview.roundsToLive <= 1 && preview.fleeChance >= 0.5) return { kind: "flee" };
+  const best = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
+  return { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
+}
 
 /**
  * 追猎的**固定剧本**（不看状态，只按步数轮转）——「乱来的猎手」。
@@ -77,8 +120,7 @@ function playLife(
   let turn = 0;
   while (state.alive && step < maxSteps) {
     if (state.combat) {
-      const act = COMBAT_SCRIPT[step % COMBAT_SCRIPT.length] ?? "fight";
-      const turn = combatAct(state, act, content);
+      const turn = combatAct(state, scriptedCombat(state, step), content);
       state = turn.state;
       log.push(...turn.roundLog);
       step += 1;
@@ -130,7 +172,7 @@ function huntOnly(
   let step = 0;
   while (state.alive && step < maxSteps) {
     if (state.combat) {
-      state = combatAct(state, "fight", content).state;
+      state = combatAct(state, decideCombat(state, content), content).state;
       step += 1;
       continue;
     }
@@ -160,9 +202,9 @@ describe("确定性回归", () => {
   });
 
   /*
-   * ⚠️ 下面两条 golden 的数值在 **M1-P1（追猎屏）** 整批重掷过一次，因为狩猎从「一次掷骰」
-   * 换成了状态机：抽取序列（猎物 → 距离抖动 → 警觉抖动 → 风向 → 旁白变体 → 每个动作各自的掷骰）
-   * 与 M0 完全不同。这是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
+   * ⚠️ 下面两条 golden 的数值被整批重掷过**两次**：M1-P1（追猎屏把狩猎从一次掷骰换成状态机）
+   * 与 M1-P2（搏杀重做：每回合多了「守备＋意图＋意图旁白」三次抽取，且开战时也要摇一次）。
+   * 两次都是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
    * ① 同种子同操作仍恒等（上一条测试）② 换种子仍有分岔 ③ 30 世仍全部收束得出列传。
    */
   // 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
@@ -173,8 +215,8 @@ describe("确定性回归", () => {
   it("golden：轮转策略下 3 个种子的终态逐字锁定", () => {
     const golden = [
       { seed: 20260811, steps: 9, rngState: 1596061836, year: 2, ending: "starve", organs: 1 },
-      { seed: 1, steps: 17, rngState: 1447918632, year: 2, ending: "starve", organs: 1 },
-      { seed: 4242, steps: 21, rngState: 688204809, year: 4, ending: "starve", organs: 1 },
+      { seed: 1, steps: 17, rngState: 1320036238, year: 2, ending: "starve", organs: 1 },
+      { seed: 4242, steps: 21, rngState: 56369139, year: 4, ending: "starve", organs: 1 },
     ] as const;
     for (const expected of golden) {
       const { state, steps } = playLife(expected.seed, BUSY);
@@ -203,21 +245,21 @@ describe("确定性回归", () => {
     const golden = [
       {
         seed: 20260811,
-        steps: 102,
-        rngState: 2837004276,
+        steps: 96,
+        rngState: 3021251567,
         year: 6,
-        organIds: ["organ-ling-yun", "lin-jia", "gou-chi", "wu-mu"],
+        organIds: ["organ-ling-yun", "ji-zu", "gou-chi", "lin-jia"],
         molts: 3,
-        kills: 3,
+        kills: 5,
       },
       {
         seed: 7,
         steps: 107,
-        rngState: 289400792,
+        rngState: 1801260620,
         year: 6,
         organIds: ["organ-ling-yun", "lin-jia", "wu-mu", "gou-chi"],
         molts: 3,
-        kills: 3,
+        kills: 5,
       },
     ] as const;
     for (const expected of golden) {
@@ -250,7 +292,8 @@ describe("确定性回归", () => {
       // 追猎中的 state 也必须是自描述的：四个量＋log 全在 TaleState 里，没有藏在闭包里的东西
       expect(stalkAct(revived, "creep", BUSY).state).toEqual(stalkAct(mid, "creep", BUSY).state);
     } else if (mid.combat) {
-      expect(combatAct(revived, "fight", BUSY).state).toEqual(combatAct(mid, "fight", BUSY).state);
+      const act = decideCombat(mid, BUSY);
+      expect(combatAct(revived, act, BUSY).state).toEqual(combatAct(mid, act, BUSY).state);
     } else if (mid.alive) {
       const action = availableActions(mid, BUSY)[0] ?? "rest";
       expect(performAction(revived, action, BUSY).state).toEqual(

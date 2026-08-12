@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildStatusVm } from "../src/model/statusVm.js";
+import { ascendProgress } from "@shiling/tale-sim";
+import { buildAscendVm, buildStatusVm } from "../src/model/statusVm.js";
 import { FIXTURE_CONTENT, newState, withPatch } from "./helpers.js";
 
 const T = FIXTURE_CONTENT.tuning;
@@ -91,5 +92,59 @@ describe("buildStatusVm", () => {
     );
     expect(neargod.portrait.stage).toBe("neargod");
     expect(neargod.portrait.label).toBe("近神");
+  });
+});
+
+/**
+ * [M1-P2] 登神之路 —— 计划 P2 的第一条「登神条件开局可见，每项达成即点亮」。
+ *
+ * 这一组盯的是**门槛只有一份**：进度条的数必须与引擎 `ascendProgress` 同源，
+ * 否则哪天引擎加一条门槛，进度条会照旧显示「全亮」而天命死活不入池。
+ */
+describe("buildAscendVm（登神之路）", () => {
+  it("四项按固定顺序给出，开局一项都不亮", () => {
+    const ascend = buildAscendVm(newState(), FIXTURE_CONTENT);
+    expect(ascend.gates.map((gate) => gate.id)).toEqual(["year", "organs", "ling", "de"]);
+    expect(ascend.gates.map((gate) => gate.label)).toEqual(["寿", "器", "灵", "德"]);
+    expect(ascend.gates.every((gate) => !gate.met)).toBe(true);
+    expect(ascend.metCount).toBe(0);
+    expect(ascend.ready).toBe(false);
+    expect(ascend.caption).toBe("登神之路　0／4");
+  });
+
+  it("门槛的 have／need 与引擎同源（界面不自己比大小）", () => {
+    const state = withPatch(newState(), { year: 9 });
+    const engine = ascendProgress(state, FIXTURE_CONTENT);
+    const vm = buildAscendVm(state, FIXTURE_CONTENT);
+    expect(vm.gates.map((gate) => [gate.have, gate.need, gate.met])).toEqual(
+      engine.gates.map((gate) => [gate.have, gate.need, gate.met]),
+    );
+  });
+
+  it("达成即点亮，且 hint 从「还差多少」换成「已足」", () => {
+    const old = withPatch(newState(), { year: T.ascendMinYear });
+    const [year] = buildAscendVm(old, FIXTURE_CONTENT).gates;
+    expect(year?.met).toBe(true);
+    expect(year?.percent).toBe(100);
+    expect(year?.hint).toContain("已足");
+    const young = buildAscendVm(newState(), FIXTURE_CONTENT).gates[0];
+    expect(young?.hint).toContain("寿数差");
+  });
+
+  it("四项全满 → ready，标题换成那句话", () => {
+    const base = newState();
+    const ready = withPatch(base, {
+      year: T.ascendMinYear,
+      organIds: [...base.organIds, "a", "b", "c", "d"],
+      stats: { ...base.stats, ling: T.ascendMinLing, de: T.ascendMinDe },
+    });
+    const ascend = buildAscendVm(ready, FIXTURE_CONTENT);
+    expect(ascend.metCount).toBe(4);
+    expect(ascend.ready).toBe(true);
+    expect(ascend.caption).toContain("天门");
+  });
+
+  it("挂在 StatusVm 上（状态栏常驻，不是某个面板里的东西）", () => {
+    expect(buildStatusVm(newState(), FIXTURE_CONTENT).ascend.gates).toHaveLength(4);
   });
 });

@@ -5,9 +5,18 @@
  * 那些判断一旦散在 DOM 代码里就没法单测，而它们恰好是最容易和引擎口径漂移的部分。
  */
 
-import { ownedOrgans, type EssenceType, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import {
+  ascendProgress,
+  ownedOrgans,
+  type AscendGateId,
+  type EssenceType,
+  type TaleContent,
+  type TaleState,
+} from "@shiling/tale-sim";
 import { PORTRAIT_LABELS, portraitArt, portraitStage, type PortraitStage } from "../art/assets.js";
 import {
+  ASCEND_GATE_LABELS,
+  ASCEND_GATE_SHORTFALL,
   ESSENCE_LABELS,
   ESSENCE_ORDER,
   STAT_HINTS,
@@ -57,6 +66,36 @@ export interface PortraitVm {
   src: string;
 }
 
+/**
+ * [M1-P2] 「登神之路」上的一条门槛。
+ *
+ * 常驻在状态栏 —— 计划 P2 的第一条：**登神条件开局可见，每项达成即点亮**。
+ * M0 的登神门槛只存在于引擎里，玩家一辈子（好几世）都不知道自己在往哪走，
+ * 于是一世结束时只剩「哦，死了」。摆出来之后每一次蜕变、每一次德行抉择都有了指向。
+ */
+export interface AscendGateVm {
+  id: AscendGateId;
+  /** 「寿」「器」「灵」「德」 */
+  label: string;
+  have: number;
+  need: number;
+  met: boolean;
+  /** 0〜100 */
+  percent: number;
+  /** 悬停解释：「灵性 24／60　尚差三六」 */
+  hint: string;
+}
+
+export interface AscendVm {
+  gates: AscendGateVm[];
+  metCount: number;
+  total: number;
+  /** 四项全满 —— 天门随时可能开 */
+  ready: boolean;
+  /** 「登神之路　二／四」或 ready 时的那句话 */
+  caption: string;
+}
+
 export interface StatusVm {
   when: string;
   /** 神种名（出生记录的 refId 解出），查不到时给兜底 */
@@ -71,6 +110,37 @@ export interface StatusVm {
   essences: EssenceBarVm[];
   /** 任一精气达阈值 */
   moltReady: boolean;
+  /** [M1-P2] 登神之路（常驻可见，逐项点亮） */
+  ascend: AscendVm;
+}
+
+/**
+ * 登神进度的视图模型。
+ *
+ * 门槛数值全部来自引擎的 `ascendProgress` —— 界面**不自己比大小**：那四行比较与
+ * `refreshAscendFlag` 就会是两份门槛，哪天引擎加一条，进度条会照旧显示「全亮」而
+ * 天命死活不入池，且没有任何测试会红。
+ */
+export function buildAscendVm(state: TaleState, content: TaleContent): AscendVm {
+  const progress = ascendProgress(state, content);
+  const gates: AscendGateVm[] = progress.gates.map((gate) => ({
+    id: gate.id as AscendGateId,
+    label: ASCEND_GATE_LABELS[gate.id],
+    have: gate.have,
+    need: gate.need,
+    met: gate.met,
+    percent: toPercent(gate.need > 0 ? gate.have / gate.need : 1),
+    hint: gate.met
+      ? `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　已足`
+      : `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　${ASCEND_GATE_SHORTFALL[gate.id](gate.short)}`,
+  }));
+  return {
+    gates,
+    metCount: progress.metCount,
+    total: gates.length,
+    ready: progress.ready,
+    caption: progress.ready ? "四事既备　天门可望" : `登神之路　${progress.metCount}／${gates.length}`,
+  };
 }
 
 const SYS_FLAG_STARVING = "sys:starving";
@@ -123,5 +193,6 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     hunger,
     essences,
     moltReady: essences.some((essence) => essence.ripe),
+    ascend: buildAscendVm(state, content),
   };
 }

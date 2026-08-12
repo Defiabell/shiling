@@ -7,7 +7,6 @@
 import { describe, expect, it } from "vitest";
 import {
   SYS_FLAG_ASCEND_READY,
-  SYS_FLAG_FEINT_PRIMED,
   SYS_FLAG_STARVING,
   combatSkillOrgan,
   createLife,
@@ -95,8 +94,9 @@ describe("sys: 保留 flag 命名空间", () => {
     expect(state.flags).toEqual([SYS_FLAG_STARVING]);
   });
 
-  it("三个保留 flag 都在 sys: 命名空间下", () => {
-    for (const flag of [SYS_FLAG_STARVING, SYS_FLAG_ASCEND_READY, SYS_FLAG_FEINT_PRIMED]) {
+  it("两个保留 flag 都在 sys: 命名空间下", () => {
+    // M1-P2 删掉了第三个（sys:feint-primed）—— 「诈」并入扑眼与姿态体系
+    for (const flag of [SYS_FLAG_STARVING, SYS_FLAG_ASCEND_READY]) {
       expect(flag.startsWith("sys:")).toBe(true);
     }
   });

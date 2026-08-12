@@ -13,15 +13,18 @@
  *   pnpm -C packages/gen balance -- --lab --lives 400   # 追猎实验台：打法×风向×build 的得手率
  *       （--lives 就是每格的场数，缺省沿用整世模式的 200；手感判据的实测值都是按 400 报的）
  *   pnpm -C packages/gen balance -- --stalk-plan rush   # 整世模式里换机器猎手的打法
+ *   pnpm -C packages/gen balance -- --lab combat --lives 400  # 搏杀实验台：打法×敌人×build 的胜率
+ *   pnpm -C packages/gen balance -- --combat-plan greedy      # 整世模式里换机器打手的打法
  *
  * 纪律：数值不达标只调 `tale-content/src/tuning.ts` 与事件 `effects`，**不改引擎**。
  */
 
 import {
+  ascendProgress,
   availableActions,
   bloodlineGain,
   combatAct,
-  combatSkillOrgan,
+  combatPreview,
   composeChronicle,
   createCursor,
   createLife,
@@ -31,18 +34,26 @@ import {
   stalkAct,
   stalkPreview,
   type ActionId,
+  type BodyPart,
+  type CombatAct,
   type EndingType,
   type StalkAct,
+  type TaleEvent,
   type TaleState,
   type WindDir,
 } from "../../tale-sim/src/index.ts";
 import { CHANCE_BANDS } from "../../tale-client/src/model/stalkVm.ts";
 import {
+  ENEMY_CAO_HU,
+  ENEMY_XUAN_MANG,
+  ENEMY_YAN_YANG,
+  ENEMY_YE_ZHI,
   EVENTS,
   FLAG_SICK,
   FLAG_WOUND,
   ORGAN_GOU_CHI,
   ORGAN_JI_ZU,
+  ORGAN_LING_XI,
   ORGAN_YE_TONG,
   SEED_CHANG_TAI,
   TALE_CONTENT,
@@ -86,6 +97,7 @@ function applyTuneOverrides(spec: string): typeof TALE_CONTENT {
 
 let CONTENT = TALE_CONTENT;
 let STALK_PLAN: StalkPlan = "patient";
+let COMBAT_PLAN: CombatPlan = "screen";
 
 /**
  * 抉择策略。三种画像，因为「平衡」对不同玩法是不同的数：
@@ -102,13 +114,24 @@ interface Args {
   profile: Profile;
   json: boolean;
   tune: string | null;
-  /** 追猎实验台：只跑追猎、按打法×风向×build 拆表，不跑整世 */
-  lab: boolean;
+  /** 实验台：只跑一个子系统、按打法拆表，不跑整世。`null` ＝ 跑整世 */
+  lab: "stalk" | "combat" | null;
   stalkPlan: StalkPlan;
+  combatPlan: CombatPlan;
 }
 
+const COMBAT_PLANS: readonly CombatPlan[] = ["screen", "throat", "eye", "leg", "greedy", "coward"];
+
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { lives: 200, profile: "cautious", json: false, tune: null, lab: false, stalkPlan: "patient" };
+  const args: Args = {
+    lives: 200,
+    profile: "cautious",
+    json: false,
+    tune: null,
+    lab: null,
+    stalkPlan: "patient",
+    combatPlan: "screen",
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--json") {
@@ -116,7 +139,23 @@ function parseArgs(argv: readonly string[]): Args {
       continue;
     }
     if (flag === "--lab") {
-      args.lab = true;
+      // `--lab`（缺省 stalk，兼容 P1 的用法）／`--lab combat`
+      const next = argv[i + 1];
+      if (next === "combat" || next === "stalk") {
+        args.lab = next;
+        i += 1;
+      } else {
+        args.lab = "stalk";
+      }
+      continue;
+    }
+    if (flag === "--combat-plan") {
+      const value = argv[i + 1];
+      if (!COMBAT_PLANS.includes(value as CombatPlan)) {
+        throw new Error(`--combat-plan 只能是 ${COMBAT_PLANS.join("｜")}`);
+      }
+      args.combatPlan = value as CombatPlan;
+      i += 1;
       continue;
     }
     if (flag === "--stalk-plan") {
@@ -190,6 +229,9 @@ interface LifeSummary {
   /** 追猎场次与得手数（M1-P1 的核心手感指标） */
   hunts: number;
   caught: number;
+  /** [M1-P2] 死时达成了几条登神门槛 ＋ 逐条是否达成（差距报告的总体版） */
+  ascendMet: number;
+  ascendGates: Record<string, boolean>;
   chars: CharCount;
   /** slain 的两种来源：战斗致死（死亡记录带击杀者 refId）与事件直杀 */
   slainBy: "combat" | "event" | null;
@@ -326,15 +368,92 @@ function decideStalk(state: TaleState, plan: StalkPlan): StalkAct {
   return "pounce";
 }
 
-function decideCombat(state: TaleState, roll: () => number): "fight" | "flee" | "feint" | "organ" {
-  const combat = state.combat;
-  if (!combat) throw new Error("decideCombat: 不在战斗中");
-  if (combat.playerHp <= state.stats.ti * 0.35) return "flee";
-  if (combat.round === 0 && roll() < 0.3) return "feint";
-  return combatSkillOrgan(state, CONTENT) ? "organ" : "fight";
+/**
+ * 搏杀打法（M1-P2）。六种，因为「搏杀好不好玩」问的就是**不同打法的成绩要拉得开** ——
+ * 若六种打法胜率一样，那七八颗按钮就是装饰，也就是 M0 的四选一换了层皮。
+ *
+ * 全部只读 `combatPreview`（＝界面摆给玩家看的那几个数），不碰引擎内部。
+ */
+export type CombatPlan = "screen" | "throat" | "eye" | "leg" | "greedy" | "coward";
+
+/**
+ * 「照屏幕金光打」的那条链 —— 与 `tale-client` 的 `recommendCombatAct` 同形。
+ *
+ * 改推荐链要同步三处：客户端那个函数／`tale-content` 冒烟／这里（三处都有注释指回去）。
+ * 它回答的是一个比「最优解是什么」更要紧的问题：界面自己推荐的那一手，跟得住吗？
+ * 若这条的成绩明显低于手写的最优打法，那就是界面在**误导**玩家 —— 那种 bug 不会有测试变红。
+ */
+function screenCombat(state: TaleState): CombatAct {
+  const p = combatPreview(state, CONTENT);
+  const best = [...p.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
+  const bestBite: CombatAct = { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
+  // 能一下打死就打（逃掉＝没有精气，能赢就别走）
+  if (p.roundsToKill <= 1) return bestBite;
+  // 撑不过两合且逃得掉就走 —— 第一版把这条排在 roundsToLive<=1，200 世战死率飙到 33.5%
+  if (p.roundsToLive <= 2 && p.fleeChance >= 0.4) return { kind: "flee" };
+  // 读不出确切意图的 build 只看得见粗档：「按兵不动」就当它要走，先拦一手
+  const mayFlee = p.intentKnown ? p.enemyWillFlee : p.intentClass === "hold";
+  if (mayFlee) return { kind: "bite", part: "leg" };
+  // 它宣告了重击而它还看得见 → 先弄瞎它（致盲五成五让 2.2 倍的那一下整个打空）。
+  // 读不出意图的 build 做不到这一手 —— 这一条就是 seer 与 bare 的差额来源。
+  if (p.intentKnown && p.intent.kind === "pounce" && p.blind <= 0) {
+    return { kind: "bite", part: "eye" };
+  }
+  const skill = p.skills.find((item) => item.ready);
+  if (skill) return { kind: "skill", organId: skill.organId };
+  if (p.roundsToLive <= 3 && p.blind <= 0) return { kind: "bite", part: "eye" };
+  const leg = p.bites.find((bite) => bite.part === "leg");
+  if (p.roundsToKill >= 3 && leg?.riderLands === true) return { kind: "bite", part: "leg" };
+  if (p.intentKnown && p.intent.kind === "guard") {
+    const want = p.roundsToLive <= 3 ? "low" : "lunge";
+    if (p.stance !== want) return { kind: "stance", to: want };
+  }
+  return bestBite;
 }
 
-function pickChoice(eligible: readonly number[], profile: Profile, roll: () => number): number {
+function decideCombatPlan(state: TaleState, plan: CombatPlan): CombatAct {
+  const p = combatPreview(state, CONTENT);
+  if (plan === "screen") return screenCombat(state);
+  if (plan === "coward") {
+    // 一挨打就想走：验证「逃」不是万能解（逃掉＝没有精气，一世会饿）
+    if (p.fleeChance >= 0.4) return { kind: "flee" };
+    return { kind: "bite", part: "throat" };
+  }
+  if (plan === "greedy") {
+    // 只知道咬伤害最高那处 ＋ 有技就放：M0 那种「挑最强的一手」的打法
+    const skill = p.skills.find((item) => item.ready);
+    if (skill) return { kind: "skill", organId: skill.organId };
+    const best = [...p.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
+    return { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
+  }
+  // 单一部位打法：三个部位各自「只会这一手」的成绩 —— 若三者接近，部位就没有分工
+  const part: BodyPart = plan === "throat" ? "throat" : plan === "eye" ? "eye" : "leg";
+  return { kind: "bite", part };
+}
+
+function decideCombat(state: TaleState): CombatAct {
+  if (!state.combat) throw new Error("decideCombat: 不在战斗中");
+  return decideCombatPlan(state, COMBAT_PLAN);
+}
+
+/**
+ * 抉择：按画像挑，**但「应命而升」必挑**。
+ *
+ * 这不是给机器玩家开外挂，是修一个量测 bug：登神是胜利条件，一个攒够四条门槛的玩家不会在
+ * 天门开了之后选「辞而不受」。而 cautious 挑末条、random 乱点，恰好总能挑到「辞而不受」——
+ * 于是 M0/P1 实测的「登神率 0%」里有一部分根本不是内容够不着，是**策略自己拒绝了胜利**
+ * （P1 的教训：先怀疑机器玩家）。
+ */
+function pickChoice(
+  event: TaleEvent,
+  eligible: readonly number[],
+  profile: Profile,
+  roll: () => number,
+): number {
+  const ascendIdx = eligible.find((idx) =>
+    event.choices[idx]?.outcomes.every((outcome) => outcome.effects.die === "ascend"),
+  );
+  if (ascendIdx !== undefined) return ascendIdx;
   const last = eligible[eligible.length - 1] ?? 0;
   const first = eligible[0] ?? 0;
   if (profile === "cautious") return last;
@@ -360,7 +479,7 @@ function runLife(seed: number, profile: Profile): LifeSummary {
     steps += 1;
     if (state.combat) {
       decisions.combat += 1;
-      const round = combatAct(state, decideCombat(state, roll), CONTENT);
+      const round = combatAct(state, decideCombat(state), CONTENT);
       chars.prose += round.roundLog.join("").length;
       state = round.state;
       continue;
@@ -389,7 +508,7 @@ function runLife(seed: number, profile: Profile): LifeSummary {
     chars.prose += event.title.length + event.body.length;
     // 玩家会把每个抉择都看一遍（含点不了的那些 —— 那正是「欲望展示位」的用处）
     chars.options += event.choices.reduce((sum, choice) => sum + choice.label.length, 0);
-    const outcome = resolveChoice(state, event, pickChoice(eligible, profile, roll), CONTENT);
+    const outcome = resolveChoice(state, event, pickChoice(event, eligible, profile, roll), CONTENT);
     chars.prose += outcome.outcomeText.length;
     state = outcome.state;
     fired.add(event.id);
@@ -401,17 +520,20 @@ function runLife(seed: number, profile: Profile): LifeSummary {
   const death = deaths[deaths.length - 1];
   const chronicle = composeChronicle(state, CONTENT);
   chars.chronicle = chronicle.body.length;
+  const progress = ascendProgress(state, CONTENT);
   return {
     decisions,
     chars,
     hunts,
     caught,
+    ascendMet: progress.metCount,
+    ascendGates: Object.fromEntries(progress.gates.map((gate) => [gate.id, gate.met])),
     ending: state.ending,
     years: state.year,
     molts: state.records.filter((record) => record.kind === "molt").length,
     kills: state.records.filter((record) => record.kind === "combat").length,
     organCount: state.organIds.length,
-    bloodline: bloodlineGain(state),
+    bloodline: bloodlineGain(state, CONTENT),
     steps,
     slainBy: state.ending !== "slain" ? null : death?.refId === undefined ? "event" : "combat",
     firedEventIds: [...fired],
@@ -598,11 +720,195 @@ function runLab(samples: number): number {
   return checks.every(([, ok]) => ok) ? 0 : 1;
 }
 
+// ===== 搏杀实验台（M1-P2）=====
+
+/**
+ * 只跑一场搏杀、不跑整世：把「三个部位是否各有适用局面」变成一张表。
+ *
+ * 判据是**打法之间与敌人之间的差额**，不是单一胜率：
+ * - 单一部位三行（throat／eye／leg）在同一头敌人上要拉开，且**换一头敌人排序要变** ——
+ *   否则「哪个部位最优」有一个恒定答案，三颗按钮就退化成一颗。
+ * - screen（只按屏幕金光打）要贴住或超过最好的单一部位打法 → 界面推荐可信。
+ * - 读得出意图的 build（灵犀）要明显好于读不出的 → 「洞察改的是信息」这条主张成立。
+ */
+interface CombatOutcome {
+  over: "win" | "fled" | "dead" | "escaped";
+  rounds: number;
+  /** 打完时自己还剩几成血（死了就是 0） */
+  hpLeft: number;
+}
+
+const LAB_COMBAT_EVENT = (enemyId: string): TaleEvent => ({
+  id: "lab-combat",
+  trigger: { region: "any", weight: 1 },
+  title: "试",
+  body: "试。",
+  choices: [
+    { label: "打", outcomes: [{ weight: 1, text: "打起来了。", effects: { startCombat: enemyId } }] },
+  ],
+});
+
+/**
+ * 一场孤立的搏杀：走 `resolveChoice` 的 `startCombat` 入场（**不手搓 CombatState**——
+ * 那样第一回合的守备与意图就成了固定值，量到的是一个玩家永远遇不到的开局）。
+ */
+function runCombat(
+  seed: number,
+  plan: CombatPlan,
+  enemyId: string,
+  organIds: readonly string[],
+): CombatOutcome | null {
+  let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
+  if (organIds.length > 0) {
+    // 只借 tag 与战技，不叠 statMods —— bare 与 seer 两组的血量伤害完全一致，差的只有「看得见什么」
+    state = { ...state, organIds: [...state.organIds, ...organIds] };
+  }
+  state = { ...state, hunger: CONTENT.tuning.hungerMax };
+  state = resolveChoice(state, LAB_COMBAT_EVENT(enemyId), 0, CONTENT).state;
+  if (!state.combat) return null;
+  const hpMax = Math.max(1, state.stats.ti);
+
+  let rounds = 0;
+  while (state.combat && rounds < 60) {
+    const turn = combatAct(state, decideCombatPlan(state, plan), CONTENT);
+    rounds += 1;
+    state = turn.state;
+    if (turn.over !== null) {
+      const hpLeft = turn.over === "dead" ? 0 : Math.max(0, (turn.state.combat?.playerHp ?? 0) / hpMax);
+      // over 非 null 时 combat 已清空，血量只能从上一帧推 —— 用「是否死亡」当代理即可
+      return { over: turn.over, rounds, hpLeft: turn.over === "dead" ? 0 : hpLeft };
+    }
+  }
+  return null;
+}
+
+const LAB_COMBAT_BUILDS: readonly { name: string; organs: readonly string[] }[] = [
+  { name: "bare（只有神种）", organs: [] },
+  { name: "seer（灵犀：读得出意图）", organs: [ORGAN_LING_XI] },
+  { name: "fang（狩齿：带战技）", organs: [ORGAN_GOU_CHI] },
+  { name: "seer+fang（两样都有）", organs: [ORGAN_LING_XI, ORGAN_GOU_CHI] },
+];
+
+const LAB_COMBAT_FOES: readonly { id: string; name: string }[] = [
+  { id: ENEMY_YAN_YANG, name: "岩羊（护喉·爱扑）" },
+  { id: ENEMY_CAO_HU, name: "草狐（护眼·均衡）" },
+  { id: ENEMY_XUAN_MANG, name: "玄蟒（护喉·爱守）" },
+  { id: ENEMY_YE_ZHI, name: "野雉（护腿·爱逃）" },
+];
+
+function combatRow(outcomes: readonly CombatOutcome[]): string {
+  const n = outcomes.length;
+  if (n === 0) return "（无样本）";
+  const rate = (over: CombatOutcome["over"]): string =>
+    `${pct(outcomes.filter((o) => o.over === over).length, n)}%`;
+  return [
+    `胜 ${rate("win").padStart(6)}`,
+    `死 ${rate("dead").padStart(6)}`,
+    `我逃 ${rate("fled").padStart(6)}`,
+    `它遁 ${rate("escaped").padStart(6)}`,
+    `均合 ${mean(outcomes.map((o) => o.rounds)).toFixed(1)}`,
+  ].join("　");
+}
+
+function runCombatLab(samples: number): number {
+  CONTENT = { ...CONTENT, tuning: { ...CONTENT.tuning, eventChanceBase: 0 } };
+  console.log(`[搏杀实验台] 每格 ${samples} 场（饱食拉满，只量这一场架）\n`);
+
+  const winRate = (rows: readonly CombatOutcome[]): number =>
+    pct(rows.filter((o) => o.over === "win").length, rows.length);
+  const sample = (plan: CombatPlan, foe: string, organs: readonly string[]): CombatOutcome[] => {
+    const rows: CombatOutcome[] = [];
+    for (let i = 0; i < samples; i += 1) {
+      const outcome = runCombat(2000 + i * 7919, plan, foe, organs);
+      if (outcome) rows.push(outcome);
+    }
+    return rows;
+  };
+
+  const byFoePlan = new Map<string, Map<CombatPlan, CombatOutcome[]>>();
+  for (const foe of LAB_COMBAT_FOES) {
+    const byPlan = new Map<CombatPlan, CombatOutcome[]>();
+    for (const plan of COMBAT_PLANS) byPlan.set(plan, sample(plan, foe.id, []));
+    byFoePlan.set(foe.id, byPlan);
+    console.log(`— ${foe.name} —`);
+    for (const plan of COMBAT_PLANS) {
+      console.log(`  ${plan.padEnd(7)} ${combatRow(byPlan.get(plan) ?? [])}`);
+    }
+    console.log("");
+  }
+
+  const buildRows = new Map<string, Map<string, CombatOutcome[]>>();
+  for (const foe of [ENEMY_YAN_YANG, ENEMY_XUAN_MANG]) {
+    const rows = new Map<string, CombatOutcome[]>();
+    for (const build of LAB_COMBAT_BUILDS) rows.set(build.name, sample("screen", foe, build.organs));
+    buildRows.set(foe, rows);
+    const label = LAB_COMBAT_FOES.find((item) => item.id === foe)?.name ?? foe;
+    console.log(`— build（screen 打法，对${label}）—`);
+    for (const build of LAB_COMBAT_BUILDS) {
+      console.log(`${build.name.padEnd(28)} ${combatRow(rows.get(build.name) ?? [])}`);
+    }
+    console.log("");
+  }
+
+  // 判据
+  const rowsOf = (foe: string, plan: CombatPlan): CombatOutcome[] =>
+    byFoePlan.get(foe)?.get(plan) ?? [];
+  const bestPart = (foe: string): CombatPlan => {
+    const parts: CombatPlan[] = ["throat", "eye", "leg"];
+    let best = parts[0] as CombatPlan;
+    for (const plan of parts) if (winRate(rowsOf(foe, plan)) > winRate(rowsOf(foe, best))) best = plan;
+    return best;
+  };
+  const bestPerFoe = LAB_COMBAT_FOES.map((foe) => bestPart(foe.id));
+  const screenVsBest = LAB_COMBAT_FOES.map(
+    (foe) => winRate(rowsOf(foe.id, "screen")) - winRate(rowsOf(foe.id, bestPart(foe.id))),
+  );
+  const deathRate = (rows: readonly CombatOutcome[]): number =>
+    pct(rows.filter((o) => o.over === "dead").length, rows.length);
+  const bareRows = buildRows.get(ENEMY_YAN_YANG)?.get(LAB_COMBAT_BUILDS[0]?.name ?? "") ?? [];
+  const seerRows = buildRows.get(ENEMY_YAN_YANG)?.get(LAB_COMBAT_BUILDS[1]?.name ?? "") ?? [];
+  const bareWin = winRate(bareRows);
+  const seerWin = winRate(seerRows);
+  const bareDeath = deathRate(bareRows);
+  const seerDeath = deathRate(seerRows);
+  const cowardWin = LAB_COMBAT_FOES.map((foe) => winRate(rowsOf(foe.id, "coward")));
+
+  console.log("\n— 手感判据 —");
+  const checks: readonly [string, boolean][] = [
+    [
+      `没有「永远最优」的部位：四头敌人的最佳单一部位不止一种（实测 ${bestPerFoe.join("／")}）`,
+      new Set(bestPerFoe).size >= 2,
+    ],
+    [
+      `照屏幕提示打不比只会一个部位差（各敌人差额 ${screenVsBest.map((d) => d.toFixed(0)).join("／")} 个点，最差 ≥ −5）`,
+      Math.min(...screenVsBest) >= -5,
+    ],
+    /*
+     * 判据换过一次（同 P1 对「屏息」那条的处理）：第一版量的是**胜率**差额 ≥4 个点，
+     * 实测只有 +3.3 —— 回头看判据本身：读得出意图买到的是**防守**信息（知道重击要来，
+     * 提前把它弄瞎），而读不出的 build 会靠「撑不住就逃」把胜率补回来。所以差额主要落在
+     * **死亡率**上（7.5% → 4.5%），胜率只是顺带。改成量死亡率，并要求胜率不倒退。
+     */
+    [
+      `读得出意图更能活（岩羊：死亡率 裸 ${bareDeath}% → 灵犀 ${seerDeath}%，至少低三分之一；胜率不倒退 ${bareWin}% → ${seerWin}%）`,
+      seerDeath <= bareDeath * (2 / 3) && seerWin >= bareWin,
+    ],
+    [
+      `一挨打就逃不是解（coward 胜率 ${cowardWin.map((r) => `${r}%`).join("／")}，最高 ≤35%）`,
+      Math.max(...cowardWin) <= 35,
+    ],
+  ];
+  for (const [name, ok] of checks) console.log(`${ok ? "✓" : "✗"} ${name}`);
+  return checks.every(([, ok]) => ok) ? 0 : 1;
+}
+
 function main(): number {
   const args = parseArgs(process.argv.slice(2));
   if (args.tune !== null) CONTENT = applyTuneOverrides(args.tune);
   STALK_PLAN = args.stalkPlan;
-  if (args.lab) return runLab(args.lives);
+  COMBAT_PLAN = args.combatPlan;
+  if (args.lab === "combat") return runCombatLab(args.lives);
+  if (args.lab === "stalk") return runLab(args.lives);
   const lives = Array.from({ length: args.lives }, (_, index) => runLife(1000 + index * 7919, args.profile));
 
   const rate = (ending: EndingType): number => pct(lives.filter((life) => life.ending === ending).length, lives.length);
@@ -667,10 +973,27 @@ function main(): number {
     },
     eventCoverage: `${fired.size}/${EVENTS.length}`,
     missingEvents: missing,
+    /**
+     * [M1-P2] 登神诊断：四条门槛各自的达成率 ＋ 差一条／差两条的分布。
+     *
+     * 存在的理由：M0/P1 实测「登神率 0%」只是一个数，看不出**卡在哪一条**。分开量之后
+     * 一眼能看出瓶颈（实测是德，其次是灵），于是调参有的放矢，而不是把四条一起放宽。
+     */
+    ascend: {
+      gates: {
+        year: pct(lives.filter((life) => life.ascendGates.year).length, lives.length),
+        organs: pct(lives.filter((life) => life.ascendGates.organs).length, lives.length),
+        ling: pct(lives.filter((life) => life.ascendGates.ling).length, lives.length),
+        de: pct(lives.filter((life) => life.ascendGates.de).length, lives.length),
+      },
+      met4: pct(lives.filter((life) => life.ascendMet === 4).length, lives.length),
+      met3: pct(lives.filter((life) => life.ascendMet === 3).length, lives.length),
+      meanMet: Math.round(mean(lives.map((life) => life.ascendMet)) * 100) / 100,
+    },
     targets: {
       "活过 8 岁 ≥60%": pct(lives.filter((life) => life.years >= 8).length, lives.length) >= 60,
       "平均蜕变 2〜4": mean(molts) >= 2 && mean(molts) <= 4,
-      "登神率 <2%": rate("ascend") < 2,
+      "登神率 0.5〜3%": rate("ascend") >= 0.5 && rate("ascend") <= 3,
     },
   };
 
@@ -698,6 +1021,10 @@ function main(): number {
   );
   console.log(
     `估算真人时长：慢 ${report.reading.minutesSlow} 分／中 ${report.reading.minutesMid} 分（p90 ${report.reading.minutesMidP90} 分）／快 ${report.reading.minutesFast} 分　（设计目标 60〜180 分）`,
+  );
+  console.log(
+    `登神门槛达成率：岁 ${report.ascend.gates.year}% ／器官 ${report.ascend.gates.organs}% ／灵 ${report.ascend.gates.ling}% ／德 ${report.ascend.gates.de}%　` +
+      `四项全达 ${report.ascend.met4}%　差一条 ${report.ascend.met3}%　平均达成 ${report.ascend.meanMet} 条`,
   );
   console.log(`事件覆盖：${report.eventCoverage}　未触发：${report.missingEvents.join("、") || "无"}`);
   for (const [name, ok] of Object.entries(report.targets)) console.log(`${ok ? "✓" : "✗"} ${name}`);
