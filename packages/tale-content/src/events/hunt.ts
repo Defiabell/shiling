@@ -7,6 +7,7 @@
  */
 
 import type { TaleEvent } from "@shiling/tale-sim";
+import { EV_FOE, EV_WATER, EV_WONDER } from "../eventTags.js";
 import { ENEMY_CAO_HU, ENEMY_SHAN_XIAO, ENEMY_YE_ZHI } from "../enemies.js";
 import { FLAG_FOX_ALLY, FLAG_HUNTED, FLAG_MERCY, FLAG_SICK, FLAG_WOUND } from "../flags.js";
 import {
@@ -84,7 +85,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "很快，也很静。母鹿在坡上叫了整整一夜，你听着，睡得很沉。",
-            effects: { hunger: 30, essence: { zu: 14 }, stats: { de: -4 } },
+            effects: { takesLife: 1, hunger: 30, essence: { zu: 14 }, stats: { de: -4 } },
           },
         ],
       },
@@ -95,7 +96,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "先撞开母鹿，再回头收拾小的。青丘的规矩本来就是这样。",
-            effects: { hunger: 40, essence: { meng: 12, zu: 8 }, stats: { de: -8 } },
+            effects: { takesLife: 1, hunger: 40, essence: { meng: 12, zu: 8 }, stats: { de: -8 } },
           },
         ],
       },
@@ -256,7 +257,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-hunt-fishpool",
-    trigger: { region: "qingqiu", actions: ["hunt"], seasons: [0, 1, 2], weight: 26 },
+    trigger: { region: "qingqiu", actions: ["hunt"], seasons: [0, 1, 2], weight: 26, tags: [EV_WATER] },
     title: "浅滩鳞影",
     body: "溪水拐弯处积成一潭，潭底压着一片游动的银亮。水冷得刺骨，深处望不见底，可那些鳞光就在两尺之下，看着一伸爪就能够到。看着而已。",
     illustration: "events/qiu-hunt-fishpool.webp",
@@ -268,7 +269,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 58,
             text: "扑了七八回，湿透，得鱼两尾。冷得发抖，也算值。",
-            effects: { hunger: 20, essence: { lin: 12 } },
+            effects: { takesLife: 2, hunger: 20, essence: { lin: 12 } },
           },
           {
             weight: 42,
@@ -284,7 +285,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "沉到潭底，才知那片银亮下面还压着更大的一群。",
-            effects: { hunger: 26, essence: { lin: 24 } },
+            effects: { takesLife: 3, hunger: 26, essence: { lin: 24 } },
           },
         ],
       },
@@ -294,7 +295,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "只在浅滩截了一尾落单的。不多，但一根毛都没湿。",
-            effects: { hunger: 10, essence: { lin: 6 } },
+            effects: { takesLife: 1, hunger: 10, essence: { lin: 6 } },
           },
         ],
       },
@@ -303,7 +304,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-hunt-vulture",
-    trigger: { region: "qingqiu", actions: ["hunt"], weight: 24 },
+    trigger: { region: "qingqiu", actions: ["hunt"], weight: 24, tags: [EV_FOE] },
     title: "秃鹫争食",
     body: "你按倒的东西还热着，三只秃鹫已落在旁边枯枝上，一动不动地看你。它们不急。它们知道你要走，也知道你一次带不走多少，剩下的迟早是它们的。",
     illustration: "events/qiu-hunt-vulture.webp",
@@ -363,7 +364,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "掘了一夜，掏空了整条地道，连巢里的幼崽都没剩下。",
-            effects: { hunger: 26, essence: { xue: 20 } },
+            effects: { takesLife: 3, hunger: 26, essence: { xue: 20 } },
           },
         ],
       },
@@ -374,7 +375,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "你把穴之精气按进土里，地下一阵闷响，鼠群自己涌了出来。",
-            effects: { hunger: 34, essence: { xue: -30, meng: 6 }, stats: { ti: 2 } },
+            effects: { takesLife: 2, hunger: 34, essence: { xue: -30, meng: 6 }, stats: { ti: 2 } },
           },
         ],
       },
@@ -384,7 +385,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 52,
             text: "守到月落，终于有一只探出头来。就一只。",
-            effects: { hunger: 16, essence: { xue: 8 } },
+            effects: { takesLife: 1, hunger: 16, essence: { xue: 8 } },
           },
           {
             weight: 48,
@@ -446,7 +447,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-hunt-moon-hare",
-    trigger: { region: "qingqiu", actions: ["hunt"], seasons: [2, 3], once: true, weight: 30 },
+    trigger: { region: "qingqiu", actions: ["hunt"], seasons: [2, 3], once: true, weight: 30, tags: [EV_WONDER] },
     title: "月下白兔",
     body: "月色最亮的那一夜，草坡上蹲着一只通体雪白的兔，不逃，也不看你。它耳后有一道旧疤，像是被什么东西咬住过又放开了。风停了，草也不动。",
     illustration: "events/qiu-hunt-moon-hare.webp",
@@ -458,7 +459,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 76,
             text: "一口咬断。肉是暖的，可你吃完之后，月色好像暗了一层。",
-            effects: { hunger: 24, essence: { zu: 16 }, stats: { de: -2 } },
+            effects: { takesLife: 1, hunger: 24, essence: { zu: 16 }, stats: { de: -2 } },
           },
           {
             weight: 24,
@@ -493,7 +494,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-hunt-shanxiao-road",
-    trigger: { region: "qingqiu", actions: ["hunt"], minYear: 3, weight: 16 },
+    trigger: { region: "qingqiu", actions: ["hunt"], minYear: 3, weight: 16, tags: [EV_FOE] },
     title: "山魈拦路",
     body: "岩影里立着一个人形的东西，赤面无毛，两臂过膝。它把你按倒的猎物提起来看了看，随手扔在一边，然后转过脸来看你。它看你的样子，和你看猎物时一样。",
     illustration: "events/qiu-hunt-shanxiao-road.webp",
@@ -552,7 +553,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "你连骨带髓一并吞了，连那点惊惧也吞了。腹中有热东西在走。",
-            effects: { hunger: 22, essence: { meng: 14, zu: 10 }, stats: { de: -2 } },
+            effects: { takesLife: 1, hunger: 22, essence: { meng: 14, zu: 10 }, stats: { de: -2 } },
           },
         ],
       },
@@ -562,7 +563,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "吃到不饿就停了手。剩下的埋进土里，你也说不清为什么要埋。",
-            effects: { hunger: 32, essence: { zu: 6 }, stats: { de: 2 } },
+            effects: { takesLife: 1, hunger: 32, essence: { zu: 6 }, stats: { de: 2 } },
           },
         ],
       },

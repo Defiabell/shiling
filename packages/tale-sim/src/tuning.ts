@@ -49,6 +49,7 @@ export const BASELINE_TUNING: TaleTuning = {
   stalkStartDistance: 34,
   stalkStartDistanceJitter: 4,
   stalkStartAlert: 15,
+  stalkAlertBonus: 0,
   stalkStartAlertJitter: 3,
   stalkStamina: 6,
   stalkLoseDistance: 46,
@@ -84,6 +85,7 @@ export const BASELINE_TUNING: TaleTuning = {
   combatDamageMengDivisor: 8,
   combatDamageJitter: 1,
   combatWinHungerGain: 18,
+  combatWinEssenceMul: 1,
   fleeBase: 0.5,
   fleePerLingDiff: 0.005,
   fleeBiasFactor: 0.01,
@@ -130,11 +132,24 @@ export const BASELINE_TUNING: TaleTuning = {
   combatVenomSlowRounds: 3,
   combatIntentTags: ["insight", "night-eye"],
 
-  // 登神：year≥15 且 organIds≥5 且 ling≥60 且 de≥40
-  ascendMinYear: 15,
-  ascendMinOrgans: 5,
-  ascendMinLing: 60,
-  ascendMinDe: 40,
+  /*
+   * 四道门槛（2026-08-13）。基线值＝计划正本那张表，**实测校准归内容层**
+   * （`tale-content/src/tuning.ts` 的覆写小节写了每一项为什么从基线挪开，及 500 世实测）。
+   *
+   * 三条道刻意共用同一批属性但要求不同的组合，这样「奔哪条道」才真的改变一世怎么过：
+   * 登神要灵与德**同时**够（且尝过神兽），妖王要杀与猛，归山要寿与德，化灵要极高的灵
+   * **加上**一世不杀 —— 最后这一条是唯一改变操作序列的（不能靠狩猎活着）。
+   */
+  wayShenLing: 60,
+  wayShenDe: 40,
+  wayYaowangLives: 20,
+  wayYaowangMeng: 70,
+  wayGuishanYear: 25,
+  wayGuishanDe: 60,
+  wayHualingLing: 90,
+  wayDivineTag: "divine",
+  // 成道的血统点按道分：越难、越改玩法的道给得越多（化灵最难，归山最稳）
+  wayBloodline: { shen: 4, yaowang: 4, guishan: 3, hualing: 5 },
 
   chronicleMaxExcerpts: 8,
 };

@@ -23,6 +23,7 @@ import type { TaleContent } from "@shiling/tale-sim";
 import { CHRONICLE_TEMPLATES } from "./chronicle.js";
 import { ENEMIES } from "./enemies.js";
 import { EVENTS } from "./events/index.js";
+import { ORIGINS, SKIES } from "./premises.js";
 import { ORGANS } from "./organs.js";
 import { SEEDS } from "./seeds.js";
 import { TUNING } from "./tuning.js";
@@ -39,6 +40,8 @@ export const TALE_CONTENT: TaleContent = {
   organs: [...ORGANS],
   seeds: [...SEEDS],
   enemies: [...ENEMIES],
+  skies: [...SKIES],
+  origins: [...ORIGINS],
   tuning: TUNING,
   chronicleTemplates: CHRONICLE_TEMPLATES,
 };
@@ -55,10 +58,41 @@ export {
   ENEMY_YAN_YANG,
   ENEMY_YE_ZHI,
 } from "./enemies.js";
-export { EVENTS, EXPLORE_EVENTS, GENERIC_EVENTS, HUNT_EVENTS, REST_EVENTS } from "./events/index.js";
+export {
+  EVENTS,
+  EXPLORE_EVENTS,
+  GENERIC_EVENTS,
+  HUNT_EVENTS,
+  PREMISE_EVENTS,
+  REST_EVENTS,
+} from "./events/index.js";
+export {
+  ALL_EVENT_TAGS,
+  EV_FOE,
+  EV_KIN,
+  EV_SOLITARY,
+  EV_WATER,
+  EV_WINTER,
+  EV_WONDER,
+} from "./eventTags.js";
+export {
+  ORIGINS,
+  ORIGIN_BREECH,
+  ORIGIN_SOLITARY,
+  ORIGIN_SPIRIT_WOMB,
+  ORIGIN_TWIN,
+  SKIES,
+  SKY_BEAST_TIDE,
+  SKY_DROUGHT,
+  SKY_EARLY_WINTER,
+  SKY_PLAIN,
+  SKY_SPIRIT_FLUX,
+} from "./premises.js";
 export { ALL_FLAGS } from "./flags.js";
 export {
   FLAG_BAIZE_MET,
+  FLAG_BORN_SOLITARY,
+  FLAG_BORN_TWIN,
   FLAG_BLOOD_RITE,
   FLAG_CAVE_KNOWN,
   FLAG_FIREFLY_LED,
@@ -67,6 +101,7 @@ export {
   FLAG_KIN_GUEST,
   FLAG_MERCY,
   FLAG_SICK,
+  FLAG_SKY_DROUGHT,
   FLAG_SPRING_KNOWN,
   FLAG_WOUND,
 } from "./flags.js";

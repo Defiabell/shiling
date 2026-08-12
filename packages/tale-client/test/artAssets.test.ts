@@ -42,13 +42,38 @@ function exists(url: string): boolean {
 }
 
 describe("美术资源接线", () => {
-  it("44 个事件都有插图，且文件真在磁盘上", () => {
+  /**
+   * [2026-08-13] 44 → 51 个事件，其中 **7 条还没有图**（这一批新加的两个成道出口
+   * ＋五条开局变量专属线；美术管线要单独跑一轮）。
+   *
+   * 白名单逐条列名而不是把断言放宽成「有图的才检查」：放宽等于给「以后某次改名把一批图
+   * 变成孤儿」留了藏身处。名单只许收敛 —— 补图之后把 id 从这里删掉，这条测试会立刻要求
+   * 磁盘上真有那张图。
+   */
+  const EVENTS_AWAITING_ART = new Set([
+    "qiu-way-yaowang",
+    "qiu-way-hualing",
+    "qiu-dry-springhead",
+    "qiu-lone-path",
+    "qiu-lone-winter",
+    "qiu-twin-call",
+    "qiu-twin-fall",
+  ]);
+
+  it("有图的事件其文件都真在磁盘上（7 条待补图的在白名单里）", () => {
     const events = TALE_CONTENT.events;
-    expect(events.length).toBe(44);
-    const missing = events.filter(
+    expect(events.length).toBe(51);
+    const withArt = events.filter((event) => !EVENTS_AWAITING_ART.has(event.id));
+    expect(withArt).toHaveLength(44);
+    const missing = withArt.filter(
       (event) => event.illustration === undefined || !exists(eventArt(event.illustration)),
     );
     expect(missing.map((event) => event.id), "事件插图缺文件").toEqual([]);
+    // 白名单里的必须**确实没有** illustration（有了就该把它从名单里删掉）
+    for (const event of events) {
+      if (!EVENTS_AWAITING_ART.has(event.id)) continue;
+      expect(event.illustration, `${event.id} 已有图，该从待补图名单里删掉`).toBeUndefined();
+    }
   });
 
   it("events/ 里没有孤儿文件（改名会让这条红）", () => {
@@ -93,32 +118,25 @@ describe("美术资源接线", () => {
 });
 
 describe("形态分阶", () => {
-  const ASCEND_MIN = TALE_CONTENT.tuning.ascendMinOrgans;
-
   /**
-   * 「近神」这一阶的门槛吃引擎的 `ascendMinOrgans`（本库 5），神种恒占 organIds[0]，
-   * 所以出生即 1 件。
+   * 神种恒占 `organIds[0]`，所以出生即 1 件。
+   *
+   * [2026-08-13] 门槛从「跟着 `tuning.ascendMinOrgans` 走」改成**表现层常量**：
+   * 四道改动把器官件数从所有成道门槛里拿掉了（登神看灵德与神兽、归山看寿与德），
+   * 于是「近神立绘 ⇔ 够格登神」那条对应已经不存在，继续吃一个与形貌无关的门槛
+   * 只会在下一次调参时静默错位。
    */
   it("器官件数 → 幼兽／成兽／近神", () => {
-    expect(portraitStage(1, ASCEND_MIN)).toBe("cub");
-    expect(portraitStage(2, ASCEND_MIN)).toBe("cub");
-    expect(portraitStage(3, ASCEND_MIN)).toBe("adult");
-    expect(portraitStage(4, ASCEND_MIN)).toBe("adult");
-    expect(portraitStage(5, ASCEND_MIN)).toBe("neargod");
-    expect(portraitStage(12, ASCEND_MIN)).toBe("neargod");
-  });
-
-  /**
-   * 门槛跟着 tuning 走，不是写死的 5 —— 这条锁住的是「近神立绘 ⇔ 够格登神」这条对应
-   * 不会在下一次调 `ascendMinOrgans` 时静默错位。
-   */
-  it("近神门槛跟随 tuning.ascendMinOrgans", () => {
-    expect(portraitStage(4, 4)).toBe("neargod");
-    expect(portraitStage(6, 7)).toBe("adult");
+    expect(portraitStage(1)).toBe("cub");
+    expect(portraitStage(2)).toBe("cub");
+    expect(portraitStage(3)).toBe("adult");
+    expect(portraitStage(4)).toBe("adult");
+    expect(portraitStage(5)).toBe("neargod");
+    expect(portraitStage(12)).toBe("neargod");
   });
 
   it("异常件数不抛错（0 或负数退到幼兽）", () => {
-    expect(portraitStage(0, ASCEND_MIN)).toBe("cub");
-    expect(portraitStage(-1, ASCEND_MIN)).toBe("cub");
+    expect(portraitStage(0)).toBe("cub");
+    expect(portraitStage(-1)).toBe("cub");
   });
 });

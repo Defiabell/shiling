@@ -65,8 +65,11 @@ export function renderChronicle(props: ChronicleProps): HTMLElement {
        * [M1-P2] 差距报告摆在「转世」按钮**旁边**。
        *
        * 死亡演出上那一行一闪而过，而卷轴是玩家按下转世之前盯着的最后一屏 —— 那颗按钮
-       * 旁边就该写着「离登神：差二件器官、灵性差三六」。这一行是整个结局重构的目的：
-       * 让人合上这一世时想的是「我差两件器官」，而不是「哦，死了」。
+       * 旁边就该写着「离归山：德行差一二」。这一行是整个结局重构的目的：
+       * 让人合上这一世时想的是「我差那两件事」，而不是「哦，死了」。
+       *
+       * [2026-08-13] 报的是**最接近的那条道**（`vm.gapWayLabel`），门槛计数那一行也跟着改口
+       * —— 原先硬写「登神门槛 1／2」，而这一世走的可能是妖王，那就是一句与他无关的话。
        */
       el("div", { class: "chronicle__foot" }, [
         el("div", { class: "chronicle__gain" }, [
@@ -74,7 +77,7 @@ export function renderChronicle(props: ChronicleProps): HTMLElement {
             el("span", { text: "血统" }),
             el("b", { text: `+${vm.bloodlineGain}`, attrs: { "data-gain": "1" } }),
           ]),
-          el("em", { text: "蜕变、寿数与登神门槛所积，可用于解开新的神种。" }),
+          el("em", { text: "蜕变、寿数与成道门槛所积，可用于解开新的神种。" }),
           el(
             "div",
             {
@@ -84,7 +87,7 @@ export function renderChronicle(props: ChronicleProps): HTMLElement {
             [
               el("b", { text: vm.ascendGap }),
               el("em", {
-                text: `登神门槛　${vm.ascendMet}／${vm.ascendTotal}`,
+                text: `${vm.gapWayLabel}门槛　${vm.ascendMet}／${vm.ascendTotal}`,
               }),
             ],
           ),

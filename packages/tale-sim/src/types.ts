@@ -100,8 +100,175 @@ export interface CombatFlavor {
 }
 /** [正本] 季节：0 春 1 夏 2 秋 3 冬。 */
 export type Season = 0 | 1 | 2 | 3;
-/** [正本] 一世的四种收束方式。 */
+/**
+ * [正本 ＋ 2026-08-13 语义扩写] 一世的四种收束方式。
+ *
+ * `ascend` 原意是「登神」，现在读作**成道** —— 四条道（`WayId`）中的任意一条走通都收束成
+ * 它，具体是哪条写在 `TaleState.wayAchieved` 里。之所以不把四条道拆成四个 `EndingType`：
+ * 下游（血统结算、死亡演出、列传赞语、存档目录）判「这一世成了吗」全是
+ * `ending === "ascend"` 一处，拆开就要在每一处补四个分支，而漏补的那处不会有测试变红。
+ *
+ * `oldage` 因此**语义分叉**（计划正本原话）：寿数到了那一刻若「归山」门槛已备，收束成
+ * `ascend`＋`wayAchieved: "guishan"`；不备才是 `oldage`（仍是「终未成器」的失败）。
+ * 判定只在 `closeSeason` 的寿终那一处做一次，不存在两套并行逻辑。
+ */
 export type EndingType = "starve" | "slain" | "oldage" | "ascend";
+
+// ===== 四道（2026-08-13「每局不同」批次）=====
+
+/**
+ * 四条并列的成道之路。**顺序即界面顺序**（`WAY_ORDER`），别改。
+ *
+ * 为什么要四条：M1-P2 把「登神」摆到了主界面，但所有 build 仍然朝同一个门槛跑 ——
+ * 玩法再不同，目标是一样的，于是第二局仍旧是「同一件事再做一遍」。四条道各自指向一种
+ * 完全不同的活法（灵德双修／杀伐立威／长寿厚德／一世不杀），于是「这一世我奔哪条」
+ * 本身成了每局要重新回答的问题。
+ *
+ * - `shen` 登神：灵德双修，且**尝过神兽**（沿用 M0 那条路线）。
+ * - `yaowang` 妖王：夺命数与猛都要够 —— 主动挑强敌、以杀立威。
+ * - `guishan` 归山：寿数与德都要够 —— **寿终因此从失败变成一种胜利**。
+ * - `hualing` 化灵：灵性极高，且**一世不杀一命** —— 唯一改变操作序列的一条
+ *   （不能靠狩猎活着，只能探索＋休憩＋非致命抉择）。
+ */
+export type WayId = "shen" | "yaowang" | "guishan" | "hualing";
+
+/**
+ * 一条门槛的种类。同一个 id 可以出现在不同的道里，需求值不同（例如「德」在登神是 40、
+ * 在归山是 60）—— 界面按 id 取字（`德`），按 `need` 报数。
+ */
+export type WayGateId = "year" | "ling" | "de" | "meng" | "lives" | "divine" | "nokill";
+
+/**
+ * 门槛的方向。
+ *
+ * `max` 那一档只有「不杀一命」用得上，但它必须是**数据里的一位**而不是特例分支：
+ * 若用 `min` 硬套（need 0、have 0），任何 `have >= need` 的通用判定都会把「已夺三命」
+ * 判成达标。方向写在门槛上，判定只有一处。
+ */
+export type WayGateBound = "min" | "max";
+
+/** 四道里的一条门槛。`have`／`need` 都是原始数值 —— 措辞归界面。 */
+export interface WayGate {
+  id: WayGateId;
+  bound: WayGateBound;
+  have: number;
+  need: number;
+  met: boolean;
+  /**
+   * 还差多少（已达成为 0）。
+   *
+   * `min` 类＝`need − have`（「德行差二八」）；`max` 类＝`have − need`，读作**超出了多少**
+   * （「已夺三命」）—— 那不是「再努力就能补上」的差距，而是这条道已经关了。
+   */
+  short: number;
+}
+
+/** 一条道的进度。 */
+export interface WayProgress {
+  id: WayId;
+  /** 固定顺序，见各道在 `waysProgress` 里的定义 */
+  gates: WayGate[];
+  metCount: number;
+  /** 全部门槛达成 ＝ 这条道的成道事件可以入池（归山除外，它在寿终那一刻判） */
+  ready: boolean;
+  /**
+   * 0〜1 的接近度（各门槛完成比的均值）—— 只用来排「最接近哪条道」，不参与任何结算。
+   * 布尔门槛（尝神兽／不杀一命）按 0 或 1 计。
+   */
+  closeness: number;
+  /**
+   * 这条道**已经永远走不到了**（某条 `max` 门槛被打破）。今天只有化灵会：夺过一命就闭。
+   *
+   * 有这一位，界面才能把「化灵 已闭」和「化灵 差灵八十」说成两件不同的事，
+   * 「最接近的那条道」也才不会一直指着一条已经关掉的门。
+   */
+  lost: boolean;
+}
+
+export interface WaysProgress {
+  /** 固定顺序：登神 → 妖王 → 归山 → 化灵 */
+  ways: WayProgress[];
+  /** 已够格的道（同上顺序）。归山够格也在其中 —— 它只是要等寿终那一刻兑现 */
+  readyIds: WayId[];
+  ready: boolean;
+  /**
+   * 最接近的那条（先比达成门槛数，再比接近度，再按固定顺序）—— 死亡屏的差距报告与
+   * 状态栏横带的缺省视图都按它走。**已闭的道不参与竞争**。
+   */
+  nearest: WayId;
+}
+
+// ===== 开局变量：天时与出身（2026-08-13「每局不同」批次）=====
+
+/**
+ * 可被天时／出身改写的 tuning 数值字段（白名单）。
+ *
+ * 白名单不是洁癖：能改的字段越多，「同一份内容在两局里表现不同」的排查面就越大。这里只
+ * 放**玩家在一局之内真能感觉到**的那几个（更饿、更难攒精气、猎物更警觉、杀获更多）。
+ */
+export type PremiseTuningKey =
+  | "hungerPerSeason"
+  | "winterHungerExtra"
+  | "moltThreshold"
+  | "huntFoodGain"
+  | "restHungerGain"
+  | "eventChanceBase"
+  | "stalkAlertBonus"
+  | "stalkStamina"
+  | "combatWinEssenceMul";
+
+/**
+ * tuning 覆写量，**加法**语义（`hungerPerSeason: +3` ＝ 每季多饿 3 点）。
+ *
+ * 为什么是加法而不是乘法：一个操作比两种操作好推演，而计划里写成「×2」的那两项
+ * （`winterHungerExtra` ×2）在当前基线上与加法等价（6 → 12），落地时按加法写并在
+ * 内容里注明基线值。乘法项若真需要，由字段自身承载（如 `combatWinEssenceMul`）。
+ */
+export type PremiseTuningDelta = Partial<Record<PremiseTuningKey, number>>;
+
+/**
+ * 一个开局变量（天时或出身）。
+ *
+ * ## 它必须真改机制，不是风味字
+ * 每一条都至少改一样**玩家在过程中会撞上**的东西：调参（大旱年真的更容易饿死）、
+ * 事件权重（水泽之事翻倍）、属性／寿限（灵胎灵 +8 寿 −2），或挂一个开专属事件线的 flag。
+ * 只写 `desc` 不写任何机制的条目，是这一批要消灭的那种东西。
+ *
+ * `effect` 是**降世屏上那一行机制**（给玩家看的账），`desc` 才是风味。两者都必填 ——
+ * 只有 `desc` 的开局变量在屏幕上与「一行风味字」无从区分。
+ */
+export interface PremiseDef {
+  id: string;
+  name: string;
+  /** 降世屏那一行机制：「每季多饿 3 点　水泽之事翻倍」 */
+  effect: string;
+  /** 风味一句 */
+  desc: string;
+  /** 抽取权重（同池内相对值） */
+  weight: number;
+  /** 覆写调参（加法） */
+  tuningDelta?: PremiseTuningDelta;
+  /**
+   * 事件权重乘子：键是 `EventTrigger.tags` 里的分类 tag，多条命中则**相乘**。
+   *
+   * ⚠️ 乘子作用在**抽取阶段**（`drawEvent`），绝不改内容里的 `weight` 原值 ——
+   * 改原值会污染 `TaleContent`（那是所有一世共享的同一份对象），并让「同种子同操作
+   * ＝同终态」在第二世起就不成立。
+   */
+  eventWeightMul?: Record<string, number>;
+  /** 出生时一次性属性修正（在神种 statMods 之后落账） */
+  statMods?: Partial<Stats>;
+  /** 寿限修正（岁）；在 `lifespanMax` 按体质算完之后加 */
+  lifespanDelta?: number;
+  /** 降世即挂的内容 flag（专属事件线的入池条件）。`sys:` 前缀会被过滤 */
+  flags?: string[];
+}
+
+/** 一世的开局前提：天时 ＋ 出身。 */
+export interface LifePremise {
+  sky: PremiseDef;
+  origin: PremiseDef;
+}
 /** [正本] 器官槽位。 */
 export type OrganSlot = "eye" | "tooth" | "hide" | "limb" | "gut" | "spirit";
 
@@ -245,6 +412,14 @@ export interface EventTrigger {
   once?: boolean;
   /** 同池抽取权重，1-100 */
   weight: number;
+  /**
+   * [2026-08-13] 分类 tag（`water` 水泽／`foe` 强敌／`wonder` 奇遇／`winter` 冬事…）。
+   *
+   * **不参与是否入池的判定** —— 它只被天时／出身的 `PremiseDef.eventWeightMul` 用来在
+   * 抽取阶段加权。放在 trigger 里是因为它与 `weight` 是同一件事的两半：weight 是内容
+   * 自己定的基准，tags 是让世道去改它的把手。
+   */
+  tags?: string[];
 }
 
 /** [正本] 效果增量。应用顺序固定见 engine.applyEffects 的 JSDoc。 */
@@ -260,6 +435,32 @@ export interface EffectDelta {
   /** EnemyDef.id */
   startCombat?: string;
   die?: EndingType;
+
+  // — [2026-08-13] 「这一笔算不算一桩事迹」的两个显式钩子 —
+
+  /**
+   * 这个分支**亲手取了几条命**（缺省 0），累进 `TaleState.livesTaken`。
+   *
+   * 为什么要内容自己标：引擎只看得见搏杀取胜与追猎得手，看不出「食其血肉」「取其卵」
+   * 这类在文本里明写了杀生的抉择。而「化灵」之道的全部本钱就是**这一世真的没杀过**
+   * —— 漏标一条，玩家就会在读完一段吃活物的文字之后仍然被告知「你还没夺过命」。
+   */
+  takesLife?: number;
+  /**
+   * 这个分支让玩家**尝到了神兽**（登神那条道的门槛之一）。
+   *
+   * 搏杀战胜带 `divine` tag 的敌人由引擎自己记；而「垂死应龙」那一类不经搏杀的神兽
+   * 因缘只有内容知道，所以留这一个钩子。
+   */
+  devourDivine?: boolean;
+  /**
+   * 与 `die: "ascend"` 配套：这一世是**由哪条道**成的。
+   *
+   * 成道事件（天命／称王／化形）各自声明自己那条道。不给就退回「当前已够格且最接近的
+   * 那条」—— 但内容应当显式写出来，因为同时够格两条时的兜底选择是**引擎的**默契，
+   * 而列传结语与赞语要按道分。
+   */
+  way?: WayId;
 }
 
 /** [正本] 抉择的一个加权结果分支。 */
@@ -424,6 +625,16 @@ export interface TaleState {
   year: number;
   season: Season;
   region: RegionId;
+  /**
+   * [2026-08-13] 这一世的天时（`PremiseDef.id`，取自 `content.skies`）—— 降世时掷出，一世不变。
+   *
+   * 存 id 而不存整个 def，也不存「已经算好的 tuning」：前者会让 `TaleState` 里带上一份
+   * 内容对象的拷贝（内容改一个字，旧存档就与新内容说两套话），后者会把 34 个调参字段
+   * 复制进每一帧状态。生效调参由 `lifeTuning(state, content)` 现算 —— **一份实现，处处同解**。
+   */
+  skyId: string;
+  /** [2026-08-13] 这一世的出身（`PremiseDef.id`，取自 `content.origins`）。 */
+  originId: string;
   stats: Stats;
   hunger: number;
   lifespanMax: number;
@@ -439,8 +650,23 @@ export interface TaleState {
    */
   stalk: StalkState | null;
   records: LifeRecord[];
+  /**
+   * [2026-08-13] 本世亲手夺去的性命数 ＝ 搏杀取胜 ＋ 追猎得手 ＋ 内容标了 `takesLife` 的抉择。
+   *
+   * 为什么是一个字段而不是数记录：追猎得手**刻意不写 `LifeRecord`**（那会让一世几十次
+   * 狩猎把列传的 8 条摘录全占满，见 `LifeRecord` 的记录纪律），所以数不出来。而这个数
+   * 同时是两条道的判据：妖王要它够多，化灵要它恒为 0 —— 一条轴的两端，一个计数器。
+   */
+  livesTaken: number;
   alive: boolean;
   ending: EndingType | null;
+  /**
+   * [2026-08-13] 成道的那条道；`null` ＝ 未成道（含尚在世）。
+   *
+   * 与 `ending === "ascend"` 严格同步：成道则非 null，非成道则 null。列传结语、赞语、
+   * 死亡演出、血统点都按它分道。
+   */
+  wayAchieved: WayId | null;
 }
 
 // ===== 调参与列传模板（B1 补全结构，B2 填数据） =====
@@ -502,6 +728,13 @@ export interface TaleTuning {
   stalkStartDistanceJitter: number;
   /** 起手警觉缺省值；`EnemyDef.wariness` 优先 */
   stalkStartAlert: number;
+  /**
+   * [2026-08-13] 起手警觉的**全局加成**（缺省 0），加在 `EnemyDef.wariness` 之上。
+   *
+   * 为什么不能直接调 `stalkStartAlert`：八头猎物**全都**自带 `wariness`，缺省值一个都吃不到
+   * —— 「兽潮之年猎物更警觉」若写成改缺省值，会是一条完全没有效果的天时（而且不会有测试变红）。
+   */
+  stalkAlertBonus: number;
   stalkStartAlertJitter: number;
   /** 一场追猎的动作预算（**含**最后那一扑）；扣到 0 仍未扑 ＝ 空手而归 */
   stalkStamina: number;
@@ -562,6 +795,11 @@ export interface TaleTuning {
   combatDamageJitter: number;
   /** [补全] 战胜额外回的饱食 */
   combatWinHungerGain: number;
+  /**
+   * [2026-08-13] 搏杀取胜吞得的精气倍率（缺省 1）。「兽潮」之年把它调高 —— 猛兽横行的
+   * 年头难活，但杀一头的所得也更厚，于是「兽潮」不是单纯的负面天时。
+   */
+  combatWinEssenceMul: number;
   /** 逃跑成功率 = fleeBase + (ling − enemy.meng)×fleePerLingDiff − enemy.fleeBias×fleeBiasFactor */
   fleeBase: number;
   fleePerLingDiff: number;
@@ -625,12 +863,36 @@ export interface TaleTuning {
   /** 持任一即**读得出敌人的确切意图**（否则只有「似要动手／按兵不动」两档） */
   combatIntentTags: string[];
 
-  // — 登神（M0 极简）—
-  /** 四项全部满足时引擎挂上 SYS_FLAG_ASCEND_READY，「天命」事件靠 requiresFlags 入池 */
-  ascendMinYear: number;
-  ascendMinOrgans: number;
-  ascendMinLing: number;
-  ascendMinDe: number;
+  /*
+   * — 四道门槛（2026-08-13）—
+   *
+   * 每条道的门槛全部满足时，引擎挂上对应的 `WAY_FLAGS[way]`，成道事件靠 `requiresFlags`
+   * 入池（归山例外：它在寿终那一刻直接判）。
+   *
+   * M0/M1 的 `ascendMinYear`／`ascendMinOrgans` 已删 —— 登神现在按「灵德双修 ＋ 尝过神兽」
+   * 判，不再看岁数与器官件数。留一个不再影响任何结算的旋钮比删掉危险（同 P2 删「诈」的理由）。
+   *
+   * 数值校准见 `packages/gen` 的 `--profile wayseek`（500 世，每世奔一条道）：
+   * 目标是每条道各自 0.5〜5%、合计 8〜15%。
+   */
+  /** 登神：灵 ≥ 此值 */
+  wayShenLing: number;
+  /** 登神：德 ≥ 此值 */
+  wayShenDe: number;
+  /** 妖王：夺命数 ≥ 此值（`TaleState.livesTaken`，含追猎得手） */
+  wayYaowangLives: number;
+  /** 妖王：猛 ≥ 此值 */
+  wayYaowangMeng: number;
+  /** 归山：寿数 ≥ 此值（寿终那一刻判） */
+  wayGuishanYear: number;
+  /** 归山：德 ≥ 此值 */
+  wayGuishanDe: number;
+  /** 化灵：灵 ≥ 此值（另需一世不杀一命） */
+  wayHualingLing: number;
+  /** 「神兽」的敌人 tag —— 战胜带此 tag 的敌人即算尝过神兽（登神门槛之一） */
+  wayDivineTag: string;
+  /** 各道成道时额外的血统点（原「登神 +3」按道分开） */
+  wayBloodline: Record<WayId, number>;
 
   // — 列传 —
   /** [补全] 列传中段最多摘录几条记录（birth 恒在其外） */
@@ -651,8 +913,16 @@ export interface ChronicleTemplates {
   opening: string;
   /** 中段每条摘录一行，如 "{{year}}岁{{season}}，{{text}}" */
   middleLine: string;
-  /** 结局四型各一段 */
+  /** 结局四型各一段。`ascend` 那一条是**兜底** —— 成道恒有 `wayEndings` 里更具体的一段 */
   endings: Record<EndingType, string>;
+  /**
+   * [2026-08-13] 四条道各自的结语。
+   *
+   * 必填而不是可选：成道的 `ending` 一律是 `ascend`，若缺一条就会退回
+   * `endings.ascend`（「白光贯顶，兽身褪如敝衣」）—— 一个归山的老兽读到这句是错的，
+   * 而这类错**不会有任何测试变红**。四条都写才通过 typecheck。
+   */
+  wayEndings: Record<WayId, string>;
   /** 「赞曰」前缀（引擎不内置中文列传文案，此处由内容提供） */
   praisePrefix: string;
   /** 赞语变体，按数组顺序取第一个匹配；末项应为无条件兜底 */
@@ -670,5 +940,13 @@ export interface ChroniclePraiseVariant {
   maxDe?: number;
   /** 命中任一 ending 即可；缺省=不限 */
   endings?: EndingType[];
+  /**
+   * [2026-08-13] 命中任一道即可（`state.wayAchieved`）；缺省＝不限。
+   *
+   * 有它才能让「归山」的赞语褒扬而「登神」的赞语超然 —— 两者的 `ending` 都是 `ascend`，
+   * 只按 ending 分支分不出来。未成道的一世 `wayAchieved` 为 null，声明了 `ways` 的变体
+   * 一律不匹配。
+   */
+  ways?: WayId[];
   text: string;
 }

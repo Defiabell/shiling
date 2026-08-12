@@ -36,6 +36,9 @@ import {
   resolveChoice,
   stalkAct,
   stalkPreview,
+  SYS_FLAG_DIVINE_EATEN,
+  WAY_FLAGS,
+  waysProgress,
   type ActionId,
   type BodyPart,
   type CombatAct,
@@ -66,7 +69,15 @@ const LIFE_COUNT = 250;
  * 休憩」的二重条件）在 150 世里稳定撞得到了，于是它不再享有豁免 —— 它专门的可达性测试留着，
  * 但现在多了一道「它必须真的在实跑里出现」的约束。
  */
-const EXPECTED_MISSES: readonly string[] = ["qiu-heaven-mandate", "qiu-rest-guest"];
+const EXPECTED_MISSES: readonly string[] = [
+  "qiu-heaven-mandate",
+  "qiu-rest-guest",
+  // [2026-08-13] 另两个成道出口：妖王要夺命 20＋猛 48，化灵要一世不杀一命 —— 这个机器玩家
+  // 既不奔妖王也不奔化灵（它饿了就猎），撞不到是**设计使然**。两条各有专门的可达性测试
+  // 兜着（见文件末尾），平衡数据看 `packages/gen balance --profile wayseek`。
+  "qiu-way-yaowang",
+  "qiu-way-hualing",
+];
 /** 一世的操作上限（寿数 18〜20 岁≈80 回合，加战斗回合，600 足够宽） */
 const MAX_STEPS = 600;
 
@@ -251,7 +262,13 @@ describe(`${LIFE_COUNT} 世冒烟`, () => {
   it("每一世都能跑到收束，不抛错、不空转", () => {
     expect(LIVES.length).toBe(LIFE_COUNT);
     for (const life of LIVES) {
-      expect(life.steps).toBeGreaterThan(1);
+      /*
+       * [2026-08-13] 从 `> 1` 放宽到 `>= 1`：**第一个行动就死掉是合法内容**
+       * （「悬瀑」有一条直接 `die: "slain"` 的分支，seed 460302 实测撞上）。原来撞不到只是
+       * 因为抽取序列还没被天时／出身那两次抽取推移过。这条断言真正要守的是「每一世都
+       * 推进过、都收束得掉」，不是「每一世至少活两步」。
+       */
+      expect(life.steps).toBeGreaterThanOrEqual(1);
       expect(life.steps).toBeLessThan(MAX_STEPS);
       expect(life.years).toBeGreaterThanOrEqual(0);
       expect(life.bloodline).toBeGreaterThanOrEqual(0);
@@ -324,7 +341,9 @@ describe(`${LIFE_COUNT} 世冒烟`, () => {
       year: 15,
       lifespanMax: 30,
       hunger: 90,
-      stats: { ...born.stats, ling: 60, de: 40 },
+      // [2026-08-13] 登神门槛换成「灵德双修 ＋ 尝过神兽」（岁数与器官件数不再看）
+      stats: { ...born.stats, ling: CONTENT.tuning.wayShenLing, de: CONTENT.tuning.wayShenDe },
+      flags: [...born.flags, SYS_FLAG_DIVINE_EATEN],
       organIds: [...born.organIds, "wu-mu", "ling-xi", "ji-zu", "lin-jia"],
     };
     // 事件必抽，其余一切照真内容 —— 「天命」得在完整事件池里竞争出来

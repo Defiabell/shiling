@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLife } from "../src/index.js";
+import { createCursor, createLife, rollPremise } from "../src/index.js";
 import { FIXTURE_CONTENT, FIXTURE_SEED_ID, FIXTURE_SEED_ORGAN_ID, makeContent } from "./fixtures.js";
 
 describe("createLife 出生", () => {
@@ -41,10 +41,26 @@ describe("createLife 出生", () => {
     expect(life.records[0]?.season).toBe(0);
   });
 
-  it("rngState 由 seedNum 起，seed 原样留存", () => {
+  /**
+   * [2026-08-13] `rngState` 不再等于 `seedNum`：降世时先掷天时与出身（**恒定两次抽取，
+   * 且必须是一世的头两次**），`rngState` 从那两次之后接着走。这个顺序是接口的一部分 ——
+   * `rollPremise(seedNum, content)` 就是靠它在 `createLife` 之前复算出同一个世道
+   * （择神种那一屏据此提前显示「此世大旱」）。
+   */
+  it("seed 原样留存；rngState 已走过天时与出身那两次抽取", () => {
     const life = createLife(20260811, FIXTURE_SEED_ID, FIXTURE_CONTENT);
     expect(life.seed).toBe(20260811);
-    expect(life.rngState).toBe(20260811);
+    const cursor = createCursor(20260811);
+    cursor.next();
+    cursor.next();
+    expect(life.rngState).toBe(cursor.state);
+  });
+
+  it("天时与出身落进 state，且与 rollPremise 的预览逐字相同", () => {
+    const life = createLife(20260811, FIXTURE_SEED_ID, FIXTURE_CONTENT);
+    const preview = rollPremise(20260811, FIXTURE_CONTENT);
+    expect(life.skyId).toBe(preview.sky.id);
+    expect(life.originId).toBe(preview.origin.id);
   });
 
   it("其余初值：饱食/精气/地域/存活/无战斗", () => {

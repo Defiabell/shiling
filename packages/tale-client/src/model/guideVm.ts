@@ -15,14 +15,15 @@
  */
 
 import {
-  ascendProgress,
+  lifeTuning,
+  waysProgress,
   organIndex,
   type EssenceType,
   type OrganDef,
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
-import { ASCEND_GATE_LABELS, ESSENCE_LABELS, ESSENCE_ORDER } from "./format.js";
+import { WAY_GATE_LABELS, WAY_LABELS, ESSENCE_LABELS, ESSENCE_ORDER } from "./format.js";
 import { essenceSources, moltPool, organTagGates } from "./detailVm.js";
 
 /**
@@ -49,7 +50,7 @@ export interface GuideSnapshot {
   sawOrganGateChoice: boolean;
   /** 曾点开过「登神之路」详情 */
   openedAscend: boolean;
-  /** 登神四门槛已达成几项 */
+  /** [2026-08-13] 最接近那条道已达成几项门槛（原「登神四门槛」） */
   gatesMet: number;
 }
 
@@ -63,7 +64,10 @@ export function guideSnapshot(
     dormantMolted: ui.dormantMolted,
     sawOrganGateChoice: ui.sawOrganGateChoice,
     openedAscend: ui.openedAscend,
-    gatesMet: ascendProgress(state, content).metCount,
+    gatesMet: (() => {
+      const progress = waysProgress(state, content);
+      return progress.ways.find((way) => way.id === progress.nearest)?.metCount ?? 0;
+    })(),
   };
 }
 
@@ -98,7 +102,8 @@ export const GUIDE_STEPS: readonly GuideStepDef[] = [
     text: "先猎一次 —— 得食，也得精气",
     isDone: (snap) => snap.essenceTotal > 0,
     hint: (state, content) => {
-      const t = content.tuning;
+      // 这一世生效的调参：大旱之年这一句必须写 −15 而不是基线的 −12
+      const t = lifeTuning(state, content);
       return `饱食 ${Math.round(state.hunger)}／${t.hungerMax}，每季 −${t.hungerPerSeason}；得手 +${t.huntFoodGain} 饱食，另有一份精气`;
     },
   },
@@ -113,17 +118,17 @@ export const GUIDE_STEPS: readonly GuideStepDef[] = [
       // **不点名会开出哪一件**：开奖是「加权抽三件、再等权抽一」（引擎 `resolveMolt`），
       // 报单件等于多数时候在骗人。这条链要教的是「攒哪一型 → 会往哪个方向长」。
       const pool = moltPool(state, content, type)
-        .slice(0, content.tuning.moltCandidateCount)
+        .slice(0, lifeTuning(state, content).moltCandidateCount)
         .map((organ) => organ.name)
         .join("／");
-      const prey = essenceSources(content, type)
+      const prey = essenceSources(state, content, type)
         .filter((source) => source.huntable)
         .slice(0, 2)
         .map((source) => source.name)
         .join("／");
       const chain = prey.length > 0 ? `猎${prey} → ` : "";
       const outcome = pool.length > 0 ? `偏${label}的器官（${pool}）` : "新器官";
-      return `${chain}${label} ${value}／${content.tuning.moltThreshold} → 蛰伏 → ${outcome}`;
+      return `${chain}${label} ${value}／${lifeTuning(state, content).moltThreshold} → 蛰伏 → ${outcome}`;
     },
   },
   {
@@ -142,13 +147,23 @@ export const GUIDE_STEPS: readonly GuideStepDef[] = [
     },
   },
   {
-    id: "ascend",
-    text: "点开顶上那条「登神之路」—— 那是你这一世的目标",
+    /*
+     * [2026-08-13] 第四步从「点开登神之路」改成「点开顶上那条横带，四条道任选一条」——
+     * 这一批之后目标不再只有一个，而「这一世我该奔哪条」正是玩家要学会问的那句话。
+     * 提示报的是**最接近的那条道**的逐条门槛（横带缺省展开的也是它，首尾对得上）。
+     */
+    id: "ways",
+    text: "点开顶上那条横带 —— 四条道并列，先看清这一世最近的是哪条",
     isDone: (snap) => snap.openedAscend || snap.gatesMet > 0,
-    hint: (state, content) =>
-      ascendProgress(state, content)
-        .gates.map((gate) => `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}`)
-        .join(" · "),
+    hint: (state, content) => {
+      const progress = waysProgress(state, content);
+      const way = progress.ways.find((item) => item.id === progress.nearest);
+      if (!way) return "顶上那条横带就是这一世的目标";
+      const gates = way.gates
+        .map((gate) => `${WAY_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}`)
+        .join(" · ");
+      return `最近的是${WAY_LABELS[way.id]}：${gates}`;
+    },
   },
 ];
 
@@ -170,7 +185,7 @@ export function guideChainSummary(state: TaleState, content: TaleContent): strin
     gated.find(fromEssence) ?? organs.find(fromEssence) ?? gated[0] ?? organs[0];
   const type = organ ? ESSENCE_ORDER.find((candidate) => (organ.affinity[candidate] ?? 0) > 0) : undefined;
   const prey = type
-    ? essenceSources(content, type)
+    ? essenceSources(state, content, type)
         .filter((source) => source.huntable)
         .slice(0, 1)
         .map((source) => source.name)[0]
@@ -179,7 +194,7 @@ export function guideChainSummary(state: TaleState, content: TaleContent): strin
   const tail = organ
     ? `蛰伏 → ${organ.name} → 它认得的那些抉择`
     : "蛰伏 → 新器官 → 它认得的那些抉择";
-  return `这条链你已走完：${head}满 ${content.tuning.moltThreshold} → ${tail}。往后自己走。`;
+  return `这条链你已走完：${head}满 ${lifeTuning(state, content).moltThreshold} → ${tail}。往后自己走。`;
 }
 
 export interface GuideVm {

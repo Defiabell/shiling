@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { combatPreview, type TaleState } from "@shiling/tale-sim";
+import { combatPreview, lifeTuning, waysProgress, type TaleState } from "@shiling/tale-sim";
 import {
   ORGAN_JI_ZU,
   ORGAN_LING_XI,
@@ -33,14 +33,22 @@ import {
   statGates,
   tagEffects,
 } from "../src/model/detailVm.js";
-import { FIXTURE_CONTENT, newState, withPatch } from "./helpers.js";
+import { FIXTURE_CONTENT, newState, realState, withPatch } from "./helpers.js";
 
-const T = TALE_CONTENT.tuning;
+/**
+ * [2026-08-13] 期望值一律按**这一世生效的调参**算，不按 `TALE_CONTENT.tuning`。
+ *
+ * 天时会改 `hungerPerSeason`／`huntFoodGain`／`moltThreshold` 这几项（这个 seed 掷到的是
+ * 大旱之年：每季 −15 而不是基线的 −12），而详情浮层读的就是生效值 —— 拿基线当期望值
+ * 等于在测一个玩家看不到的世界。
+ */
+const T = lifeTuning(realState(), TALE_CONTENT);
 const FT = FIXTURE_CONTENT.tuning;
 
 /** 真内容里的一世（神种＝fixture 的灵蕴，只为省一次 seed 常量；属性口径同 createLife）。 */
 function realLife(patch: Partial<TaleState> = {}): TaleState {
-  const born = newState();
+  // [2026-08-13] 必须用真内容造：state 带着 skyId／originId，与传进去的 content 要配对
+  const born = realState();
   return { ...born, ...patch };
 }
 
@@ -141,14 +149,20 @@ describe("属性详情：讲结果，不讲风味", () => {
     const state = realLife();
     const text = rowsText(state, { kind: "stat", key: "ling" });
     expect(text).toContain("遁走");
-    expect(text).toContain(`登神需 ${T.ascendMinLing}`);
-    expect(text).toContain(`灵 ${Math.round(state.stats.ling)}／${T.ascendMinLing}`);
+    // [2026-08-13] 灵同时是登神与化灵两条道的门槛 —— 两条都该摆出来
+    expect(text).toContain(`登神需 ${T.wayShenLing}`);
+    expect(text).toContain(`化灵需 ${T.wayHualingLing}`);
+    expect(text).toContain(`灵 ${Math.round(state.stats.ling)}／${T.wayShenLing}`);
+    expect(text).toContain(`灵 ${Math.round(state.stats.ling)}／${T.wayHualingLing}`);
   });
 
-  it("德：说清它不进搏杀的账，只买抉择与登神", () => {
-    const text = rowsText(realLife(), { kind: "stat", key: "de" });
+  it("德：说清它不进搏杀的账，且登神与归山两条道都认它", () => {
+    const state = realLife();
+    const text = rowsText(state, { kind: "stat", key: "de" });
     expect(text).toContain("不进搏杀的账");
-    expect(text).toContain(`德 5／${T.ascendMinDe}`);
+    const de = Math.round(state.stats.de);
+    expect(text).toContain(`德 ${de}／${T.wayShenDe}`);
+    expect(text).toContain(`德 ${de}／${T.wayGuishanDe}`);
   });
 
   it("抉择门槛报数目与下一档，且「涨它的路」指向真的器官", () => {
@@ -188,7 +202,7 @@ describe("精气详情：说清它通向什么（交付内容 C）", () => {
   });
 
   it("食之可增按「猎场里就有」优先，并标出量", () => {
-    const sources = essenceSources(TALE_CONTENT, "zu");
+    const sources = essenceSources(realLife(), TALE_CONTENT, "zu");
     expect(sources[0]?.huntable).toBe(true);
     const text = rowsText(realLife({ essence: { zu: 45, lin: 0, xue: 0, meng: 0 } }), {
       kind: "essence",
@@ -312,13 +326,42 @@ describe("器官详情：进化有啥好处（交付内容 B）", () => {
   });
 });
 
-describe("登神详情：四门槛各自怎么长", () => {
+describe("四道详情：每条道的门槛各自怎么长", () => {
   it("每一条都带 have／need ＋ 一句路子", () => {
-    const text = rowsText(realLife(), { kind: "ascend" });
-    // 器官 1／5 —— 出生就有神种那一枚，这一条从第一回合起就是「已经在走」的
-    expect(text).toContain(`1／${T.ascendMinOrgans}`);
-    expect(text).toContain("攒精气 → 蛰伏");
+    const state = realLife();
+    const text = rowsText(state, { kind: "way", way: "shen" });
+    expect(text).toContain(`${Math.round(state.stats.ling)}／${T.wayShenLing}`);
+    expect(text).toContain(`${Math.round(state.stats.de)}／${T.wayShenDe}`);
     expect(text).toContain("抉择");
+  });
+
+  it("四条道各有自己的门槛，且与引擎逐字同源", () => {
+    const state = realLife();
+    const engine = waysProgress(state, TALE_CONTENT);
+    for (const way of engine.ways) {
+      const vm = buildDetailVm(state, TALE_CONTENT, { kind: "way", way: way.id });
+      expect(vm, `${way.id} 没有详情`).not.toBeNull();
+      expect(vm?.rows).toHaveLength(way.gates.length);
+      for (const gate of way.gates) {
+        // `max` 类门槛（不杀一命）报的是「已夺几命」，没有 have／need 那个读法
+        if (gate.bound === "max") continue;
+        expect(vm?.rows.map((row) => row.text).join("\n")).toContain(`${gate.have}／${gate.need}`);
+      }
+    }
+  });
+
+  /**
+   * 归山是四条道里唯一**没有出口事件**的一条（寿终那一刻直接判），而这件事若不写在
+   * 详情里，玩家会一直等一张永远不来的卡。
+   */
+  it("归山的收尾句明说它由寿终那一刻判，化灵明说夺一命即闭", () => {
+    const state = realLife();
+    expect(buildDetailVm(state, TALE_CONTENT, { kind: "way", way: "guishan" })?.foot).toContain(
+      "寿终",
+    );
+    expect(buildDetailVm(state, TALE_CONTENT, { kind: "way", way: "hualing" })?.foot).toContain(
+      "夺过一命",
+    );
   });
 });
 
@@ -357,7 +400,7 @@ describe("detailKey", () => {
     expect(detailKey({ kind: "essence", type: "zu" })).toBe("essence:zu");
     expect(detailKey({ kind: "organ", id: ORGAN_JI_ZU })).toBe(`organ:${ORGAN_JI_ZU}`);
     expect(detailKey({ kind: "hunger" })).toBe("hunger");
-    expect(detailKey({ kind: "ascend" })).toBe("ascend");
+    expect(detailKey({ kind: "way", way: "guishan" })).toBe("way:guishan");
   });
 
   it("器官 id 不存在时返回 null（内容 bug 不该炸掉整屏）", () => {

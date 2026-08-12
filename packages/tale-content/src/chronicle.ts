@@ -10,7 +10,8 @@
  * 同一世的结局与德行不同，赞语就不同 —— 这是玩家「上一世我做了什么」的唯一评语。
  *
  * 可用占位（引擎 `render`）：`seedName` `years` `organCount` `moltCount` `killCount`
- * `meng` `ling` `ti` `de`；`middleLine` 额外可用 `year` `season` `text`。
+ * `livesTaken` `skyName` `originName` `meng` `ling` `ti` `de`；
+ * `middleLine` 额外可用 `year` `season` `text`。
  *
  * ## 数字体例（B5 定，勿混）
  * 列传正文里的数字**一律汉字**（`{{years|cn}}`）—— 「凡历4岁，成器官2，蜕1，杀3」是
@@ -26,8 +27,10 @@ import type { ChronicleTemplates } from "@shiling/tale-sim";
 export const CHRONICLE_TEMPLATES: ChronicleTemplates = {
   titleTemplate: "食灵列传·{{seedName}}",
 
+  // [2026-08-13] 开篇交代**这一世的开局前提**（天时＋出身）：两局的列传从第一句起就不同，
+  // 而那两个词恰是玩家在降世屏读到过的同两个词 —— 首尾对得上，一世才像一世。
   opening:
-    "食灵者，无名，凭{{seedName}}降于青丘，托身幼兽。{{#years}}凡历{{years|cn}}岁{{/years}}{{^years}}未及一岁{{/years}}，成器官{{organCount|cn}}{{#moltCount}}，蜕{{moltCount|cn}}{{/moltCount}}{{^moltCount}}，未尝蜕形{{/moltCount}}{{#killCount}}，杀{{killCount|cn}}{{/killCount}}{{^killCount}}，未尝杀生{{/killCount}}。其为兽也，猛{{meng|cn}}、灵{{ling|cn}}、体{{ti|cn}}{{#de}}、德{{de|cn}}{{/de}}{{^de}}，而德无可称{{/de}}。",
+    "食灵者，无名，凭{{seedName}}降于青丘，值{{skyName}}，{{originName}}，托身幼兽。{{#years}}凡历{{years|cn}}岁{{/years}}{{^years}}未及一岁{{/years}}，成器官{{organCount|cn}}{{#moltCount}}，蜕{{moltCount|cn}}{{/moltCount}}{{^moltCount}}，未尝蜕形{{/moltCount}}{{#killCount}}，杀{{killCount|cn}}{{/killCount}}{{^killCount}}，未尝杀生{{/killCount}}。其为兽也，猛{{meng|cn}}、灵{{ling|cn}}、体{{ti|cn}}{{#de}}、德{{de|cn}}{{/de}}{{^de}}，而德无可称{{/de}}。",
 
   middleLine: "{{#year}}{{year|cn}}岁{{/year}}{{^year}}初岁{{/year}}{{season}}，{{text}}",
 
@@ -45,22 +48,66 @@ export const CHRONICLE_TEMPLATES: ChronicleTemplates = {
   endings: {
     starve: "末年荐饥，山无可食之物，遂以饥馑不振，殒于青丘之野。",
     slain: "终为强者所杀，血沃荒原，骨不得掩。",
-    oldage: "终未成器，寿数既尽，殁于青丘，与草木同朽。天门在上，其不得望焉。",
+    /*
+     * [2026-08-13] 寿终这一段仍是失败 —— 但只在**归山门槛不备**时才读得到它
+     * （备了就走 `wayEndings.guishan`）。这就是计划说的「oldage 语义分叉」：
+     * 同一个时刻的两种结果，两句话对着写，引擎只判一次。
+     */
+    oldage: "终未成器，寿数既尽，殁于青丘，与草木同朽。四门在上，其不得望焉。",
+    /** 兜底：成道恒有 `wayEndings` 里更具体的一段，这一句正常路径读不到 */
     ascend: "白光贯顶，兽身褪如敝衣，遂脱兽籍而列于神班。",
+  },
+
+  /*
+   * [2026-08-13] 四条道各自的结语。
+   *
+   * 四句刻意用四种不同的**史官口吻**，因为四条道对「什么算成」的答案完全不同：
+   * 登神是超脱（笔法最高），妖王是权柄（笔法最实），归山是全寿（笔法最暖），
+   * 化灵是无迹（笔法最淡）。若四句读起来像同一句，那就等于四条道白设。
+   */
+  wayEndings: {
+    shen: "白光贯顶，兽身褪如敝衣，遂脱兽籍而列于神班。青丘自此无其名，而天上有之。",
+    yaowang:
+      "凡夺命{{livesTaken|cn}}，猛至{{meng|cn}}。青丘之兽尽伏于道左，自此山中之事，皆决于其一念。太史氏谓之兽王。",
+    guishan:
+      "寿至{{years|cn}}岁，德至{{de|cn}}。卧于旧穴而化，山中之兽皆来送之，青丘为之寂三日。凡全其寿而不失其德者，古今数人而已。",
+    hualing:
+      "凡历{{years|cn}}岁，未尝杀一命。形骸自内里透明，风过而散，草叶上无一痕。青丘之志载其事而不能载其形。",
   },
 
   praisePrefix: "赞曰：",
 
   praise: [
+    /*
+     * [2026-08-13] 四条道各有赞语，且**排在按 de 分支的那几条之前**（`composeChronicle`
+     * 取第一个匹配，顺序即优先级）。归山那一条是这一批最要紧的一句：owner 此前说
+     * 「最后寿终正寝，让人没有再次玩的欲望」，而奔归山这条道养的一世**寿终就是成道** ——
+     * 赞语必须褒扬，否则玩家读到的仍是「老死了」。
+     */
+    {
+      id: "way-guishan",
+      ways: ["guishan"],
+      text: "不搏不夺，而寿全德厚。青丘之兽多死于爪牙，独此一身归于山。太史氏曰：此亦成也。",
+    },
+    {
+      id: "way-yaowang",
+      ways: ["yaowang"],
+      text: "以杀立威，以威定山。其行不可谓仁，其力不可谓不至。青丘畏之而不敢言其非。",
+    },
+    {
+      id: "way-hualing",
+      ways: ["hualing"],
+      text: "一世未饮血，而终能散形。夫食灵者以食为名，独此一人不食其类——是以青丘无其骨，天地有其气。",
+    },
     {
       id: "ascend-virtuous",
-      endings: ["ascend"],
+      ways: ["shen"],
       minDe: 60,
       text: "食灵之志，不在饱腹，而在超然。起于青丘一幼兽，终与云气同流——非独其力，亦其德也。",
     },
     {
       id: "ascend-cold",
-      endings: ["ascend"],
+      ways: ["shen"],
       text: "登神者未必仁。天既取之，青丘众兽亦无从置喙。",
     },
     {

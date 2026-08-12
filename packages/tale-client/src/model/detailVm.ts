@@ -10,7 +10,8 @@
  * ## 三条纪律
  * 1. **讲结果，不讲风味**。「体＝血肉与寿数」读完等于没读；「搏杀起手 26 血，野雉一口 3〜5，
  *    能挨约 7 下」才回答了问题。
- * 2. **数一律从 `content.tuning` 与 `content` 数据推**，不在本文件写第二份常量 —— 调参之后
+ * 2. **数一律从 `lifeTuning(state, content)` 与 `content` 数据推**，不在本文件写第二份常量
+ *    —— 调参之后
  *    文案会跟着变，不会说谎。少数必须在客户端复算的算式（底伤、遁走成算）集中在本文件顶部
  *    那两个函数里，各自标了引擎正本的函数名，并有对账测试盯着（见 test/detailVm.test.ts）。
  * 3. **不剧透**。事件门槛只报**数目**（「全青丘 5 处抉择认它」——那是「进化有啥好处」的量），
@@ -20,17 +21,22 @@
 
 import {
   SYS_FLAG_STARVING,
-  ascendProgress,
+  lifeTuning,
+  waysProgress,
   organIndex,
   type EnemyDef,
   type EssenceType,
   type OrganDef,
   type TaleContent,
   type TaleState,
+  type WayId,
   type TaleTuning,
 } from "@shiling/tale-sim";
 import {
-  ASCEND_GATE_LABELS,
+  WAY_GATE_HOWTO,
+  WAY_GATE_LABELS,
+  WAY_LABELS,
+  WAY_SCOPES,
   ESSENCE_LABELS,
   ESSENCE_ORDER,
   ORGAN_SLOT_LABELS,
@@ -50,7 +56,8 @@ export type DetailSel =
   | { kind: "hunger" }
   | { kind: "essence"; type: EssenceType }
   | { kind: "organ"; id: string }
-  | { kind: "ascend" };
+  /** [2026-08-13] 从「登神」一条扩成四道：点哪条 tab 就看哪条 */
+  | { kind: "way"; way: WayId };
 
 /** 稳定 id：界面据此判断「再点一次同一处 ＝ 收起」，也是 `data-detail` 的值。 */
 export function detailKey(sel: DetailSel): string {
@@ -61,6 +68,8 @@ export function detailKey(sel: DetailSel): string {
       return `essence:${sel.type}`;
     case "organ":
       return `organ:${sel.id}`;
+    case "way":
+      return `way:${sel.way}`;
     default:
       return sel.kind;
   }
@@ -200,9 +209,20 @@ export interface EssenceSource {
   huntable: boolean;
 }
 
-/** 吃什么涨这一型 —— 从 `EnemyDef.essence` 反查，猎物在前。 */
-export function essenceSources(content: TaleContent, type: EssenceType): EssenceSource[] {
-  const prey = new Set(content.tuning.huntPreyIds);
+/**
+ * 吃什么涨这一型 —— 从 `EnemyDef.essence` 反查，猎物在前。
+ *
+ * [2026-08-13] 收 `state` 只为了一件事：猎物表要问**这一世生效的**那份
+ * （`lifeTuning`）。`huntPreyIds` 今天还不在 `PremiseTuningKey` 白名单里，所以现在两者同值 ——
+ * 但这一批已经把饱食／蜕变／杀获都变成随天时不同的了，哪天猎物表也跟着变，
+ * 「猎场里就有」这一行会静默指错，而不会有任何测试变红。一行的事，现在就对齐。
+ */
+export function essenceSources(
+  state: TaleState,
+  content: TaleContent,
+  type: EssenceType,
+): EssenceSource[] {
+  const prey = new Set(lifeTuning(state, content).huntPreyIds);
   return content.enemies
     .map((enemy) => ({
       name: enemy.name,
@@ -259,7 +279,7 @@ function row(label: string, text: string, tone: DetailTone = "plain"): DetailRow
 
 /** 属性环的悬停提示 ＝ 详情的第一行（同一句，别两处各写一版）。 */
 export function statLede(state: TaleState, content: TaleContent, key: StatKey): string {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.stats[key]);
   const label = STAT_LABELS[key];
   switch (key) {
@@ -273,15 +293,15 @@ export function statLede(state: TaleState, content: TaleContent, key: StatKey): 
     case "ling": {
       const { weak } = weakestAndFiercest(content);
       const flee = weak ? chanceCn(fleeChanceAgainst(value, weak, t)) : "—";
-      return `${label} ${value}　遁走成算 ${flee}（对${weak?.name ?? "兽"}）　·　登神需 ${t.ascendMinLing}`;
+      return `${label} ${value}　遁走成算 ${flee}（对${weak?.name ?? "兽"}）　·　登神需 ${t.wayShenLing}／化灵需 ${t.wayHualingLing}`;
     }
     default:
-      return `${label} ${value}　登神需 ${t.ascendMinDe}　·　不进搏杀的账`;
+      return `${label} ${value}　登神需 ${t.wayShenDe}／归山需 ${t.wayGuishanDe}　·　不进搏杀的账`;
   }
 }
 
 function statDetail(state: TaleState, content: TaleContent, key: StatKey): DetailVm {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.stats[key]);
   const label = STAT_LABELS[key];
   const seen = seenEventIds(state);
@@ -357,18 +377,25 @@ function statDetail(state: TaleState, content: TaleContent, key: StatKey): Detai
     }
   }
 
-  // 登神门槛：口径一律问引擎（`ascendProgress`），界面不自己比大小。只有灵与德是门槛项
-  const gate =
-    key === "ling" || key === "de"
-      ? ascendProgress(state, content).gates.find((candidate) => candidate.id === key)
-      : undefined;
-  if (gate) {
+  /*
+   * [2026-08-13] 成道门槛：口径一律问引擎（`waysProgress`），界面不自己比大小。
+   *
+   * 从「只报登神那一条」改成**报所有认这个属性的道**：猛只有妖王认，德有登神与归山两条认，
+   * 灵有登神与化灵两条认。玩家点开「德」时最该知道的正是「这个数同时决定两条道」——
+   * 那是「这一世该奔哪条」的第一现场。
+   */
+  const claimants = waysProgress(state, content).ways.flatMap((way) =>
+    way.gates
+      .filter((gate) => gate.id === key)
+      .map((gate) => ({ way: way.id, gate })),
+  );
+  for (const { way, gate } of claimants) {
     rows.push(
       row(
-        "登神",
+        WAY_LABELS[way],
         gate.met
-          ? `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　已足`
-          : `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　尚差 ${gate.short}`,
+          ? `${WAY_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　已足`
+          : `${WAY_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　尚差 ${gate.short}`,
         gate.met ? "gain" : "warn",
       ),
     );
@@ -398,13 +425,13 @@ function statDetail(state: TaleState, content: TaleContent, key: StatKey): Detai
 // ===== 饱食 =====
 
 export function hungerLede(state: TaleState, content: TaleContent): string {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.hunger);
   return `饱食 ${value}／${t.hungerMax}　每季 −${t.hungerPerSeason}（冬 −${t.hungerPerSeason + t.winterHungerExtra}）`;
 }
 
 function hungerDetail(state: TaleState, content: TaleContent): DetailVm {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.hunger);
   const perSeason = t.hungerPerSeason;
   const winter = perSeason + t.winterHungerExtra;
@@ -439,7 +466,7 @@ function hungerDetail(state: TaleState, content: TaleContent): DetailVm {
 // ===== 精气 =====
 
 export function essenceLede(state: TaleState, content: TaleContent, type: EssenceType): string {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.essence[type]);
   const label = ESSENCE_LABELS[type];
   const short = Math.max(0, t.moltThreshold - value);
@@ -447,12 +474,12 @@ export function essenceLede(state: TaleState, content: TaleContent, type: Essenc
 }
 
 function essenceDetail(state: TaleState, content: TaleContent, type: EssenceType): DetailVm {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const value = Math.round(state.essence[type]);
   const label = ESSENCE_LABELS[type];
   const ripe = value >= t.moltThreshold;
   const pool = moltPool(state, content, type);
-  const sources = essenceSources(content, type);
+  const sources = essenceSources(state, content, type);
   const huntable = sources.filter((source) => source.huntable);
   const foes = sources.filter((source) => !source.huntable);
   const seen = seenEventIds(state);
@@ -570,7 +597,7 @@ function skillEffectText(organ: OrganDef, t: TaleTuning): string {
 function organDetail(state: TaleState, content: TaleContent, id: string): DetailVm | null {
   const organ = organIndex(content).get(id);
   if (!organ) return null;
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const seen = seenEventIds(state);
   const isSeed = state.organIds[0] === id;
   const mods = STAT_ORDER.filter((key) => (organ.statMods?.[key] ?? 0) !== 0).map(
@@ -628,37 +655,58 @@ function organDetail(state: TaleState, content: TaleContent, id: string): Detail
   };
 }
 
-// ===== 登神之路 =====
+// ===== 四道 =====
 
-/** 四门槛各自「怎么长」—— 常驻横带只给进度，这里给路子。 */
-const ASCEND_HOWTO: Record<string, string> = {
-  year: "活下去：每年四季，别饿死也别被打死",
-  organs: "攒精气 → 蛰伏，一次一枚",
-  ling: "抉择里那些「看懂了什么」的分支，加雾目／灵犀之类的器官",
-  de: "抉择里那些不占便宜的选项 —— 器官几乎不给德",
+/**
+ * 一条道的详情浮层（点横带上那条 tab 打开）。
+ *
+ * 常驻横带只给「差多少」，这里给**怎么长**（`WAY_GATE_HOWTO`）＋这条道**怎么收束** ——
+ * 后者是四条道最容易被误解的地方：归山不是「活着就行」，是寿终那一刻门槛必须已备；
+ * 化灵不是「少杀」，是**一条都不能**。
+ */
+const WAY_CLOSING: Record<WayId, string> = {
+  shen: "门槛齐备后「天命」会来找你 —— 那一卡上选「应命而升」才算成。",
+  yaowang: "门槛齐备后众兽会来伏首 —— 受了那一礼才算成。",
+  guishan: "没有事件来找你 —— 寿终那一刻门槛已备就是成道，不备就是「终未成器」。",
+  hualing: "门槛齐备后会「形解」—— 任其散去才算成。夺过一命这条道就永远关了。",
 };
 
-function ascendDetail(state: TaleState, content: TaleContent): DetailVm {
-  const progress = ascendProgress(state, content);
-  const rows = progress.gates.map((gate) =>
-    row(
-      ASCEND_GATE_LABELS[gate.id],
-      gate.met
-        ? `${gate.have}／${gate.need}　已足`
-        : `${gate.have}／${gate.need}　尚差 ${gate.short}　—— ${ASCEND_HOWTO[gate.id] ?? ""}`,
-      gate.met ? "gain" : "plain",
-    ),
-  );
+function wayDetail(state: TaleState, content: TaleContent, wayId: WayId): DetailVm {
+  const progress = waysProgress(state, content);
+  const way = progress.ways.find((item) => item.id === wayId);
+  if (!way) throw new Error(`wayDetail: 未知道 ${wayId}`);
+  const rows = way.gates.map((gate) => {
+    /*
+     * `max` 类门槛（不杀一命）**没有 have／need 那个读法**：`0／0　已足` 在屏幕上读成
+     * 「零比零」，而它要说的是「这一世还没夺过命，这条门还开着」。实机抄字时撞到的。
+     */
+    const text =
+      gate.bound === "max"
+        ? gate.met
+          ? "未夺一命　这条门还开着"
+          : `已夺 ${gate.have} 命　—— ${WAY_GATE_HOWTO[gate.id]}`
+        : gate.met
+          ? `${gate.have}／${gate.need}　已足`
+          : `${gate.have}／${gate.need}　尚差 ${gate.short}　—— ${WAY_GATE_HOWTO[gate.id]}`;
+    return row(
+      WAY_GATE_LABELS[gate.id],
+      text,
+      gate.met ? "gain" : gate.bound === "max" ? "warn" : "plain",
+    );
+  });
+  const label = WAY_LABELS[wayId];
   return {
-    key: "ascend",
-    title: `登神之路　${formatCountCn(progress.metCount)}／${formatCountCn(progress.gates.length)}`,
-    lede: progress.ready
-      ? "四事既备 —— 「天命」随时会来"
-      : `四事全备，天门才开。今备 ${progress.metCount} 事`,
+    key: detailKey({ kind: "way", way: wayId }),
+    title: `${label}　${formatCountCn(way.metCount)}／${formatCountCn(way.gates.length)}`,
+    lede: way.lost
+      ? `${label}已闭 —— ${WAY_SCOPES[wayId]}，而这一世已经破了那一条`
+      : way.ready
+        ? `${label}诸事既备 —— ${WAY_SCOPES[wayId]}`
+        : `${WAY_SCOPES[wayId]}。今备 ${way.metCount} 事`,
     rows,
-    foot: progress.ready
-      ? "接着走下去，那桩事自会找上你。"
-      : "寿终而未登神＝这一世白活（列传会照实写）。四门槛里最难的是德与灵，它们只能从抉择里挣。",
+    foot: way.lost
+      ? "这一世走不到了。换一世从头来，它是四条道里最难、也最不一样的一条。"
+      : WAY_CLOSING[wayId],
   };
 }
 
@@ -678,8 +726,8 @@ export function buildDetailVm(
       return essenceDetail(state, content, sel.type);
     case "organ":
       return organDetail(state, content, sel.id);
-    case "ascend":
-      return ascendDetail(state, content);
+    case "way":
+      return wayDetail(state, content, sel.way);
     default:
       return null;
   }
@@ -693,7 +741,7 @@ export function buildDetailVm(
  * 最高」（比它大的那一型也必然达阈值），所以这里直接取全局最高，与引擎同解。
  */
 export function moltPreviewText(state: TaleState, content: TaleContent): string {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const best = ESSENCE_ORDER.reduce(
     (top, type) => (state.essence[type] > state.essence[top] ? type : top),
     ESSENCE_ORDER[0] ?? "zu",
@@ -703,7 +751,7 @@ export function moltPreviewText(state: TaleState, content: TaleContent): string 
   const ripe = state.essence[best] >= t.moltThreshold;
   if (!ripe) {
     const need = Math.max(0, t.moltThreshold - Math.round(state.essence[best]));
-    const sources = essenceSources(content, best).filter((source) => source.huntable);
+    const sources = essenceSources(state, content, best).filter((source) => source.huntable);
     const how =
       sources.length > 0
         ? `　猎${joinNames(

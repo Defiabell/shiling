@@ -6,11 +6,12 @@
 
 import {
   cnNumeral,
-  type AscendGateId,
   type EndingType,
   type EssenceType,
   type OrganSlot,
   type Season,
+  type WayGateId,
+  type WayId,
 } from "@shiling/tale-sim";
 
 /**
@@ -65,9 +66,9 @@ export const STAT_ORDER: readonly StatKey[] = ["meng", "ling", "ti", "de"];
  */
 export const STAT_SCOPES: Record<StatKey, string> = {
   meng: "搏杀出手与扑击命中",
-  ling: "遁走成算、登神门槛与抉择",
+  ling: "遁走成算、登神与化灵的门槛、抉择",
   ti: "搏杀血量与寿限",
-  de: "登神门槛与抉择",
+  de: "登神与归山的门槛、抉择",
 };
 
 /** 器官槽位的汉字名（`OrganDef.slot` → 屏幕上的字）。 */
@@ -92,8 +93,48 @@ export const ENDING_LABELS: Record<EndingType, string> = {
   starve: "饿殍",
   slain: "横死",
   oldage: "寿终",
-  ascend: "登神",
+  // [2026-08-13] `ascend` 现在读作**成道**，具体哪一条道见 `WAY_LABELS`（`endingLabelOf`）
+  ascend: "成道",
 };
+
+/** 四条道的汉字名（`WayId` → 屏幕上的字）。 */
+export const WAY_LABELS: Record<WayId, string> = {
+  shen: "登神",
+  yaowang: "妖王",
+  guishan: "归山",
+  hualing: "化灵",
+};
+
+/** 一句话说清这条道要什么（横带的 tab 悬停、降世屏的四道清单都用它）。 */
+export const WAY_SCOPES: Record<WayId, string> = {
+  shen: "灵德双修，且尝过神兽",
+  yaowang: "以杀立威 —— 夺命够多，猛够高",
+  guishan: "活得久而德厚 —— 寿终即成道",
+  hualing: "灵性极高，且一世不杀一命",
+};
+
+/**
+ * 死亡／成道屏的门楣题字。
+ *
+ * 四条道各一句：`ENDING_LABELS.ascend` 只是「成道」两个字，而玩家要读到的是**哪一种**成 ——
+ * 归山那句尤其不能与登神共用（一个是白光贯顶，一个是卧于旧穴）。
+ */
+export const WAY_EPITAPHS: Record<WayId, string> = {
+  shen: "白光贯顶，脱兽籍而列神班。",
+  yaowang: "众兽伏于道左，山中之事自此决于你。",
+  guishan: "寿数既满，德亦既厚 —— 山野送之。",
+  hualing: "一世未曾饮血，形骸随风而散。",
+};
+
+/** 结局的门楣二字：成道时报**道名**（登神／妖王／归山／化灵），其余照 `ENDING_LABELS`。 */
+export function endingLabelOf(ending: EndingType, way: WayId | null): string {
+  return ending === "ascend" && way !== null ? WAY_LABELS[way] : ENDING_LABELS[ending];
+}
+
+/** 结局的一句话定性：同上分道。 */
+export function epitaphOf(ending: EndingType, way: WayId | null): string {
+  return ending === "ascend" && way !== null ? WAY_EPITAPHS[way] : ENDING_EPITAPHS[ending];
+}
 
 /**
  * 死亡屏的一句话定性（列传正文之外的门楣题字）。
@@ -109,20 +150,45 @@ export const ENDING_EPITAPHS: Record<EndingType, string> = {
   ascend: "白光贯顶，脱兽籍而列神班。",
 };
 
-/** 登神四门槛的汉字名（`AscendGate.id` → 屏幕上的字）。 */
-export const ASCEND_GATE_LABELS: Record<AscendGateId, string> = {
+/** 门槛的汉字名（`WayGate.id` → 屏幕上那一个字）。同一个 id 在不同道里需求值不同，字一样。 */
+export const WAY_GATE_LABELS: Record<WayGateId, string> = {
   year: "寿",
-  organs: "器",
   ling: "灵",
   de: "德",
+  meng: "猛",
+  lives: "杀",
+  divine: "神",
+  nokill: "净",
 };
 
-/** 差距报告里的说法：「差二件器官」「灵性差九」。 */
-export const ASCEND_GATE_SHORTFALL: Record<AscendGateId, (short: number) => string> = {
+/**
+ * 差距报告里的说法：「灵性差九」「差两条命」。
+ *
+ * 措辞刻意用「差多少」而不是「有多少」：`8/15` 是一个读数，「差七岁」是一件没做完的事 ——
+ * 两者信息量相同，后者才会让人想再开一世（M1-P2 立的规矩，这里沿用）。
+ *
+ * `nokill` 是**唯一的 max 类门槛**，`short` 读作「已经夺了几条命」，所以它的说法是
+ * 「已夺三命」而不是「差三命」—— 那不是努力就能补上的差距，是这条道已经关了。
+ */
+export const WAY_GATE_SHORTFALL: Record<WayGateId, (short: number) => string> = {
   year: (short) => `寿数差${formatCountCn(short)}岁`,
-  organs: (short) => `差${formatCountCn(short)}件器官`,
   ling: (short) => `灵性差${formatCountCn(short)}`,
   de: (short) => `德行差${formatCountCn(short)}`,
+  meng: (short) => `勇猛差${formatCountCn(short)}`,
+  lives: (short) => `尚须夺命${formatCountCn(short)}`,
+  divine: () => "未尝神兽",
+  nokill: (short) => `已夺${formatCountCn(short)}命`,
+};
+
+/** 门槛「怎么长」—— 详情浮层里那一行「往哪走」。 */
+export const WAY_GATE_HOWTO: Record<WayGateId, string> = {
+  year: "活下去：每年四季，别饿死也别被打死（寿限由体质定，抉择里的寿元能加）",
+  ling: "抉择里那些「看懂了什么」的分支，加雾目／灵犀之类的器官",
+  de: "抉择里那些不占便宜的选项 —— 器官几乎不给德",
+  meng: "吃猛之精气蜕出的器官，加抉择里那些硬碰硬的分支",
+  lives: "追猎得手与搏杀取胜各算一条命（事件里明写杀生的抉择也算）",
+  divine: "战胜带神性的兽，或与垂死的神物结一次缘",
+  nokill: "不狩猎得手、不搏杀取胜、不选明写杀生的抉择 —— 靠探索与休憩活着",
 };
 
 /** 带符号的增量文案：+6 / −2 / 0 用全角减号，避免与连字符混淆。 */

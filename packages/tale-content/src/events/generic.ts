@@ -1,17 +1,22 @@
 /**
- * 通用／季节事件（8）—— 不限行动（`trigger.actions` 缺省），任何一季都可能撞上。
+ * 通用／季节事件（10）—— 不限行动（`trigger.actions` 缺省），任何一季都可能撞上。
  *
  * 七条按 `seasons` 分布（春 2／夏 1／秋 2／冬 2），把一年四季的节奏做出来：春汛与野蓂是
- * 机会，夏旱与冬雪是压力，秋天最肥也最招人。第八条是「天命」—— 唯一的登神出口，靠引擎
- * 的 `sys:ascend-ready` flag 入池（year≥15 且器官≥5 且 ling≥60 且 de≥40），
- * 内容侧只读不写这个 flag。
+ * 机会，夏旱与冬雪是压力，秋天最肥也最招人。
+ *
+ * 末三条是**成道出口**（2026-08-13 起从一条扩到三条）：「天命」登神／「兽王之礼」妖王／
+ * 「形解」化灵，各自靠引擎的 `WAY_FLAGS[way]` 入池，内容侧只读不写这些 flag。
+ * 第四条道「归山」没有出口事件 —— 它在寿终那一刻由引擎直接判（见 `closeSeason`），
+ * 因为那条道的胜利形式**就是**寿终，摆一张「你要不要成道」的卡反而把它讲坏了。
  *
  * 冬季两条刻意最狠：「冬雪封山」的贪心选项直接挂 `die: "starve"` 兜底，
- * 「穷奇夜至」把全库最硬的敌人放在饿得最惨的那一季。
+ * 「穷奇夜至」把全库最硬的敌人放在饿得最惨的那一季 —— 它同时是登神那条道的门槛之一
+ * （战胜带 `divine` tag 的敌人＝尝过神兽）。
  */
 
 import type { TaleEvent } from "@shiling/tale-sim";
-import { SYS_FLAG_ASCEND_READY } from "@shiling/tale-sim";
+import { SYS_FLAG_ASCEND_READY, WAY_FLAGS } from "@shiling/tale-sim";
+import { EV_FOE, EV_WATER, EV_WINTER, EV_WONDER } from "../eventTags.js";
 import { ENEMY_CAO_HU, ENEMY_QIONG_QI } from "../enemies.js";
 import { FLAG_HUNTED, FLAG_SICK, FLAG_WOUND } from "../flags.js";
 import { TAG_ARMOR, TAG_DIG, TAG_NIGHT_EYE, TAG_SWIM, TAG_TOUGH } from "../tags.js";
@@ -20,7 +25,7 @@ import { VT } from "../visualTokens.js";
 export const GENERIC_EVENTS: readonly TaleEvent[] = [
   {
     id: "qiu-spring-flood",
-    trigger: { region: "qingqiu", seasons: [0], weight: 26 },
+    trigger: { region: "qingqiu", seasons: [0], weight: 26, tags: [EV_WATER] },
     title: "春汛",
     body: "雪水一夜之间灌满了谷，旧路全在水下。水里漂着上游冲下来的东西：断枝、死鱼、一头肿胀的鹿，还有别的什么在水底慢慢地走，走得比水还慢。",
     illustration: "events/qiu-spring-flood.webp",
@@ -67,7 +72,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-spring-sprout",
-    trigger: { region: "qingqiu", seasons: [0], weight: 28 },
+    trigger: { region: "qingqiu", seasons: [0], weight: 28, tags: [EV_WONDER] },
     title: "野蓂初生",
     body: "涧边石隙里钻出一丛蓂草，叶背泛着极淡的青光。凡草不该有这样的光。你伏下身去闻，气味又腥又甜，像血，也像熟透到快要烂掉的果子。",
     illustration: "events/qiu-spring-sprout.webp",
@@ -115,7 +120,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-summer-drought",
-    trigger: { region: "qingqiu", seasons: [1], weight: 26 },
+    trigger: { region: "qingqiu", seasons: [1], weight: 26, tags: [EV_WATER] },
     title: "夏旱",
     body: "三个月没有雨。溪只剩一线，泥裂成龟纹，走得动的兽都走了。剩下的都挤在同一处饮水，谁也不敢先低头——低头的那一刻，脖子就交给别人了。",
     illustration: "events/qiu-summer-drought.webp",
@@ -209,7 +214,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-autumn-fire",
-    trigger: { region: "qingqiu", seasons: [2], weight: 24 },
+    trigger: { region: "qingqiu", seasons: [2], weight: 24, tags: [EV_FOE] },
     title: "秋猎之火",
     body: "南坡起了火，不是天火——火线是直的，一路推着往北走。烟里混着人声、犬吠和铜器相击的响动。风正往你这边吹，火也是。你没有多少时间挑方向。",
     illustration: "events/qiu-autumn-fire.webp",
@@ -272,7 +277,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-winter-snow",
-    trigger: { region: "qingqiu", seasons: [3], weight: 30 },
+    trigger: { region: "qingqiu", seasons: [3], weight: 30, tags: [EV_WINTER] },
     title: "冬雪封山",
     body: "雪把青丘盖成一片白，兽径全断了。你走一步陷半尺，鼻子里只剩雪的味道，闻不到任何活物。这样的日子还有很长，长到你数不出来还剩几个夜。",
     illustration: "events/qiu-winter-snow.webp",
@@ -335,7 +340,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-winter-qiongqi",
-    trigger: { region: "qingqiu", seasons: [3], minYear: 5, once: true, weight: 38 },
+    trigger: { region: "qingqiu", seasons: [3], minYear: 5, once: true, weight: 38, tags: [EV_FOE, EV_WINTER] },
     title: "穷奇夜至",
     body: "后半夜，雪地上传来婴儿一样的啼哭。哭声一步一步靠近，靠近到你能听见爪子踏碎雪壳的声音。青丘的老兽说过：听见小孩哭，就不要再睁眼。你睁了。",
     illustration: "events/qiu-winter-qiongqi.webp",
@@ -395,6 +400,7 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
       requiresFlags: [SYS_FLAG_ASCEND_READY],
       once: true,
       weight: 100,
+      tags: [EV_WONDER],
     },
     title: "天命",
     body: "云自四方合拢，中开一隙，白光垂落如柱，正照在你伏身之处。光里没有声音，却有一句话直接落进识海：可去矣。你听得很清楚，清楚到知道这句话只说一次。",
@@ -407,7 +413,9 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
           {
             weight: 1,
             text: "你踏光而上，兽身如旧衣般褪落在山石间。青丘的风声，自此与你无关。",
-            effects: { die: "ascend" },
+            // [2026-08-13] 成道要写明是哪条道：四条道的 ending 都是 ascend，
+            // 列传结语与赞语按 way 分（不写会退回泛用结语）
+            effects: { die: "ascend", way: "shen" },
           },
         ],
       },
@@ -418,6 +426,86 @@ export const GENERIC_EVENTS: readonly TaleEvent[] = [
             weight: 1,
             text: "你转身走回林中。光柱在背后缓缓收拢，山野重归昏黑，而你还饿着。",
             effects: { stats: { de: 5, ling: 2 }, lifespan: 2 },
+          },
+        ],
+      },
+    ],
+  },
+
+  /*
+   * 妖王的出口。与「天命」的对照是刻意的：天门是**上面**给的，而这一圈兽是**你自己**
+   * 打出来的 —— 所以这里没有光柱，只有一地伏下去的脊背。
+   */
+  {
+    id: "qiu-way-yaowang",
+    trigger: {
+      region: "any",
+      requiresFlags: [WAY_FLAGS.yaowang],
+      once: true,
+      weight: 100,
+      tags: [EV_FOE],
+    },
+    title: "兽王之礼",
+    body: "入夜，山中的兽陆续从林里出来，一头接一头，在你伏身的坡下站成半圈。没有一头出声，也没有一头低头饮水。它们只是站着，等你先动。青丘上一次这样站过，是很久以前的事了。",
+    illustrationBrief: `夜色坡上${VT.self}立于高处剪影，坡下数十只兽影排成半圈仰头，无一出声。低角度仰视强调体量落差，远景为${VT.qiuHills}，天空留白占上三分之一。`,
+    choices: [
+      {
+        label: "受此山之拜",
+        outcomes: [
+          {
+            weight: 1,
+            text: "你从石上站起来。那一圈兽同时伏下去，伏得很整齐。自此山中之事，先问你。",
+            effects: { die: "ascend", way: "yaowang" },
+          },
+        ],
+      },
+      {
+        label: "散之不受",
+        outcomes: [
+          {
+            weight: 1,
+            text: "你朝那圈兽低吼了一声。它们散得很快，此后见你都绕道走。",
+            effects: { essence: { meng: 22 }, stats: { meng: 3, de: 2 } },
+          },
+        ],
+      },
+    ],
+  },
+
+  /*
+   * 化灵的出口。它是四条道里唯一**改变操作序列**的一条（不能靠狩猎击杀活着），
+   * 所以这张卡的正文只说一件事：这一世你没有饮过一口血 —— 那件事本身就是资格。
+   */
+  {
+    id: "qiu-way-hualing",
+    trigger: {
+      region: "any",
+      requiresFlags: [WAY_FLAGS.hualing],
+      once: true,
+      weight: 100,
+      tags: [EV_WONDER],
+    },
+    title: "形解",
+    body: "这一世你未曾饮过一口血。到了这一日，四肢的边缘先透起光来，风穿过身体时不再有阻力。你看得见自己的骨头，也看得见骨头后面的草。散，或者不散，只在一念之间。",
+    illustrationBrief: `晨光里${VT.self}半透明，四肢边缘化为光点向上飘散，可见体内骨骼与身后草叶重叠。极淡的金白色调，构图中央大量留白，背景${VT.qiuHills}虚化。`,
+    choices: [
+      {
+        label: "任其散去",
+        outcomes: [
+          {
+            weight: 1,
+            text: "你松了那一念。形骸自内里透明起来，风过时便散了，草叶上什么也没留下。",
+            effects: { die: "ascend", way: "hualing" },
+          },
+        ],
+      },
+      {
+        label: "收摄其形",
+        outcomes: [
+          {
+            weight: 1,
+            text: "你把那点将散的东西收回体内。皮肉重新变得不透光，而你还饿着。",
+            effects: { stats: { ling: 4, de: 2 }, lifespan: 2 },
           },
         ],
       },

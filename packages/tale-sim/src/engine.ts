@@ -35,8 +35,12 @@ import type {
   EndingType,
   EssenceType,
   EventChoice,
+  LifePremise,
   LifeRecord,
   OrganDef,
+  PremiseDef,
+  PremiseTuningDelta,
+  PremiseTuningKey,
   Season,
   SeedDef,
   StalkAct,
@@ -46,6 +50,11 @@ import type {
   TaleEvent,
   TaleState,
   TaleTuning,
+  WayGate,
+  WayGateId,
+  WayId,
+  WayProgress,
+  WaysProgress,
   WindDir,
 } from "./types.js";
 
@@ -57,6 +66,13 @@ export interface TaleContent {
   organs: OrganDef[];
   seeds: SeedDef[];
   enemies: EnemyDef[];
+  /**
+   * [2026-08-13] 天时池（世道）—— 每世降生时按 `weight` 掷一个。**不得为空**：
+   * 空池会让 `createLife` 抛错（同 `huntPreyIds`：一个静默失效的开局变量等于这一批没做）。
+   */
+  skies: PremiseDef[];
+  /** [2026-08-13] 出身池（异相）—— 同上，不得为空。 */
+  origins: PremiseDef[];
   tuning: TaleTuning;
   /** 结构见 types.ts 的 ChronicleTemplates，composeChronicle 消费 */
   chronicleTemplates: ChronicleTemplates;
@@ -297,34 +313,45 @@ export interface CombatPreview {
   enemyWillFlee: boolean;
 }
 
-// ===== 登神门槛 =====
-
-export type AscendGateId = "year" | "organs" | "ling" | "de";
-
-/** 登神四门槛里的一条。`have`／`need` 都是原始数值 —— 措辞归界面。 */
-export interface AscendGate {
-  id: AscendGateId;
-  have: number;
-  need: number;
-  met: boolean;
-  /** 还差多少（已达成为 0）—— 死亡屏的「差距报告」就是这一列 */
-  short: number;
-}
-
-export interface AscendProgress {
-  /** 固定顺序：岁数 → 器官 → 灵 → 德 */
-  gates: AscendGate[];
-  metCount: number;
-  /** 四项全满（＝ `SYS_FLAG_ASCEND_READY` 的判据，同一份实现） */
-  ready: boolean;
-}
-
 // ===== 保留 flag =====
 
 /** 上一季饱食已 ≤0（再连续一季即饿死）。 */
 export const SYS_FLAG_STARVING = "sys:starving";
-/** 登神四项门槛已全部满足，「天命」事件可用 `requiresFlags` 入池。 */
-export const SYS_FLAG_ASCEND_READY = "sys:ascend-ready";
+
+/**
+ * [2026-08-13] 「尝过神兽」—— 登神那条道的门槛之一。
+ *
+ * 两个来源，一份 flag：搏杀战胜带 `tuning.wayDivineTag` 的敌人（引擎自己记），
+ * 或内容在某个 outcome 上写 `devourDivine: true`（「垂死应龙」那一类不经搏杀的因缘）。
+ * 做成 `sys:` 保留 flag 而不是普通内容 flag：内容能**写**它（经 `devourDivine` 那道门），
+ * 但不能 `removeFlags` 把它摘掉 —— 一桩已经发生的事迹不该被另一个事件抹掉。
+ */
+export const SYS_FLAG_DIVINE_EATEN = "sys:divine-eaten";
+
+/**
+ * [2026-08-13] 四条道各自的「已够格」flag。成道事件靠 `requiresFlags` 入池。
+ *
+ * 归山那一条也照挂 —— 它没有成道事件（在寿终那一刻直接判），但挂上之后
+ * 「四条道的资格位」是同一套实现、同一处刷新（`refreshWayFlags`），没有例外分支。
+ */
+export const WAY_FLAGS: Record<WayId, string> = {
+  shen: "sys:way-shen",
+  yaowang: "sys:way-yaowang",
+  guishan: "sys:way-guishan",
+  hualing: "sys:way-hualing",
+};
+
+/**
+ * 登神那条道的资格 flag。
+ *
+ * M0/M1 时它叫「登神门槛已满足」，值是 `sys:ascend-ready`；2026-08-13 起登神只是四条道
+ * 之一，于是它就是 `WAY_FLAGS.shen`。名字保留是因为「天命」事件与既有测试都按这个名字
+ * 引用它 —— 但**值变了**，内容里不要再写字面量。
+ */
+export const SYS_FLAG_ASCEND_READY = WAY_FLAGS.shen;
+
+/** 四道的固定顺序（界面横带、`waysProgress().ways`、成道兜底选择都按它）。 */
+export const WAY_ORDER: readonly WayId[] = ["shen", "yaowang", "guishan", "hualing"];
 
 const ESSENCE_ORDER: readonly EssenceType[] = ["zu", "lin", "xue", "meng"];
 const WINTER: Season = 3;
@@ -492,51 +519,201 @@ function meetsStats(stats: Stats, required?: Partial<Stats>): boolean {
   );
 }
 
-// ===== 登神门槛 =====
+// ===== 开局变量：天时与出身 =====
+
+/** 天时／出身池查表；空池或悬空 id 是内容 bug，要吵不要静默降级。 */
+function premisePool(pool: readonly PremiseDef[], kind: string): readonly PremiseDef[] {
+  if (pool.length === 0) throw new Error(`createLife: content.${kind} 为空（开局变量必须有得掷）`);
+  return pool;
+}
 
 /**
- * [M1-P2] 登神四门槛的当前进度 —— 主界面那条常驻的「登神之路」与死亡屏的差距报告
- * 共用这一个函数。
+ * 掷这一世的天时与出身。**恒定消耗 2 次抽取，且必须是一世的头两次**
+ * （`rollPremise` 就是按这条约定从一个 seed 数字复算同一结果的）。
+ */
+function drawPremise(cursor: RngCursor, content: TaleContent): LifePremise {
+  const skies = premisePool(content.skies, "skies");
+  const origins = premisePool(content.origins, "origins");
+  const sky = weightedPick(cursor, skies, (item) => item.weight);
+  const origin = weightedPick(cursor, origins, (item) => item.weight);
+  if (!sky || !origin) throw new Error("createLife: 天时／出身抽取失败");
+  return { sky, origin };
+}
+
+/**
+ * 只读预览：**这个种子数会降生在什么世道里**。纯函数，与 `createLife` 掷出的逐字相同。
+ *
+ * 存在的理由是界面的：择神种那一屏在 `createLife` **之前**，而「这一世是大旱年」正是
+ * 挑神种（与挑目标）时最该知道的一件事。界面自己掷会击穿确定性，所以引擎给一个预览口。
+ *
+ * ⚠️ 约定：天时与出身必须是一世的**头两次抽取**（见 `createLife`）。哪天在它们之前
+ * 插入别的抽取，这个函数就会与实际降生的世道说两套话 —— determinism 测试盯着这一条。
+ */
+export function rollPremise(seedNum: number, content: TaleContent): LifePremise {
+  return drawPremise(createCursor(seedNum >>> 0), content);
+}
+
+/** 按 id 还原这一世的开局前提。id 悬空是内容 bug（改过 id 的旧存档不该静默变成平年）。 */
+export function premiseOf(state: TaleState, content: TaleContent): LifePremise {
+  const sky = content.skies.find((item) => item.id === state.skyId);
+  const origin = content.origins.find((item) => item.id === state.originId);
+  if (!sky) throw new Error(`premiseOf: 未知天时 ${state.skyId}`);
+  if (!origin) throw new Error(`premiseOf: 未知出身 ${state.originId}`);
+  return { sky, origin };
+}
+
+const PREMISE_TUNING_KEYS: readonly PremiseTuningKey[] = [
+  "hungerPerSeason",
+  "winterHungerExtra",
+  "moltThreshold",
+  "huntFoodGain",
+  "restHungerGain",
+  "eventChanceBase",
+  "stalkAlertBonus",
+  "stalkStamina",
+  "combatWinEssenceMul",
+];
+
+/** 把若干 `PremiseTuningDelta` 加到基线上（加法，见 `PremiseTuningDelta` 的注释）。 */
+function tuningWithDeltas(base: TaleTuning, deltas: readonly (PremiseTuningDelta | undefined)[]): TaleTuning {
+  let out: TaleTuning | null = null;
+  for (const delta of deltas) {
+    if (!delta) continue;
+    for (const key of PREMISE_TUNING_KEYS) {
+      const add = delta[key];
+      if (add === undefined || add === 0) continue;
+      out ??= { ...base };
+      // 各项都有自然下限 0（每季倒扣饱食、负的蜕变阈值都不是「更难」而是坏掉）
+      out[key] = Math.max(0, out[key] + add);
+    }
+  }
+  return out ?? base;
+}
+
+/**
+ * **这一世真正生效的调参** ＝ `content.tuning` ＋ 天时 ＋ 出身。
+ *
+ * ## 为什么每处都得走它
+ * 引擎里任何一处漏用（继续读 `content.tuning`），后果都是「大旱之年在某一个环节上不旱」：
+ * 界面说每季 −15 而实扣 −12，或者屏幕上写着灵气盛而蜕变阈值没降。这类分叉在运行时完全
+ * 静默。所以纪律是：**引擎与界面凡是要读调参的地方，一律 `lifeTuning(state, content)`**，
+ * `content.tuning` 只在没有 state 的场合（`createLife` 之前、schema 测试）出现。
+ *
+ * 无覆写时返回 `content.tuning` **本体**（不是拷贝）—— 平年的一世零额外分配，
+ * 且 `t === content.tuning` 的既有断言仍成立。
+ */
+export function lifeTuning(state: TaleState, content: TaleContent): TaleTuning {
+  const { sky, origin } = premiseOf(state, content);
+  return tuningWithDeltas(content.tuning, [sky.tuningDelta, origin.tuningDelta]);
+}
+
+// ===== 四道 =====
+
+/**
+ * [2026-08-13] 四条道的当前进度 —— 主界面那条常驻横带、死亡屏的差距报告、成道资格 flag
+ * 与血统结算**全部**共用这一个函数。
  *
  * ## 为什么必须是引擎的 API 而不是界面自己比大小
- * 界面自己比 `state.year >= tuning.ascendMinYear` 那四行，与 `refreshAscendFlag` 就是
- * **两份门槛**：哪天引擎加一条（吞过神兽之类），进度条会照旧显示「四项全亮」而事件
- * 死活不入池，且没有任何测试会红。所以 `refreshAscendFlag` 现在也走这个函数，
- * 一份实现两处消费。
+ * 界面自己比那几行，与 `refreshWayFlags` 就是**两份门槛**：哪天引擎给某条道加一条，
+ * 进度条会照旧显示「全亮」而成道事件死活不入池，且没有任何测试会红（M1-P2 的
+ * `ascendProgress` 就是为这条理由存在的，这里只是从一条道扩到四条）。
  */
-export function ascendProgress(state: TaleState, content: TaleContent): AscendProgress {
-  const t = content.tuning;
-  const gate = (id: AscendGateId, have: number, need: number): AscendGate => ({
+export function waysProgress(state: TaleState, content: TaleContent): WaysProgress {
+  const t = lifeTuning(state, content);
+  const min = (id: WayGateId, have: number, need: number): WayGate => ({
     id,
+    bound: "min",
     have,
     need,
     met: have >= need,
     short: Math.max(0, need - have),
   });
-  const gates: AscendGate[] = [
-    gate("year", state.year, t.ascendMinYear),
-    gate("organs", state.organIds.length, t.ascendMinOrgans),
-    gate("ling", state.stats.ling, t.ascendMinLing),
-    gate("de", state.stats.de, t.ascendMinDe),
-  ];
-  const metCount = gates.filter((item) => item.met).length;
-  return { gates, metCount, ready: metCount === gates.length };
+  /** `max` 类：have ≤ need 才算达成，`short` 读作「超出了多少」。 */
+  const max = (id: WayGateId, have: number, need: number): WayGate => ({
+    id,
+    bound: "max",
+    have,
+    need,
+    met: have <= need,
+    short: Math.max(0, have - need),
+  });
+  const flag = (id: WayGateId, has: boolean): WayGate => min(id, has ? 1 : 0, 1);
+
+  const gatesOf = (way: WayId): WayGate[] => {
+    switch (way) {
+      case "shen":
+        return [
+          min("ling", state.stats.ling, t.wayShenLing),
+          min("de", state.stats.de, t.wayShenDe),
+          flag("divine", state.flags.includes(SYS_FLAG_DIVINE_EATEN)),
+        ];
+      case "yaowang":
+        return [
+          min("lives", state.livesTaken, t.wayYaowangLives),
+          min("meng", state.stats.meng, t.wayYaowangMeng),
+        ];
+      case "guishan":
+        return [min("year", state.year, t.wayGuishanYear), min("de", state.stats.de, t.wayGuishanDe)];
+      case "hualing":
+        return [min("ling", state.stats.ling, t.wayHualingLing), max("nokill", state.livesTaken, 0)];
+    }
+  };
+
+  const ways: WayProgress[] = WAY_ORDER.map((id) => {
+    const gates = gatesOf(id);
+    const metCount = gates.filter((gate) => gate.met).length;
+    const ratio = (gate: WayGate): number =>
+      gate.bound === "max" ? (gate.met ? 1 : 0) : gate.need <= 0 ? 1 : clamp(gate.have / gate.need, 0, 1);
+    return {
+      id,
+      gates,
+      metCount,
+      ready: metCount === gates.length,
+      closeness: gates.reduce((sum, gate) => sum + ratio(gate), 0) / gates.length,
+      lost: gates.some((gate) => gate.bound === "max" && !gate.met),
+    };
+  });
+
+  const readyIds = ways.filter((way) => way.ready).map((way) => way.id);
+  /*
+   * 「最接近的那条」先比达成门槛数、再比接近度、最后按固定顺序。**已闭的道不参与竞争**
+   * ——「你最接近化灵」在夺过命之后是一句假话，而差距报告与横带缺省视图都指着它。
+   */
+  const contenders = ways.filter((way) => !way.lost);
+  const ranked = (contenders.length > 0 ? contenders : ways).reduce((best, way) =>
+    way.metCount !== best.metCount
+      ? way.metCount > best.metCount
+        ? way
+        : best
+      : way.closeness > best.closeness
+        ? way
+        : best,
+  );
+  return { ways, readyIds, ready: readyIds.length > 0, nearest: ranked.id };
+}
+
+/** 取某一条道的进度（`waysProgress` 的取值版；四条恒在，不会返回 undefined）。 */
+export function wayProgress(state: TaleState, content: TaleContent, way: WayId): WayProgress {
+  const found = waysProgress(state, content).ways.find((item) => item.id === way);
+  if (!found) throw new Error(`wayProgress: 未知道 ${way}`);
+  return found;
 }
 
 /**
- * 就地重算 draft 的登神资格 flag。死亡时一律摘掉（免得列传/转世界面读到脏 flag）。
+ * 就地重算 draft 的四条道资格 flag。死亡时一律摘掉（免得列传/转世界面读到脏 flag）。
  *
  * 只对**本次调用新建的 draft**（或 createLife 刚造出来的对象）调用，never 对入参 state。
- * performAction 会在事件抽取**之前**再调一次，好让本回合刚满足门槛（例如刚蜕出第 5 个
- * 器官）的「天命」当场入池，而不是白等一季。
+ * performAction 会在事件抽取**之前**再调一次，好让本回合刚够格（例如刚把德挣到 40）的
+ * 成道事件当场入池，而不是白等一季。
  */
-function refreshAscendFlag(draft: TaleState, content: TaleContent): void {
-  const ready = draft.alive && ascendProgress(draft, content).ready;
-  const has = draft.flags.includes(SYS_FLAG_ASCEND_READY);
-  if (ready === has) return;
-  draft.flags = ready
-    ? withFlags(draft.flags, [SYS_FLAG_ASCEND_READY])
-    : withoutFlags(draft.flags, [SYS_FLAG_ASCEND_READY]);
+function refreshWayFlags(draft: TaleState, content: TaleContent): void {
+  const ready = draft.alive ? new Set(waysProgress(draft, content).readyIds) : new Set<WayId>();
+  for (const way of WAY_ORDER) {
+    const flag = WAY_FLAGS[way];
+    const has = draft.flags.includes(flag);
+    if (ready.has(way) === has) continue;
+    draft.flags = ready.has(way) ? withFlags(draft.flags, [flag]) : withoutFlags(draft.flags, [flag]);
+  }
 }
 
 // ===== 出生 =====
@@ -544,27 +721,44 @@ function refreshAscendFlag(draft: TaleState, content: TaleContent): void {
 /**
  * 造一世。
  *
+ * ## [2026-08-13] 头两次抽取恒为天时与出身
+ * 这个顺序是**接口的一部分**：`rollPremise(seedNum, content)` 就是靠它从一个种子数字复算
+ * 出同一个世道（择神种那一屏据此提前显示「此世大旱」）。在它们之前插入任何别的抽取，
+ * 预览就会与实际降生的世道说两套话。
+ *
+ * 落账顺序：神种 statMods → 出身 statMods → 按体质定寿限 → 出身 lifespanDelta。
+ * 出身的属性修正排在神种之后（它是「这一胎生得如何」，比神种更晚发生的一件事），
+ * 而寿限先按体质算再吃 `lifespanDelta` —— 否则「灵胎寿 −2」会被体质的整除吃掉一半。
+ *
  * @param seedNum 种子数（同时作为 rngState 初值）
  * @param seedDefId 选中的神种 `SeedDef.id`
- * @throws 神种 id 不存在时抛错（内容 bug 要吵，不要静默降级）
+ * @throws 神种 id 不存在、或天时／出身池为空时抛错（内容 bug 要吵，不要静默降级）
  */
 export function createLife(seedNum: number, seedDefId: string, content: TaleContent): TaleState {
   const seed = content.seeds.find((candidate) => candidate.id === seedDefId);
   if (!seed) throw new Error(`createLife: 未知神种 ${seedDefId}`);
-  const t = content.tuning;
-  const stats = addStats(t.initialStats, seed.organ.statMods);
+  const cursor = createCursor(seedNum >>> 0);
+  const premise = drawPremise(cursor, content);
+  const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
+  const stats = addStats(addStats(t.initialStats, seed.organ.statMods), premise.origin.statMods);
+  const lifespan =
+    t.lifespanBase + Math.floor(stats.ti / t.lifespanTiDivisor) + (premise.origin.lifespanDelta ?? 0);
   const state: TaleState = {
     seed: seedNum >>> 0,
-    rngState: seedNum >>> 0,
+    rngState: cursor.state,
     year: 0,
     season: 0,
     region: "qingqiu",
+    skyId: premise.sky.id,
+    originId: premise.origin.id,
     stats,
     hunger: clamp(t.hungerInit, 0, t.hungerMax),
-    lifespanMax: t.lifespanBase + Math.floor(stats.ti / t.lifespanTiDivisor),
+    lifespanMax: Math.max(1, lifespan),
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
     organIds: [seed.organ.id],
-    flags: [],
+    // 开局变量的专属事件线靠这些 flag 入池。走 contentFlags 过滤：内容侧写错一个
+    // `sys:` 前缀不该在降世这一刻就改掉引擎规则（同 applyEffects 的理由）
+    flags: contentFlags([...(premise.sky.flags ?? []), ...(premise.origin.flags ?? [])]),
     firedOnceIds: [],
     combat: null,
     stalk: null,
@@ -577,21 +771,24 @@ export function createLife(seedNum: number, seedDefId: string, content: TaleCont
         refId: seed.id,
       },
     ],
+    livesTaken: 0,
     alive: true,
     ending: null,
+    wayAchieved: null,
   };
-  refreshAscendFlag(state, content);
+  refreshWayFlags(state, content);
   return state;
 }
 
 /**
  * 当前可选行动。死亡、战斗未结束、**或追猎未收束**时返回空数组（界面据此禁用行动面板）。
- * 「蛰伏」仅在任一型精气 ≥ `tuning.moltThreshold` 时出现。
+ * 「蛰伏」仅在任一型精气 ≥ 这一世生效的 `moltThreshold` 时出现（灵气盛之年门槛更低）。
  */
 export function availableActions(state: TaleState, content: TaleContent): ActionId[] {
   if (!state.alive || state.combat || state.stalk) return [];
+  const threshold = lifeTuning(state, content).moltThreshold;
   const actions: ActionId[] = ["hunt", "explore", "rest"];
-  if (ESSENCE_ORDER.some((type) => state.essence[type] >= content.tuning.moltThreshold)) {
+  if (ESSENCE_ORDER.some((type) => state.essence[type] >= threshold)) {
     actions.push("dormant");
   }
   return actions;
@@ -609,9 +806,9 @@ function beginCombat(
   draft: TaleState,
   enemy: EnemyDef,
   cursor: RngCursor,
-  content: TaleContent,
+  t: TaleTuning,
 ): void {
-  const face = rollFace(cursor, enemy, content, {
+  const face = rollFace(cursor, enemy, t, {
     enemyHp: enemy.hp,
     slow: 0,
     forcedGuard: false,
@@ -646,10 +843,9 @@ function beginCombat(
 function rollFace(
   cursor: RngCursor,
   enemy: EnemyDef,
-  content: TaleContent,
+  t: TaleTuning,
   now: { enemyHp: number; slow: number; forcedGuard: boolean },
 ): { guardPart: BodyPart; intent: EnemyIntent } {
-  const t = content.tuning;
   const guardPart =
     weightedPick(cursor, BODY_PARTS, (part) => enemy.guardBias?.[part] ?? 1) ?? "throat";
   const pool = INTENT_KINDS.filter((kind) => {
@@ -695,8 +891,8 @@ function pickFlavor(
 }
 
 /** 猎物表查表。空表／悬空 id 是内容 bug，要吵不要静默（同 M0：狩猎失效＝每一世饿死）。 */
-function preyPool(content: TaleContent): EnemyDef[] {
-  const ids = content.tuning.huntPreyIds;
+function preyPool(content: TaleContent, t: TaleTuning): EnemyDef[] {
+  const ids = t.huntPreyIds;
   if (ids.length === 0) {
     throw new Error("beginStalk: tuning.huntPreyIds 为空，狩猎无从起追（内容必须填猎物表）");
   }
@@ -733,8 +929,7 @@ function nearAlertMul(t: TaleTuning, distance: number): number {
 }
 
 /** 潜行能拉近的步数（疾足类 tag 加成；不会拉过头，最多到贴身）。 */
-function creepDistanceGain(state: TaleState, content: TaleContent, tags: Set<string>): number {
-  const t = content.tuning;
+function creepDistanceGain(state: TaleState, t: TaleTuning, tags: Set<string>): number {
   const stalk = state.stalk;
   const step = t.stalkCreepDistance + (tags.has(t.stalkSwiftTag) ? t.stalkCreepSwiftBonus : 0);
   return Math.max(0, Math.min(stalk?.distance ?? 0, step));
@@ -746,11 +941,10 @@ function creepDistanceGain(state: TaleState, content: TaleContent, tags: Set<str
  * 取整用 `Math.round`：界面显示的就是这个数，玩家按它做计划 —— 显示 4 实际扣 3.6 会让
  * 「攒到多少就该扑」这类计划在第三步对不上账，那比数值不准更糟。
  */
-function creepAlertGain(state: TaleState, content: TaleContent, tags: Set<string>): number {
-  const t = content.tuning;
+function creepAlertGain(state: TaleState, t: TaleTuning, tags: Set<string>): number {
   const stalk = state.stalk;
   if (!stalk) return 0;
-  const after = Math.max(0, stalk.distance - creepDistanceGain(state, content, tags));
+  const after = Math.max(0, stalk.distance - creepDistanceGain(state, t, tags));
   const quiet = tags.has(t.huntHunterTag) ? t.stalkQuietAlertMul : 1;
   return Math.round(t.stalkCreepAlert * windAlertMul(t, stalk.wind) * nearAlertMul(t, after) * quiet);
 }
@@ -778,10 +972,10 @@ function beginStalk(
   draft: TaleState,
   cursor: RngCursor,
   content: TaleContent,
+  t: TaleTuning,
   notices: string[],
 ): void {
-  const t = content.tuning;
-  const pool = preyPool(content);
+  const pool = preyPool(content, t);
   const prey = pool[cursor.int(pool.length)];
   if (!prey) throw new Error("beginStalk: 猎物表抽取失败");
 
@@ -791,7 +985,8 @@ function beginStalk(
     1,
     Math.round(baseDistance + (distanceJitter > 0 ? cursor.int(distanceJitter * 2 + 1) - distanceJitter : 0)),
   );
-  const baseAlert = prey.wariness ?? t.stalkStartAlert;
+  // [2026-08-13] 加成而不是缺省值：八头猎物全都自带 wariness，改缺省值等于没改（见 tuning 注释）
+  const baseAlert = (prey.wariness ?? t.stalkStartAlert) + t.stalkAlertBonus;
   const alertJitter = t.stalkStartAlertJitter;
   const alertness = clamp(
     Math.round(baseAlert + (alertJitter > 0 ? cursor.int(alertJitter * 2 + 1) - alertJitter : 0)),
@@ -826,11 +1021,11 @@ function beginStalk(
 export function stalkPreview(state: TaleState, content: TaleContent): StalkPreview {
   const stalk = state.stalk;
   if (!stalk) throw new Error("stalkPreview: 当前不在追猎中");
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const prey = stalkPrey(state, content);
   const tags = ownedTags(state, content);
 
-  const creepGain = creepDistanceGain(state, content, tags);
+  const creepGain = creepDistanceGain(state, t, tags);
   const meng = state.stats.meng;
   /*
    * 两处警觉增量都按上限截断（同 `waitAlertDrop` 的体例）：警觉快满时真实增幅会被
@@ -838,7 +1033,7 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
    * 「预览不骗人」这条不该留窄窗口例外，而那恰是玩家最盯着这个数的时候。
    */
   const headroom = Math.max(0, t.stalkAlertMax - stalk.alertness);
-  const alertGain = Math.min(headroom, creepAlertGain(state, content, tags));
+  const alertGain = Math.min(headroom, creepAlertGain(state, t, tags));
 
   return {
     pounceChance: pounceChanceAt(stalk.distance, stalk.alertness, meng, t),
@@ -883,7 +1078,7 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
   if (!current) throw new Error("stalkAct: 当前不在追猎中");
   const prey = stalkPrey(state, content);
 
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const cursor = createCursor(state.rngState);
   const draft = draftOf(state);
   const roundLog: string[] = [];
@@ -901,8 +1096,8 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
 
   switch (act) {
     case "creep": {
-      const gain = creepDistanceGain(state, content, tags);
-      const alertGain = creepAlertGain(state, content, tags);
+      const gain = creepDistanceGain(state, t, tags);
+      const alertGain = creepAlertGain(state, t, tags);
       distance = Math.max(0, distance - gain);
       alertness = clamp(alertness + alertGain, 0, t.stalkAlertMax);
       say(flavor?.creep, STALK_MESSAGES.creep, { steps: gain });
@@ -979,11 +1174,15 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
     if (caught) {
       draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
       draft.essence = addEssence(draft.essence, prey.essence);
+      // [2026-08-13] 得手就是夺了一命 —— 这一笔同时是妖王的进度与化灵的断门。
+      // 它刻意**不写 LifeRecord**（见 LifeRecord 的记录纪律：一世几十次狩猎会把列传摘录占满），
+      // 所以只有这个计数器记得住它。
+      draft.livesTaken += 1;
       say(undefined, STALK_MESSAGES.feed);
     }
     if (over === "combat") {
       say(flavor?.retaliate, STALK_MESSAGES.retaliate);
-      beginCombat(draft, prey, cursor, content);
+      beginCombat(draft, prey, cursor, t);
       // 附毒：扑空那一下把毒蹭了进去，敌人带伤入场。M0 的 CombatState 没有「持续中毒」
       // 的字段（那是 P2 战斗重做要加的 blind／slow 那一族），所以 P1 落成起手血量折扣 ——
       // 是真效果、可测，且不用先斩 P2 的接口。
@@ -993,12 +1192,12 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
       }
     }
     // 本季到此才收束（起追那一次刻意没推进）
-    closeSeason(draft, content, records);
+    closeSeason(draft, content, t, records);
   }
 
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
-  refreshAscendFlag(draft, content);
+  refreshWayFlags(draft, content);
   return { state: draft, roundLog, over };
 }
 
@@ -1011,8 +1210,12 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
  *
  * `records` 就地追加死亡记录（调用方负责最后并进 `draft.records`）。
  */
-function closeSeason(draft: TaleState, content: TaleContent, records: LifeRecord[]): void {
-  const t = content.tuning;
+function closeSeason(
+  draft: TaleState,
+  content: TaleContent,
+  t: TaleTuning,
+  records: LifeRecord[],
+): void {
   const cost = t.hungerPerSeason + (draft.season === WINTER ? t.winterHungerExtra : 0);
   draft.hunger = clamp(draft.hunger - cost, 0, t.hungerMax);
   const nextSeason = ((draft.season + 1) % 4) as Season;
@@ -1028,13 +1231,25 @@ function closeSeason(draft: TaleState, content: TaleContent, records: LifeRecord
   } else {
     draft.flags = withoutFlags(draft.flags, [SYS_FLAG_STARVING]);
   }
+  /*
+   * [2026-08-13] 寿终那一刻的**一次判定**（不是两套并行逻辑）：
+   * 「归山」门槛已备 → 寿终就是成道；不备 → 仍是「终未成器」的失败。
+   *
+   * owner 对 M0 的原话是「最后寿终正寝，让人没有再次玩的欲望」，M1-P2 的答法是把寿终
+   * 写成明确的失败。这一批把同一件事补上另一半：**有一条道，它的胜利形式就是寿终**。
+   * 于是「养一只长寿厚德的兽」不再是没目标地活着，而是在走一条路。
+   */
   if (draft.alive && draft.year > draft.lifespanMax) {
-    records.push(die(draft, "oldage", ENGINE_MESSAGES.deathOldage));
+    const guishan = wayProgress(draft, content, "guishan");
+    if (guishan.ready) {
+      records.push(die(draft, "ascend", ENGINE_MESSAGES.deathWay.guishan, undefined, "guishan"));
+    } else {
+      records.push(die(draft, "oldage", ENGINE_MESSAGES.deathOldage));
+    }
   }
 }
 
-function resolveRest(draft: TaleState, content: TaleContent, notices: string[]): void {
-  const t = content.tuning;
+function resolveRest(draft: TaleState, t: TaleTuning, notices: string[]): void {
   draft.hunger = clamp(draft.hunger + t.restHungerGain, 0, t.hungerMax);
   notices.push(ENGINE_MESSAGES.rest);
   const healed = t.restHealFlags.filter((flag) => draft.flags.includes(flag));
@@ -1060,10 +1275,10 @@ function resolveMolt(
   draft: TaleState,
   cursor: RngCursor,
   content: TaleContent,
+  t: TaleTuning,
   notices: string[],
   records: LifeRecord[],
 ): MoltResult | null {
-  const t = content.tuning;
   const ripe = ESSENCE_ORDER.filter((type) => draft.essence[type] >= t.moltThreshold);
   const type = ripe.reduce(
     (best, candidate) => (draft.essence[candidate] > draft.essence[best] ? candidate : best),
@@ -1124,13 +1339,37 @@ function matchesTrigger(
   return true;
 }
 
+/**
+ * [2026-08-13] 天时／出身对某个事件权重的乘子。
+ *
+ * 多条命中则**相乘**（大旱之年 ×2 的水泽之事若同时是奇遇，逆产的 ×1.6 也照乘）——
+ * 相加会让「两条都关照到的事件」只按一条算，而这类事件恰是世道最该放大的那些。
+ *
+ * ⚠️ 只读 `event.trigger.tags`，**绝不改 `event.trigger.weight` 原值**：那是所有一世共享
+ * 的同一份内容对象，改它等于污染 content 并击穿「同种子同操作＝同终态」。
+ */
+function eventWeightMul(event: TaleEvent, premise: LifePremise): number {
+  const tags = event.trigger.tags;
+  if (!tags || tags.length === 0) return 1;
+  let mul = 1;
+  for (const table of [premise.sky.eventWeightMul, premise.origin.eventWeightMul]) {
+    if (!table) continue;
+    for (const tag of tags) {
+      const factor = table[tag];
+      if (factor !== undefined && factor > 0) mul *= factor;
+    }
+  }
+  return mul;
+}
+
 function drawEvent(
   draft: TaleState,
   cursor: RngCursor,
   content: TaleContent,
+  t: TaleTuning,
+  premise: LifePremise,
   action: ActionId,
 ): TaleEvent | null {
-  const t = content.tuning;
   const chance = clamp(
     t.eventChanceBase * (action === "explore" ? t.exploreEventBonus : 1),
     0,
@@ -1139,7 +1378,7 @@ function drawEvent(
   if (cursor.next() >= chance) return null;
   const tags = ownedTags(draft, content);
   const pool = content.events.filter((event) => matchesTrigger(draft, event, action, tags));
-  return weightedPick(cursor, pool, (event) => event.trigger.weight);
+  return weightedPick(cursor, pool, (event) => event.trigger.weight * eventWeightMul(event, premise));
 }
 
 // ===== 回合：死亡 =====
@@ -1148,12 +1387,20 @@ function drawEvent(
  * 落死亡：改 draft 的存活位并**返回**那条 death 记录（不直接写进 draft.records）——
  * 让调用方把它并进本次调用的 records 缓冲，death 记录才能稳定落在末条。
  */
-function die(draft: TaleState, ending: EndingType, text: string, refId?: string): LifeRecord {
+function die(
+  draft: TaleState,
+  ending: EndingType,
+  text: string,
+  refId?: string,
+  /** [2026-08-13] 成道时是哪条道；与 `ending === "ascend"` 严格同步（见下） */
+  way?: WayId,
+): LifeRecord {
   draft.alive = false;
   draft.ending = ending;
   draft.combat = null;
   // 追猎同战斗：死亡覆盖一切未收束的子系统，界面不会拿到「已死却还在追」的状态
   draft.stalk = null;
+  draft.wayAchieved = ending === "ascend" ? (way ?? null) : null;
   return { year: draft.year, season: draft.season, kind: "death", text, refId };
 }
 
@@ -1196,7 +1443,8 @@ export function performAction(
     throw new Error(`performAction: 当前不可执行行动 ${action}`);
   }
 
-  const t = content.tuning;
+  const premise = premiseOf(state, content);
+  const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
   const cursor = createCursor(state.rngState);
   const draft = draftOf(state);
   const notices: string[] = [];
@@ -1211,16 +1459,16 @@ export function performAction(
       notices.push(ENGINE_MESSAGES.explore);
       break;
     case "rest":
-      resolveRest(draft, content, notices);
+      resolveRest(draft, t, notices);
       break;
     case "dormant":
-      moltResult = resolveMolt(draft, cursor, content, notices, records);
+      moltResult = resolveMolt(draft, cursor, content, t, notices, records);
       break;
   }
 
-  // 2. 事件抽取（先刷新登神门槛 flag，让本回合刚够格的「天命」当场入池，不白等一季）
-  refreshAscendFlag(draft, content);
-  const drawn = draft.combat ? null : drawEvent(draft, cursor, content, action);
+  // 2. 事件抽取（先刷新四道资格 flag，让本回合刚够格的成道事件当场入池，不白等一季）
+  refreshWayFlags(draft, content);
+  const drawn = draft.combat ? null : drawEvent(draft, cursor, content, t, premise, action);
 
   /*
    * 1'. 狩猎：**本季没撞上事，才起追。**
@@ -1231,7 +1479,7 @@ export function performAction(
    * 事件卡与追猎屏又占用同一块中央舞台，不能并存。于是这一季**要么撞上一桩事，要么起追**：
    * 前者是「狩猎路上遇见了别的东西」，后者是「盯上了一头具体的猎物」，两条都算狩猎。
    */
-  if (action === "hunt" && !drawn) beginStalk(draft, cursor, content, notices);
+  if (action === "hunt" && !drawn) beginStalk(draft, cursor, content, t, notices);
 
   // 1.5 起追早退：`beginStalk` 只把猎物摆上来，这一季**刻意不推进**（否则光是起追就白耗
   // 一季），也不抽事件（玩家此刻该盯着追猎屏，不该被别的事件插队）。季推进与死亡判定推迟到
@@ -1242,13 +1490,13 @@ export function performAction(
     return { state: draft, pendingEvent: null, notices, moltResult: null };
   }
 
-  closeSeason(draft, content, records);
+  closeSeason(draft, content, t, records);
 
   // 5. records 追加
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
 
-  refreshAscendFlag(draft, content);
+  refreshWayFlags(draft, content);
   return { state: draft, pendingEvent: draft.alive ? drawn : null, notices, moltResult };
 }
 
@@ -1310,10 +1558,10 @@ function applyEffects(
   draft: TaleState,
   effects: EffectDelta,
   content: TaleContent,
+  t: TaleTuning,
   records: LifeRecord[],
   cursor: RngCursor,
 ): void {
-  const t = content.tuning;
   if (effects.stats) draft.stats = addStats(draft.stats, effects.stats);
   if (effects.hunger !== undefined) {
     draft.hunger = clamp(draft.hunger + effects.hunger, 0, t.hungerMax);
@@ -1345,22 +1593,45 @@ function applyEffects(
   if (effects.startCombat !== undefined) {
     const enemy = enemyById(content, effects.startCombat);
     if (!enemy) throw new Error(`applyEffects: 未知敌人 ${effects.startCombat}`);
-    beginCombat(draft, enemy, cursor, content);
+    beginCombat(draft, enemy, cursor, t);
+  }
+  // [2026-08-13] 两桩「事迹」：内容明写了取命／尝神兽的分支，落到两条道的判据上
+  if (effects.takesLife !== undefined && effects.takesLife > 0) {
+    draft.livesTaken += Math.floor(effects.takesLife);
+  }
+  if (effects.devourDivine === true) {
+    draft.flags = withFlags(draft.flags, [SYS_FLAG_DIVINE_EATEN]);
   }
   if (effects.die !== undefined) {
-    records.push(die(draft, effects.die, deathText(effects.die)));
+    /*
+     * 成道由哪条道兑现：内容显式写的 `way` 优先；没写就取「已够格且最接近的那条」。
+     * 兜底不是宽容而是必要 —— 三个成道事件各自的 `requiresFlags` 已经保证了对应的道够格，
+     * 而 `wayAchieved` 为 null 的 ascend 会让列传退回泛用结语（那正是这一批要消灭的错）。
+     */
+    const way =
+      effects.die === "ascend"
+        ? (effects.way ?? pickAchievedWay(draft, content))
+        : undefined;
+    records.push(die(draft, effects.die, deathText(effects.die, way), undefined, way));
   }
 }
 
+/** 成道时没显式声明道 → 取已够格的那条（多条则按 `WAY_ORDER`），全都不够格则取最接近的。 */
+function pickAchievedWay(draft: TaleState, content: TaleContent): WayId {
+  const progress = waysProgress(draft, content);
+  return progress.readyIds[0] ?? progress.nearest;
+}
+
 /** 事件直接判定的死亡用哪句旁白（战斗致死走 combatAct，那里带击杀者名字）。 */
-function deathText(ending: EndingType): string {
+function deathText(ending: EndingType, way?: WayId): string {
   switch (ending) {
     case "starve":
       return ENGINE_MESSAGES.deathStarve;
     case "oldage":
       return ENGINE_MESSAGES.deathOldage;
+    // [2026-08-13] 成道四条各有各的走法：登神是白光贯顶，妖王是众兽伏首，两句不能混用
     case "ascend":
-      return ENGINE_MESSAGES.deathAscend;
+      return way === undefined ? ENGINE_MESSAGES.deathAscend : ENGINE_MESSAGES.deathWay[way];
     case "slain":
       return ENGINE_MESSAGES.deathSlainGeneric;
   }
@@ -1407,10 +1678,10 @@ export function resolveChoice(
       refId: event.id,
     },
   ];
-  applyEffects(draft, outcome.effects, content, records, cursor);
+  applyEffects(draft, outcome.effects, content, lifeTuning(state, content), records, cursor);
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
-  refreshAscendFlag(draft, content);
+  refreshWayFlags(draft, content);
 
   return {
     state: draft,
@@ -1529,7 +1800,7 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
   if (!combat) throw new Error("combatPreview: 当前不在战斗中");
   const enemy = enemyById(content, combat.enemyId);
   if (!enemy) throw new Error(`combatPreview: 未知敌人 ${combat.enemyId}`);
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const tags = ownedTags(state, content);
   const meng = state.stats.meng;
   const guardIntent = combat.intent.kind === "guard";
@@ -1662,7 +1933,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   const enemy = enemyById(content, current.enemyId);
   if (!enemy) throw new Error(`combatAct: 未知敌人 ${current.enemyId}`);
 
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const cursor = createCursor(state.rngState);
   const draft = draftOf(state);
   const roundLog: string[] = [];
@@ -1790,8 +2061,25 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   // — 2. 它死了 —
   if (over === null && enemyHp <= 0) {
     over = "win";
-    draft.essence = addEssence(draft.essence, enemy.essence);
+    // [2026-08-13] 兽潮之年杀获更厚（`combatWinEssenceMul`）——「难活但杀一头值更多」
+    const essenceMul = t.combatWinEssenceMul;
+    draft.essence = addEssence(
+      draft.essence,
+      essenceMul === 1
+        ? enemy.essence
+        : Object.fromEntries(
+            Object.entries(enemy.essence).map(([type, amount]) => [
+              type,
+              Math.round((amount ?? 0) * essenceMul),
+            ]),
+          ),
+    );
     draft.hunger = clamp(draft.hunger + t.combatWinHungerGain, 0, t.hungerMax);
+    // [2026-08-13] 搏杀取胜也是夺了一命；战胜神兽另记一笔（登神门槛之一）
+    draft.livesTaken += 1;
+    if (enemy.tags.includes(t.wayDivineTag)) {
+      draft.flags = withFlags(draft.flags, [SYS_FLAG_DIVINE_EATEN]);
+    }
     roundLog.push(render(ENGINE_MESSAGES.combatWin, { enemy: enemy.name }));
     records.push({
       year: draft.year,
@@ -1854,7 +2142,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   }
   if (over === null) {
     // — 6. 下一回合的脸（玩家出手前就看得见）—
-    const face = rollFace(cursor, enemy, content, { enemyHp, slow, forcedGuard });
+    const face = rollFace(cursor, enemy, t, { enemyHp, slow, forcedGuard });
     draft.combat = {
       enemyId: current.enemyId,
       enemyHp,
@@ -1875,7 +2163,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
 
-  refreshAscendFlag(draft, content);
+  refreshWayFlags(draft, content);
   return { state: draft, roundLog, over };
 }
 
@@ -1885,12 +2173,15 @@ function pickPraise(
   variants: readonly ChroniclePraiseVariant[],
   de: number,
   ending: EndingType,
+  way: WayId | null,
 ): ChroniclePraiseVariant | undefined {
   const matched = variants.find(
     (variant) =>
       (variant.minDe === undefined || de >= variant.minDe) &&
       (variant.maxDe === undefined || de <= variant.maxDe) &&
-      (variant.endings === undefined || variant.endings.includes(ending)),
+      (variant.endings === undefined || variant.endings.includes(ending)) &&
+      // 声明了 ways 的变体只匹配那几条道；未成道（way 为 null）一律不匹配
+      (variant.ways === undefined || (way !== null && variant.ways.includes(way))),
   );
   // 内容侧应把无条件兜底放在末项；没匹配上时退到末项而不是抛错 ——
   // 一世刚结束正是玩家最不该吃到崩溃的时刻。B2 的 schema 测试负责保证兜底存在。
@@ -1928,6 +2219,11 @@ export function composeChronicle(state: TaleState, content: TaleContent): Chroni
     organCount: state.organIds.length,
     moltCount,
     killCount,
+    /** [2026-08-13] 夺命数（含追猎得手）—— 妖王的结语要报它，化灵的结语要报它是〇 */
+    livesTaken: state.livesTaken,
+    /** [2026-08-13] 天时／出身的名字：一世的开局前提该进得了传 */
+    skyName: content.skies.find((item) => item.id === state.skyId)?.name ?? "",
+    originName: content.origins.find((item) => item.id === state.originId)?.name ?? "",
     meng: state.stats.meng,
     ling: state.stats.ling,
     ti: state.stats.ti,
@@ -1941,7 +2237,7 @@ export function composeChronicle(state: TaleState, content: TaleContent): Chroni
         record.kind === "combat" ||
         (record.kind === "event" && record.refId !== undefined && onceEventIds.has(record.refId)),
     )
-    .slice(0, Math.max(0, content.tuning.chronicleMaxExcerpts));
+    .slice(0, Math.max(0, lifeTuning(state, content).chronicleMaxExcerpts));
 
   const lines: string[] = [render(tpl.opening, vars)];
   for (const record of birth ? [birth, ...excerpts] : excerpts) {
@@ -1954,8 +2250,20 @@ export function composeChronicle(state: TaleState, content: TaleContent): Chroni
       }),
     );
   }
-  lines.push(render(tpl.endings[ending], vars));
-  const praise = pickPraise(tpl.praise, state.stats.de, ending);
+  /*
+   * [2026-08-13] 成道的结语按**道**取，不按 ending 取：四条道的 `ending` 都是 `ascend`，
+   * 而一个归山的老兽读到「白光贯顶，兽身褪如敝衣」是错的。`wayEndings` 是必填的
+   * （见 ChronicleTemplates），所以这里没有兜底分支要写。
+   */
+  lines.push(
+    render(
+      ending === "ascend" && state.wayAchieved !== null
+        ? tpl.wayEndings[state.wayAchieved]
+        : tpl.endings[ending],
+      vars,
+    ),
+  );
+  const praise = pickPraise(tpl.praise, state.stats.de, ending, state.wayAchieved);
   lines.push(tpl.praisePrefix + (praise ? render(praise.text, vars) : ""));
 
   return {
@@ -1979,11 +2287,26 @@ export function composeChronicle(state: TaleState, content: TaleContent): Chroni
  * 玩家死后没有任何理由觉得「这一世比上一世更接近了」。按达成的门槛条数给分，让「差一点」
  * 也算数：那正是死亡屏差距报告想让玩家记住的那句「我差两件器官」。
  *
- * 因此签名从一参变两参（门槛数值在 `content.tuning`）—— 与 `ascendProgress` 同一份判据。
+ * 因此签名从一参变两参（门槛数值在 `content.tuning`）—— 与 `waysProgress` 同一份判据。
+ *
+ * ## [2026-08-13] 四道改了后两项
+ * - 成道那一笔从固定 +3 换成 `tuning.wayBloodline[way]`：四条道的难度不一样（化灵要一世
+ *   不杀，归山只要活得久而厚德），同一个 +3 会让「哪条道都一样」，而这一批的全部目的
+ *   就是让四条道不一样。
+ * - 门槛那一笔按**最接近的那条道**算，而不是四条求和：求和会让门槛互相搭便车（化灵的
+ *   「不杀一命」在降世那一刻就是达成的，于是每一世白拿一分），也会把「差一点」稀释掉。
+ *   按最接近的那条算，读法才与死亡屏那句差距报告一致 —— 你差的是**你正在走的那条道**上的两件事。
+ *
+ * ⚠️ 成道那一世因此**两笔都拿**：`wayBloodline[way]` ＋ 那条道的全部门槛数（它刚刚全备，
+ * 所以 `nearest.metCount` 就是它的门槛条数）。这是有意的 —— 走通一条道该比「差一条」明显多拿，
+ * 而不是只多拿一个固定值。不是漏算。
  */
 export function bloodlineGain(state: TaleState, content: TaleContent): number {
   const molts = state.records.filter((record) => record.kind === "molt").length;
   const decades = Math.floor(state.year / 10);
-  const ascend = state.ending === "ascend" ? 3 : 0;
-  return molts + decades + ascend + ascendProgress(state, content).metCount;
+  const progress = waysProgress(state, content);
+  const wayBonus =
+    state.wayAchieved === null ? 0 : lifeTuning(state, content).wayBloodline[state.wayAchieved];
+  const nearest = progress.ways.find((way) => way.id === progress.nearest);
+  return molts + decades + wayBonus + (nearest?.metCount ?? 0);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ascendProgress } from "@shiling/tale-sim";
-import { buildAscendVm, buildStatusVm } from "../src/model/statusVm.js";
+import { waysProgress } from "@shiling/tale-sim";
+import { buildStatusVm, buildWaysVm } from "../src/model/statusVm.js";
 import { FIXTURE_CONTENT, newState, withPatch } from "./helpers.js";
 
 const T = FIXTURE_CONTENT.tuning;
@@ -101,50 +101,114 @@ describe("buildStatusVm", () => {
  * 这一组盯的是**门槛只有一份**：进度条的数必须与引擎 `ascendProgress` 同源，
  * 否则哪天引擎加一条门槛，进度条会照旧显示「全亮」而天命死活不入池。
  */
-describe("buildAscendVm（登神之路）", () => {
-  it("四项按固定顺序给出，开局一项都不亮", () => {
-    const ascend = buildAscendVm(newState(), FIXTURE_CONTENT);
-    expect(ascend.gates.map((gate) => gate.id)).toEqual(["year", "organs", "ling", "de"]);
-    expect(ascend.gates.map((gate) => gate.label)).toEqual(["寿", "器", "灵", "德"]);
-    expect(ascend.gates.every((gate) => !gate.met)).toBe(true);
-    expect(ascend.metCount).toBe(0);
-    expect(ascend.ready).toBe(false);
-    expect(ascend.caption).toBe("登神之路　0／4");
+describe("buildWaysVm（四道横带）", () => {
+  it("四条道按固定顺序给出，各自的门槛也定序", () => {
+    const ways = buildWaysVm(newState(), FIXTURE_CONTENT);
+    expect(ways.ways.map((way) => way.id)).toEqual(["shen", "yaowang", "guishan", "hualing"]);
+    expect(ways.ways.map((way) => way.label)).toEqual(["登神", "妖王", "归山", "化灵"]);
+    expect(ways.ways.map((way) => way.gates.map((gate) => gate.label))).toEqual([
+      ["灵", "德", "神"],
+      ["杀", "猛"],
+      ["寿", "德"],
+      ["灵", "净"],
+    ]);
   });
 
-  it("门槛的 have／need 与引擎同源（界面不自己比大小）", () => {
+  it("门槛的 have／need／met 与引擎同源（界面不自己比大小）", () => {
     const state = withPatch(newState(), { year: 9 });
-    const engine = ascendProgress(state, FIXTURE_CONTENT);
-    const vm = buildAscendVm(state, FIXTURE_CONTENT);
-    expect(vm.gates.map((gate) => [gate.have, gate.need, gate.met])).toEqual(
-      engine.gates.map((gate) => [gate.have, gate.need, gate.met]),
+    const engine = waysProgress(state, FIXTURE_CONTENT);
+    const vm = buildWaysVm(state, FIXTURE_CONTENT);
+    expect(vm.ways.map((way) => way.gates.map((gate) => [gate.have, gate.need, gate.met]))).toEqual(
+      engine.ways.map((way) => way.gates.map((gate) => [gate.have, gate.need, gate.met])),
     );
   });
 
   it("达成即点亮，且 hint 从「还差多少」换成「已足」", () => {
-    const old = withPatch(newState(), { year: T.ascendMinYear });
-    const [year] = buildAscendVm(old, FIXTURE_CONTENT).gates;
+    const base = newState();
+    const old = withPatch(base, { year: T.wayGuishanYear, livesTaken: 1 });
+    const guishan = buildWaysVm(old, FIXTURE_CONTENT).ways.find((way) => way.id === "guishan");
+    const [year] = guishan?.gates ?? [];
     expect(year?.met).toBe(true);
     expect(year?.percent).toBe(100);
+    expect(year?.read).toBe(`${T.wayGuishanYear}／${T.wayGuishanYear}`);
     expect(year?.hint).toContain("已足");
-    const young = buildAscendVm(newState(), FIXTURE_CONTENT).gates[0];
-    expect(young?.hint).toContain("寿数差");
+    const young = buildWaysVm(base, FIXTURE_CONTENT).ways.find((way) => way.id === "guishan");
+    expect(young?.gates[0]?.hint).toContain("寿数差");
   });
 
-  it("四项全满 → ready，标题换成那句话", () => {
+  /**
+   * 「不杀一命」是唯一的 `max` 类门槛：它要么满、要么**永久破**。
+   * 界面若按 have/need 画进度条会得到 `3／0`，读起来像「超额完成」—— 正相反。
+   */
+  it("化灵那条：夺过一命即已闭，进度条归零、caption 改口", () => {
+    const clean = withPatch(newState(), { livesTaken: 0 });
+    const before = buildWaysVm(clean, FIXTURE_CONTENT).ways.find((way) => way.id === "hualing");
+    expect(before?.lost).toBe(false);
+    expect(before?.gates[1]).toMatchObject({ met: true, percent: 100 });
+
+    // 达成时读「未夺」而不是「0／0」（后者在屏幕上读成「零比零」）
+    expect(before?.gates[1]?.read).toBe("未夺");
+
+    const bloodied = withPatch(clean, { livesTaken: 3 });
+    const after = buildWaysVm(bloodied, FIXTURE_CONTENT).ways.find((way) => way.id === "hualing");
+    expect(after?.lost).toBe(true);
+    expect(after?.gates[1]).toMatchObject({ met: false, percent: 0, read: "已夺 3" });
+    expect(after?.gates[1]?.hint).toContain("已夺");
+    expect(after?.caption).toContain("已闭");
+  });
+
+  it("某条道门槛全备 → ready，caption 改「既备」", () => {
     const base = newState();
     const ready = withPatch(base, {
-      year: T.ascendMinYear,
-      organIds: [...base.organIds, "a", "b", "c", "d"],
-      stats: { ...base.stats, ling: T.ascendMinLing, de: T.ascendMinDe },
+      livesTaken: 1,
+      year: T.wayGuishanYear,
+      stats: { ...base.stats, de: T.wayGuishanDe },
     });
-    const ascend = buildAscendVm(ready, FIXTURE_CONTENT);
-    expect(ascend.metCount).toBe(4);
-    expect(ascend.ready).toBe(true);
-    expect(ascend.caption).toContain("天门");
+    const guishan = buildWaysVm(ready, FIXTURE_CONTENT).ways.find((way) => way.id === "guishan");
+    expect(guishan?.metCount).toBe(2);
+    expect(guishan?.ready).toBe(true);
+    expect(guishan?.caption).toContain("既备");
+    expect(buildWaysVm(ready, FIXTURE_CONTENT).anyReady).toBe(true);
+  });
+
+  /**
+   * 缺省展开「最接近的那条」，而玩家点了 tab 就听他的 —— 切 tab 是**查看态**，
+   * 不进引擎、不消耗回合（M1 的既定裁决：不得增加每回合的必点次数）。
+   */
+  it("缺省跟着引擎的 nearest，传了 shown 就听玩家的", () => {
+    const state = withPatch(newState(), { livesTaken: 2 });
+    const auto = buildWaysVm(state, FIXTURE_CONTENT);
+    expect(auto.shown).toBe(waysProgress(state, FIXTURE_CONTENT).nearest);
+    expect(auto.current.id).toBe(auto.shown);
+    const picked = buildWaysVm(state, FIXTURE_CONTENT, "yaowang");
+    expect(picked.shown).toBe("yaowang");
+    expect(picked.current.id).toBe("yaowang");
+    // 玩家点开的那条**已闭**也照他点的显示（他要看的正是「已夺几命」这个答案）
+    const lost = buildWaysVm(state, FIXTURE_CONTENT, "hualing");
+    expect(lost.shown).toBe("hualing");
+    expect(lost.current.lost).toBe(true);
   });
 
   it("挂在 StatusVm 上（状态栏常驻，不是某个面板里的东西）", () => {
-    expect(buildStatusVm(newState(), FIXTURE_CONTENT).ascend.gates).toHaveLength(4);
+    const vm = buildStatusVm(newState(), FIXTURE_CONTENT);
+    expect(vm.ways.ways).toHaveLength(4);
+    expect(vm.ways.current.gates.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildPremiseVm（这一世的天时与出身）", () => {
+  /**
+   * 状态栏那一行不能只写名字：「大旱之年」四个字与一行风味字无从区分，而这一批的
+   * 全部主张是开局变量**真改机制**。所以机制那一行必须能被界面读到。
+   */
+  it("两条前提都带名字与机制那一行", () => {
+    const vm = buildStatusVm(newState(), FIXTURE_CONTENT);
+    expect(vm.premise.sky.kind).toBe("天时");
+    expect(vm.premise.origin.kind).toBe("出身");
+    expect(vm.premise.sky.name.length).toBeGreaterThan(0);
+    expect(vm.premise.sky.effect.length).toBeGreaterThan(0);
+    expect(vm.premise.caption).toContain(vm.premise.sky.name);
+    expect(vm.premise.caption).toContain(vm.premise.origin.name);
+    expect(vm.premise.hint).toContain(vm.premise.sky.effect);
   });
 });

@@ -90,19 +90,34 @@ id 逐个核磁盘文件 —— `<img>` 加载失败不报错，漏接线在运�
 Playwright（Python，用系统 Chrome，不往 workspace 塞浏览器下载）。**先自己起 dev server**：
 
 ```bash
-python packages/tale-client/e2e/fullLife.py <输出目录> [种子]   # 打完一整世：零 404／零控制台错误／列传／转世
-python packages/tale-client/e2e/flow.py    <输出目录>          # 赶里程碑：每种屏拍一张 ＋ 减少动画对照
+python packages/tale-client/e2e/fullLife.py   <输出目录> [种子]  # 打完一整世：零 404／零控制台错误／列传／转世
+python packages/tale-client/e2e/flow.py       <输出目录>         # 赶里程碑：每种屏拍一张 ＋ 减少动画对照
+python packages/tale-client/e2e/stalk.py      <输出目录> [种子]  # 追猎屏（M1-P1）
+python packages/tale-client/e2e/combat.py     <输出目录> [种子]  # 搏杀屏（M1-P2）
+python packages/tale-client/e2e/legibility.py <输出目录> [种子]  # 「看得懂」：详情浮层与引导链
+python packages/tale-client/e2e/variance.py   <输出目录> [种子]  # 「每局不同」：连玩两局，验开局变量与四道
 ```
 
-两个脚本都**如实玩**：只读 `window.__tale.snapshot()`（dev-only 只读快照）判断该点哪个按钮，
+所有脚本都**如实玩**：只读 `window.__tale.snapshot()`（dev-only 只读快照）判断该点哪个按钮，
 不注入状态 —— 截图里每个数字都是引擎真算出来的。
+
+`variance.py` 另外在三档窄屏（1280／1024／760）各量一次降世屏与四道横带：前三批各犯过一次
+「新元素把按钮挤出屏幕」，那是这个项目唯一反复出现的排版事故。
 
 ## 平衡与调参
 
 ```bash
 pnpm -C packages/gen balance                                  # 200 世统计（默认谨慎玩家）
 pnpm -C packages/gen balance -- --profile random --lives 500
+pnpm -C packages/gen balance -- --profile wayseek --lives 500  # 四道平衡：每一世奔一条道
 pnpm -C packages/gen balance -- --tune moltThreshold=78        # 试参，不落盘
 ```
+
+⚠️ `pnpm ... balance -- --lab` 会把 `--` 当参数传进来（pnpm 行为变了），带 flag 时直接调 node：
+`cd packages/gen && node --import ./src/tsResolveHook.mjs src/balance-sim.ts --profile wayseek --lives 500`
+
+**四道的门槛只能按 `wayseek` 的数调**：别的画像不奔任何道（cautious 挑末条、random 乱点），
+化灵在它们手里恒为 0% —— 那既不能证明门槛太难也不能证明合适。目标是每条道各自 0.5〜5%、
+合计 8〜15%，同时「活过 8 岁 ≥60%」「平均蜕变 2〜4」两条老目标在四个画像下都还成立。
 
 数值一律改 `tale-content/src/tuning.ts`（含理由与实测表），**不改引擎**。

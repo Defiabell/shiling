@@ -6,7 +6,13 @@
  * `availableActions`，界面不复刻「任一精气 ≥ 阈值」这条规则。
  */
 
-import { availableActions, type ActionId, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import {
+  availableActions,
+  lifeTuning,
+  type ActionId,
+  type TaleContent,
+  type TaleState,
+} from "@shiling/tale-sim";
 import { moltPreviewText } from "./detailVm.js";
 
 export interface ActionButtonVm {
@@ -35,8 +41,9 @@ const ACTION_GLYPHS: Record<ActionId, { glyph: string; label: string }> = {
  * 而每季只能点一次，这正是「我该干什么、为什么」的第一现场。调参改了这几个值，
  * 按钮上的字会跟着改。
  */
-function actionHint(id: ActionId, content: TaleContent): string {
-  const t = content.tuning;
+function actionHint(id: ActionId, state: TaleState, content: TaleContent): string {
+  // 这一世生效的调参：大旱之年的「得手 +42」与平年的「+32」是两个不同的账
+  const t = lifeTuning(state, content);
   switch (id) {
     case "hunt":
       return `追猎一头猎物　得手 +${t.huntFoodGain} 饱食，另得那一型精气`;
@@ -79,7 +86,7 @@ export function buildActionVms(state: TaleState, content: TaleContent): ActionBu
       glyph: meta.glyph,
       label: meta.label,
       // 蛰伏可按时，hint 换成「按下去会发生什么」——追猎屏立的规矩：没有预览的按钮就是翻牌
-      hint: id === "dormant" && enabled ? moltPreviewText(state, content) : actionHint(id, content),
+      hint: id === "dormant" && enabled ? moltPreviewText(state, content) : actionHint(id, state, content),
       enabled,
       disabledReason,
       highlight: id === "dormant" && enabled,

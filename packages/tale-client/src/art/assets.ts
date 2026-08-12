@@ -33,16 +33,23 @@ const PORTRAIT_FILES: Record<PortraitStage, string> = {
 const ADULT_AT_ORGANS = 3;
 
 /**
+ * 「近神」这一阶的门槛。
+ *
+ * [2026-08-13] 原来它吃引擎的 `tuning.ascendMinOrgans`（当时登神要 5 件器官，于是
+ * 「近神立绘 ⇔ 够格登神」是一条真的对应）。四道改动把器官件数从**所有**成道门槛里拿掉了
+ * —— 登神现在看灵德与神兽，归山看寿与德。于是那条对应已经不存在，继续吃一个与形貌无关的
+ * 门槛只会在下一次调参时静默错位。形貌分阶从此是**纯表现规则**，就写在表现层。
+ */
+const NEAR_DIVINE_AT_ORGANS = 5;
+
+/**
  * 器官件数 → 形态阶段。`organCount` 含神种那一枚（`organIds[0]`），所以下限是 1。
  *
- * 分档不是随手切的：「近神」这一阶正好只在**真的够格登神**时才出现，所以它的门槛
- * 直接吃引擎的 `tuning.ascendMinOrgans`，**不在这里抄一个 5** —— 抄了以后谁改一次登神门槛，
- * 「近神立绘 ⇔ 够格登神」这条对应就会静默错位，而且没有任何东西会变红。
  * 一世平均蜕 3 件左右，于是绝大多数玩家会在一世里亲眼看到幼兽 → 成兽这一次形貌变化，
  * 而「近神」是要争的。
  */
-export function portraitStage(organCount: number, ascendMinOrgans: number): PortraitStage {
-  if (organCount >= ascendMinOrgans) return "neargod";
+export function portraitStage(organCount: number): PortraitStage {
+  if (organCount >= NEAR_DIVINE_AT_ORGANS) return "neargod";
   if (organCount >= ADULT_AT_ORGANS) return "adult";
   return "cub";
 }

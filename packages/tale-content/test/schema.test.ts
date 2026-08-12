@@ -14,12 +14,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  SYS_FLAG_ASCEND_READY,
+  WAY_FLAGS,
   type EffectDelta,
   type EventChoice,
+  type PremiseDef,
   type TaleEvent,
 } from "@shiling/tale-sim";
 import {
+  ALL_EVENT_TAGS,
   ALL_FLAGS,
   ALL_TAGS,
   CHRONICLE_TEMPLATES,
@@ -29,9 +31,12 @@ import {
   GENERIC_EVENTS,
   HUNT_EVENTS,
   ORGANS,
+  ORIGINS,
+  PREMISE_EVENTS,
   PREY_IDS,
   REST_EVENTS,
   SEEDS,
+  SKIES,
   TALE_CONTENT,
   TUNING,
   VISUAL_TOKENS,
@@ -44,6 +49,11 @@ const SEED_ORGAN_IDS = new Set(SEEDS.map((seed) => seed.organ.id));
 const ENEMY_IDS = new Set(ENEMIES.map((enemy) => enemy.id));
 const TAG_SET = new Set(ALL_TAGS);
 const FLAG_SET = new Set(ALL_FLAGS);
+const EVENT_TAG_SET = new Set(ALL_EVENT_TAGS);
+/** 内容侧唯一允许**读**的引擎 flag：四条道的资格位（成道出口靠它们入池） */
+const READABLE_SYS_FLAGS = new Set<string>(Object.values(WAY_FLAGS));
+/** 天时 ＋ 出身：两池合起来是「开局变量」，很多断言对两者同解 */
+const PREMISES: readonly PremiseDef[] = [...SKIES, ...ORIGINS];
 const ESSENCE_TYPES = ["zu", "lin", "xue", "meng"] as const;
 const ENDING_TYPES = ["starve", "slain", "oldage", "ascend"] as const;
 
@@ -110,7 +120,8 @@ describe("引用完整性", () => {
     for (const event of EVENTS) {
       const read = [...(event.trigger.requiresFlags ?? []), ...(event.trigger.forbidsFlags ?? [])];
       for (const flag of read) {
-        if (flag === SYS_FLAG_ASCEND_READY) continue; // 唯一允许读的引擎 flag（登神门槛）
+        // 允许读的引擎 flag 只有四条道的资格位（成道出口靠它们入池）
+        if (READABLE_SYS_FLAGS.has(flag)) continue;
         expect(FLAG_SET.has(flag), `${event.id} 读了未知 flag ${flag}`).toBe(true);
       }
       for (const effects of allOutcomes(event).map((outcome) => outcome.effects)) {
@@ -123,7 +134,8 @@ describe("引用完整性", () => {
   });
 
   it("每个 flag 都既被写过也被读过（不留只写不读的死数据）", () => {
-    const written = new Set<string>();
+    // [2026-08-13] 「写」多了一个来源：开局变量降世时挂的 flag（`PremiseDef.flags`）
+    const written = new Set<string>(PREMISES.flatMap((premise) => premise.flags ?? []));
     const read = new Set<string>(TUNING.restHealFlags);
     for (const event of EVENTS) {
       for (const flag of event.trigger.requiresFlags ?? []) read.add(flag);
@@ -200,16 +212,43 @@ describe("引用完整性", () => {
 // ===== 2. 数量与分布（计划 B2 节的硬性清单） =====
 
 describe("数量与分布", () => {
-  it("44 事件，按 12／20／4／8 分池", () => {
-    expect(EVENTS.length).toBe(44);
+  it("51 事件，按 12／20／4／10／5 分池", () => {
+    expect(EVENTS.length).toBe(51);
     expect(HUNT_EVENTS.length).toBe(12);
     expect(EXPLORE_EVENTS.length).toBe(20);
     expect(REST_EVENTS.length).toBe(4);
-    expect(GENERIC_EVENTS.length).toBe(8);
+    // [2026-08-13] 通用池 8 → 10：多了妖王与化灵两个成道出口（登神那个「天命」原本就在）
+    expect(GENERIC_EVENTS.length).toBe(10);
+    // [2026-08-13] 开局变量专属池：大旱 1 ／孤生 2 ／双生 2
+    expect(PREMISE_EVENTS.length).toBe(5);
     for (const event of HUNT_EVENTS) expect(event.trigger.actions).toEqual(["hunt"]);
     for (const event of EXPLORE_EVENTS) expect(event.trigger.actions).toEqual(["explore"]);
     for (const event of REST_EVENTS) expect(event.trigger.actions).toEqual(["rest"]);
     for (const event of GENERIC_EVENTS) expect(event.trigger.actions).toBeUndefined();
+    for (const event of PREMISE_EVENTS) expect(event.trigger.actions).toBeUndefined();
+  });
+
+  /**
+   * 开局变量专属池的**存在理由**就是「只在那一类开局里出现」——
+   * 漏写 `requiresFlags` 的那一条会变成一条所有人都撞得到的普通事件，而没有任何别的
+   * 测试会红（它照样入池、照样能玩），于是「第二局不一样」被静默削掉一块。
+   */
+  it("开局变量专属事件必须挂在某个开局变量的 flag 上", () => {
+    const premiseFlags = new Set(PREMISES.flatMap((premise) => premise.flags ?? []));
+    expect(premiseFlags.size).toBeGreaterThan(0);
+    for (const event of PREMISE_EVENTS) {
+      const gated = (event.trigger.requiresFlags ?? []).some((flag) => premiseFlags.has(flag));
+      expect(gated, `${event.id} 没有挂在任何开局变量的 flag 上`).toBe(true);
+    }
+    // 反过来：每个挂了 flag 的开局变量都得真有专属内容（否则那个 flag 是死数据）
+    for (const premise of PREMISES) {
+      for (const flag of premise.flags ?? []) {
+        expect(
+          PREMISE_EVENTS.some((event) => (event.trigger.requiresFlags ?? []).includes(flag)),
+          `开局变量 ${premise.id} 的 flag ${flag} 没有任何专属事件`,
+        ).toBe(true);
+      }
+    }
   });
 
   it("通用池覆盖四季，且季节值合法", () => {
@@ -462,8 +501,11 @@ describe("文案纪律", () => {
       CHRONICLE_TEMPLATES.opening,
       CHRONICLE_TEMPLATES.praisePrefix,
       ...Object.values(CHRONICLE_TEMPLATES.endings),
+      ...Object.values(CHRONICLE_TEMPLATES.wayEndings),
       ...CHRONICLE_TEMPLATES.praise.map((variant) => variant.text),
     );
+    // [2026-08-13] 开局变量的三行文案都会上屏（降世屏／择神种屏／列传开篇）
+    for (const premise of PREMISES) texts.push(premise.name, premise.effect, premise.desc);
     for (const text of texts) {
       expect(ASCII_PUNCT.test(text), `半角标点：${text}`).toBe(false);
     }
@@ -473,6 +515,14 @@ describe("文案纪律", () => {
     for (const ending of ENDING_TYPES) {
       expect(charCount(CHRONICLE_TEMPLATES.endings[ending])).toBeGreaterThan(0);
     }
+    // [2026-08-13] 四条道各一段结语（缺一条就会退回泛用的登神段，而那对归山是错的）
+    for (const way of ["shen", "yaowang", "guishan", "hualing"] as const) {
+      expect(charCount(CHRONICLE_TEMPLATES.wayEndings[way]), `${way} 缺结语`).toBeGreaterThan(0);
+    }
+    // 四段不许互相重复 —— 重复就等于那两条道没有自己的结局
+    expect(new Set(Object.values(CHRONICLE_TEMPLATES.wayEndings)).size).toBe(4);
+    // 赞语必须真的按道分支（否则归山读到的仍是登神那句）
+    expect(CHRONICLE_TEMPLATES.praise.some((variant) => variant.ways)).toBe(true);
     expect(CHRONICLE_TEMPLATES.seasonNames.length).toBe(4);
     expect(CHRONICLE_TEMPLATES.praise.length).toBeGreaterThanOrEqual(4);
     const ids = CHRONICLE_TEMPLATES.praise.map((variant) => variant.id);
@@ -494,6 +544,10 @@ describe("文案纪律", () => {
       "organCount",
       "moltCount",
       "killCount",
+      // [2026-08-13] 夺命数与开局前提（引擎 composeChronicle 的 vars 里新增的三个）
+      "livesTaken",
+      "skyName",
+      "originName",
       "meng",
       "ling",
       "ti",
@@ -507,6 +561,7 @@ describe("文案纪律", () => {
       CHRONICLE_TEMPLATES.opening,
       CHRONICLE_TEMPLATES.middleLine,
       ...Object.values(CHRONICLE_TEMPLATES.endings),
+      ...Object.values(CHRONICLE_TEMPLATES.wayEndings),
       ...CHRONICLE_TEMPLATES.praise.map((variant) => variant.text),
     ];
     for (const template of templates) {
@@ -540,9 +595,34 @@ describe("视觉 token", () => {
   // 的断言就地换成命名约定断言 —— 客户端拼的是 `ART_DIR + illustration`（ART_DIR="/art/"），
   // 所以值必须是 `events/<事件 id>.webp` 这一种形状。文件名与事件 id 绑死，命名一漂就红，
   // 静默 404（界面只是空图位，不报错）才不会溜过去。
+  /**
+   * [2026-08-13] 2026-08-13 批次新加的 7 条事件**还没有图**（美术管线要单独跑一轮）。
+   *
+   * 白名单是刻意留的、且必须**逐条列名**：不列名就只能把断言放宽成「有图的才检查命名」，
+   * 那等于给「以后某次改名把一批图变成孤儿」留了藏身处。名单里每一条都写了
+   * `illustrationBrief`（管线的输入已经备好），补图时把它从名单里删掉即可。
+   */
+  const EVENTS_AWAITING_ART = new Set([
+    "qiu-way-yaowang",
+    "qiu-way-hualing",
+    "qiu-dry-springhead",
+    "qiu-lone-path",
+    "qiu-lone-winter",
+    "qiu-twin-call",
+    "qiu-twin-fall",
+  ]);
+
   it("每个事件的 illustration 都是 events/<id>.webp（B4 产出的命名约定）", () => {
     for (const event of EVENTS) {
+      if (EVENTS_AWAITING_ART.has(event.id)) {
+        expect(event.illustration, `${event.id} 在待补图名单里却已有图（该把它从名单删掉）`).toBeUndefined();
+        continue;
+      }
       expect(event.illustration, `${event.id} 缺 illustration`).toBe(`events/${event.id}.webp`);
+    }
+    // 名单只许收敛，不许出现名单里已经不存在的事件 id
+    for (const id of EVENTS_AWAITING_ART) {
+      expect(EVENTS.some((event) => event.id === id), `待补图名单里的 ${id} 已不存在`).toBe(true);
     }
   });
 

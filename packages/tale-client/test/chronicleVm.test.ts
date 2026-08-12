@@ -9,12 +9,18 @@ import {
 } from "../src/model/chronicleVm.js";
 import { FIXTURE_CONTENT, newState, withPatch } from "./helpers.js";
 
+/**
+ * [2026-08-13] `livesTaken` 缺省 1（这一世打过一场架，见 records 里那条 combat）——
+ * 缺省 0 会让「化灵」的不杀一命门槛在每个 fixture 一世里都达成，于是「最接近的那条道」
+ * 恒为化灵，每条差距报告断言都在测一件与被测无关的事。
+ */
 function deadState(patch: Partial<TaleState> = {}): TaleState {
   const base = newState(77);
   return withPatch(base, {
     alive: false,
     ending: "starve",
     year: 11,
+    livesTaken: 1,
     records: [
       ...base.records,
       { year: 2, season: 1, kind: "molt", text: "蛰伏一季，蜕生疾足。", refId: "ji-zu" },
@@ -92,12 +98,25 @@ describe("buildChronicleVm", () => {
     expect(vm.portrait.label).toBe("近神");
   });
 
-  it("登神走另一套标签", () => {
-    const state = deadState({ ending: "ascend" });
-    const entry = composeChronicle(state, FIXTURE_CONTENT);
-    const vm = buildChronicleVm(entry, bloodlineGain(state, FIXTURE_CONTENT), FIXTURE_CONTENT, state);
-    expect(vm.endingLabel).toBe("登神");
-    expect(vm.closing).toContain("神班");
+  /**
+   * [2026-08-13] 成道的 `ending` 一律是 `ascend`，门楣二字报的是**哪条道**。
+   * 四条道各一套标签与墓志 —— 归山那一句尤其不能与登神共用（一个白光贯顶，一个卧于旧穴）。
+   */
+  it("成道按道换标签与墓志，四条互不串味", () => {
+    const marks = {
+      shen: ["登神", "神班"],
+      yaowang: ["妖王", "山中之事"],
+      guishan: ["归山", "山中之兽皆来送之"],
+      hualing: ["化灵", "风过而散"],
+    } as const;
+    for (const [way, [label, closing]] of Object.entries(marks)) {
+      const state = deadState({ ending: "ascend", wayAchieved: way as keyof typeof marks });
+      const entry = composeChronicle(state, FIXTURE_CONTENT);
+      const vm = buildChronicleVm(entry, bloodlineGain(state, FIXTURE_CONTENT), FIXTURE_CONTENT, state);
+      expect(vm.endingLabel, `${way} 的门楣`).toBe(label);
+      expect(vm.closing, `${way} 的结语`).toContain(closing);
+      expect(vm.epitaph.length).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -137,37 +156,50 @@ describe("buildDeathVm", () => {
  * [M1-P2] 差距报告 —— 结局重构的目的：让人合上这一世时想的是「我差两件器官」，
  * 而不是「哦，死了」。
  */
-describe("composeAscendGap / 差距报告", () => {
+describe("composeAscendGap / 差距报告（2026-08-13 起按最接近的那条道报）", () => {
   it("只列没达成的门槛，用「差多少」而不是「有多少」", () => {
     const state = deadState({ organIds: ["organ-ling-yun"] });
-    const { gap, gapItems } = composeAscendGap(state, FIXTURE_CONTENT);
-    expect(gap.startsWith("离登神：")).toBe(true);
-    // 一世 11 岁、单器官、ling 13、de 5 —— 四条全没达成
-    expect(gapItems).toHaveLength(4);
-    expect(gapItems[0]).toBe("寿数差四岁");
-    expect(gapItems[1]).toBe("差四件器官");
+    const { gap, gapItems, way } = composeAscendGap(state, FIXTURE_CONTENT);
+    // 一世 11 岁、ling 13、de 5、夺过一命 —— 最接近的是归山（寿 11／25）
+    expect(way).toBe("guishan");
+    expect(gap.startsWith("离归山：")).toBe(true);
+    expect(gapItems).toHaveLength(2);
+    expect(gapItems[0]).toBe("寿数差十四岁");
+    expect(gapItems[1]?.startsWith("德行差")).toBe(true);
     expect(gap).not.toContain("／");
   });
 
   it("达成的门槛不出现在差距里（已经做到的事不该再念一遍）", () => {
     const base = deadState();
-    const state = { ...base, year: 20, organIds: ["a", "b", "c", "d", "e"] };
-    const { gapItems, met } = composeAscendGap(state, FIXTURE_CONTENT);
-    expect(met).toBe(2);
-    expect(gapItems.map((item) => item.slice(0, 2))).toEqual(["灵性", "德行"]);
+    const state = withPatch(base, { year: FIXTURE_CONTENT.tuning.wayGuishanYear });
+    const { gapItems, met, way } = composeAscendGap(state, FIXTURE_CONTENT);
+    expect(way).toBe("guishan");
+    expect(met).toBe(1);
+    expect(gapItems.map((item) => item.slice(0, 2))).toEqual(["德行"]);
   });
 
-  it("四项全达（真登神了那一世）换成确认句，不再是刺", () => {
-    const base = deadState({ ending: "ascend" });
-    const state = {
-      ...base,
-      year: 20,
-      organIds: ["a", "b", "c", "d", "e"],
-      stats: { ...base.stats, ling: 70, de: 50 },
-    };
-    const { gap, gapItems } = composeAscendGap(state, FIXTURE_CONTENT);
+  it("成道那一世报的是**成的那条**，且换成确认句", () => {
+    const base = deadState({ ending: "ascend", wayAchieved: "guishan" });
+    const state = withPatch(base, {
+      year: FIXTURE_CONTENT.tuning.wayGuishanYear,
+      stats: { ...base.stats, de: FIXTURE_CONTENT.tuning.wayGuishanDe },
+    });
+    const { gap, gapItems, way } = composeAscendGap(state, FIXTURE_CONTENT);
+    expect(way).toBe("guishan");
     expect(gapItems).toEqual([]);
-    expect(gap).toContain("四事既备");
+    expect(gap).toContain("归山诸事既备");
+  });
+
+  /**
+   * 「不杀一命」这条道的差距报告读法是**已夺几命**，而不是「差几条命」——
+   * 那不是努力能补上的差距，是这条道已经关了。
+   */
+  it("一世不杀的那一世报的是化灵（它是唯一还够得着的那条）", () => {
+    const state = deadState({ livesTaken: 0, records: [] });
+    const { gap, way, total } = composeAscendGap(state, FIXTURE_CONTENT);
+    expect(way).toBe("hualing");
+    expect(gap.startsWith("离化灵：")).toBe(true);
+    expect(total).toBe(2);
   });
 
   it("死亡屏与列传卷轴读的是同一份差距（两屏不许各说一套）", () => {
@@ -181,11 +213,22 @@ describe("composeAscendGap / 差距报告", () => {
     );
     expect(scroll.ascendGap).toBe(death.gap);
     expect(scroll.ascendMet).toBe(death.ascendMet);
-    expect(death.ascendTotal).toBe(4);
+    expect(scroll.gapWay).toBe(death.gapWay);
+    expect(death.ascendTotal).toBe(2);
   });
 
   it("寿终的墓志改成了明确的失败（不再是「卧于旧穴而化」那种圆满话）", () => {
     const vm = buildDeathVm(deadState({ ending: "oldage" }), FIXTURE_CONTENT);
     expect(vm.epitaph).toContain("未成器");
+  });
+
+  it("而寿终**同时**归山成道时，墓志改成褒扬（oldage 的语义分叉）", () => {
+    const vm = buildDeathVm(
+      deadState({ ending: "ascend", wayAchieved: "guishan" }),
+      FIXTURE_CONTENT,
+    );
+    expect(vm.endingLabel).toBe("归山");
+    expect(vm.epitaph).not.toContain("未成器");
+    expect(vm.epitaph).toContain("寿数既满");
   });
 });

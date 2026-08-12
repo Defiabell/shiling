@@ -7,17 +7,22 @@
 
 import {
   SYS_FLAG_STARVING,
-  ascendProgress,
+  lifeTuning,
   ownedOrgans,
-  type AscendGateId,
+  premiseOf,
+  waysProgress,
   type EssenceType,
   type TaleContent,
   type TaleState,
+  type WayGateId,
+  type WayId,
 } from "@shiling/tale-sim";
 import { PORTRAIT_LABELS, portraitArt, portraitStage, type PortraitStage } from "../art/assets.js";
 import {
-  ASCEND_GATE_LABELS,
-  ASCEND_GATE_SHORTFALL,
+  WAY_GATE_LABELS,
+  WAY_GATE_SHORTFALL,
+  WAY_LABELS,
+  WAY_SCOPES,
   ESSENCE_LABELS,
   ESSENCE_ORDER,
   STAT_LABELS,
@@ -87,33 +92,65 @@ export interface PortraitVm {
 }
 
 /**
- * [M1-P2] 「登神之路」上的一条门槛。
+ * [M1-P2 ／ 2026-08-13 扩成四道] 一条道上的一条门槛。
  *
- * 常驻在状态栏 —— 计划 P2 的第一条：**登神条件开局可见，每项达成即点亮**。
- * M0 的登神门槛只存在于引擎里，玩家一辈子（好几世）都不知道自己在往哪走，
- * 于是一世结束时只剩「哦，死了」。摆出来之后每一次蜕变、每一次德行抉择都有了指向。
+ * 常驻在状态栏 —— P2 的第一条是「登神条件开局可见，每项达成即点亮」，这一批把它从**一条道**
+ * 扩到**四条并列**：玩法再不同，若目标只有一个，第二局仍旧是同一件事再做一遍。
  */
-export interface AscendGateVm {
-  id: AscendGateId;
-  /** 「寿」「器」「灵」「德」 */
+export interface WayGateVm {
+  id: WayGateId;
+  /** 「寿」「灵」「德」「猛」「杀」「神」「净」 */
   label: string;
   have: number;
   need: number;
   met: boolean;
-  /** 0〜100 */
+  /** 0〜100（`max` 类门槛：达成 100、破了 0） */
   percent: number;
-  /** 悬停解释：「灵性 24／60　尚差三六」 */
+  /**
+   * 横带上那一行**读数**（界面直接贴，不自己拼）。
+   *
+   * `min` 类是「21／56」；`max` 类（不杀一命）是「未夺」或「已夺 3」—— 写成 `0／0`
+   * 会读成「零比零」，写成 `3／0` 更糟（读起来像超额完成，正相反）。实机抄字时撞到的。
+   */
+  read: string;
+  /** 悬停解释：「灵性 24／52　灵性差二八」 */
   hint: string;
 }
 
-export interface AscendVm {
-  gates: AscendGateVm[];
+/** 横带上的一条道（tab ＋ 展开时的那几条门槛）。 */
+export interface WayVm {
+  id: WayId;
+  /** 「登神」「妖王」「归山」「化灵」 */
+  label: string;
+  /** 一句话说清它要什么（tab 的悬停） */
+  scope: string;
+  gates: WayGateVm[];
   metCount: number;
   total: number;
-  /** 四项全满 —— 天门随时可能开 */
+  /** 门槛全备 —— 那桩事随时会来（归山则等寿终兑现） */
   ready: boolean;
-  /** 「登神之路　二／四」或 ready 时的那句话 */
+  /** 这条道已经**走不到了**（今天只有化灵会：夺过一命就闭） */
+  lost: boolean;
+  /** 「登神 一／三」 */
   caption: string;
+}
+
+export interface WaysVm {
+  /** 固定顺序：登神 → 妖王 → 归山 → 化灵 */
+  ways: WayVm[];
+  /** 引擎判的「最接近的那条」（已闭的道不参与） */
+  nearest: WayId;
+  /**
+   * 横带当前**展开**的那一条。缺省跟着 `nearest` 走；玩家点了 tab 就是他点的那条。
+   *
+   * 切 tab 是**查看态**，不是操作 —— 它不进引擎、不消耗回合，也不增加每回合的必点次数
+   * （M1 的既定裁决）。
+   */
+  shown: WayId;
+  /** 展开的那条道（`ways` 里 id === shown 的那个，界面免得再找一次） */
+  current: WayVm;
+  /** 有任何一条道门槛全备 */
+  anyReady: boolean;
 }
 
 export interface StatusVm {
@@ -132,44 +169,133 @@ export interface StatusVm {
   essences: EssenceBarVm[];
   /** 任一精气达阈值 */
   moltReady: boolean;
-  /** [M1-P2] 登神之路（常驻可见，逐项点亮） */
-  ascend: AscendVm;
+  /** [2026-08-13] 四道并列（常驻可见，逐项点亮，可切 tab 查看） */
+  ways: WaysVm;
+  /** [2026-08-13] 这一世的天时与出身 —— 状态栏那一行「值大旱之年 · 孤生」 */
+  premise: PremiseVm;
+}
+
+/** 这一世的开局前提（天时／出身各一条，两处都要给玩家看机制而不只是名字）。 */
+export interface PremiseLineVm {
+  /** 「天时」／「出身」 */
+  kind: string;
+  name: string;
+  /** 机制那一行（`PremiseDef.effect`） */
+  effect: string;
+  desc: string;
+}
+
+export interface PremiseVm {
+  sky: PremiseLineVm;
+  origin: PremiseLineVm;
+  /** 状态栏一行：「大旱之年 · 孤生」 */
+  caption: string;
+  /** 悬停：两条机制并起来 */
+  hint: string;
+}
+
+export function buildPremiseVm(state: TaleState, content: TaleContent): PremiseVm {
+  const { sky, origin } = premiseOf(state, content);
+  const line = (kind: string, def: typeof sky): PremiseLineVm => ({
+    kind,
+    name: def.name,
+    effect: def.effect,
+    desc: def.desc,
+  });
+  return {
+    sky: line("天时", sky),
+    origin: line("出身", origin),
+    caption: `${sky.name} · ${origin.name}`,
+    hint: `天时 ${sky.name}：${sky.effect}\n出身 ${origin.name}：${origin.effect}`,
+  };
 }
 
 /**
- * 登神进度的视图模型。
+ * 四道进度的视图模型。
  *
- * 门槛数值全部来自引擎的 `ascendProgress` —— 界面**不自己比大小**：那四行比较与
- * `refreshAscendFlag` 就会是两份门槛，哪天引擎加一条，进度条会照旧显示「全亮」而
- * 天命死活不入池，且没有任何测试会红。
+ * 门槛数值全部来自引擎的 `waysProgress` —— 界面**不自己比大小**：那几行比较与
+ * `refreshWayFlags` 就会是两份门槛，哪天引擎给某条道加一条，进度条会照旧显示「全亮」而
+ * 成道事件死活不入池，且没有任何测试会红。
+ *
+ * @param shown 玩家点开的那条 tab；`null` ＝ 跟着引擎判的「最接近的那条」走
  */
-export function buildAscendVm(state: TaleState, content: TaleContent): AscendVm {
-  const progress = ascendProgress(state, content);
-  const gates: AscendGateVm[] = progress.gates.map((gate) => ({
-    id: gate.id as AscendGateId,
-    label: ASCEND_GATE_LABELS[gate.id],
-    have: gate.have,
-    need: gate.need,
-    met: gate.met,
-    percent: toPercent(gate.need > 0 ? gate.have / gate.need : 1),
-    hint: gate.met
-      ? `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　已足`
-      : `${ASCEND_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　${ASCEND_GATE_SHORTFALL[gate.id](gate.short)}`,
-  }));
+export function buildWaysVm(
+  state: TaleState,
+  content: TaleContent,
+  shown: WayId | null = null,
+): WaysVm {
+  const progress = waysProgress(state, content);
+  const ways: WayVm[] = progress.ways.map((way) => {
+    const gates: WayGateVm[] = way.gates.map((gate) => ({
+      id: gate.id,
+      label: WAY_GATE_LABELS[gate.id],
+      have: gate.have,
+      need: gate.need,
+      met: gate.met,
+      /*
+       * `max` 类门槛（不杀一命）没有「进度」这回事：它要么满、要么破。按 have/need 算会
+       * 得到 have/0 → 除零，而按「破了就 0」画，那根条本身就是这条道的开关。
+       */
+      percent:
+        gate.bound === "max"
+          ? gate.met
+            ? 100
+            : 0
+          : toPercent(gate.need > 0 ? gate.have / gate.need : 1),
+      read:
+        gate.bound === "max"
+          ? gate.met
+            ? "未夺"
+            : `已夺 ${gate.have}`
+          : `${gate.have}／${gate.need}`,
+      hint: gate.met
+        ? `${WAY_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　已足`
+        : `${WAY_GATE_LABELS[gate.id]} ${gate.have}／${gate.need}　${WAY_GATE_SHORTFALL[gate.id](gate.short)}`,
+    }));
+    return {
+      id: way.id,
+      label: WAY_LABELS[way.id],
+      scope: WAY_SCOPES[way.id],
+      gates,
+      metCount: way.metCount,
+      total: gates.length,
+      ready: way.ready,
+      lost: way.lost,
+      caption: way.lost
+        ? `${WAY_LABELS[way.id]}　已闭`
+        : way.ready
+          ? `${WAY_LABELS[way.id]}　既备`
+          : `${WAY_LABELS[way.id]}　${way.metCount}／${gates.length}`,
+    };
+  });
+  /*
+   * 玩家点开的那条**已闭**也照他点的显示（「化灵 已闭　已夺三命」是他要看的答案）；
+   * 只有缺省视图才躲开已闭的道 —— 那是引擎的 `nearest` 已经处理过的事。
+   */
+  const shownId = shown ?? progress.nearest;
+  const current = ways.find((way) => way.id === shownId) ?? ways[0];
+  if (!current) throw new Error("buildWaysVm: 四道为空");
   return {
-    gates,
-    metCount: progress.metCount,
-    total: gates.length,
-    ready: progress.ready,
-    caption: progress.ready ? "四事既备　天门可望" : `登神之路　${progress.metCount}／${gates.length}`,
+    ways,
+    nearest: progress.nearest,
+    shown: current.id,
+    current,
+    anyReady: progress.ready,
   };
 }
 
 // 引擎导出了这个保留 flag 的常量（`SYS_FLAG_STARVING`），此处不再手抄字面量：
 // 抄一份就会有一天与引擎那份对不上，而对不上的表现是「饿殍告警永远不亮」——没有任何测试会红。
 
-export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm {
-  const t = content.tuning;
+export function buildStatusVm(
+  state: TaleState,
+  content: TaleContent,
+  /** 横带上玩家点开的那条道；`null` ＝ 跟着「最接近的那条」 */
+  shownWay: WayId | null = null,
+): StatusVm {
+  // 这一世生效的调参（天时／出身改过的那几项）—— 界面读的数必须与引擎结算的是同一份，
+  // 否则大旱之年会出现「饱食条说每季 −12 而实扣 −15」那种静默说谎
+  const t = lifeTuning(state, content);
   const birth = state.records.find((record) => record.kind === "birth");
   const seed = content.seeds.find((candidate) => candidate.id === birth?.refId);
   const organs = ownedOrgans(state, content);
@@ -200,7 +326,7 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     };
   });
 
-  const stage = portraitStage(state.organIds.length, t.ascendMinOrgans);
+  const stage = portraitStage(state.organIds.length);
 
   return {
     when: formatWhen(state.year, state.season, state.region),
@@ -225,6 +351,7 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     hunger,
     essences,
     moltReady: essences.some((essence) => essence.ripe),
-    ascend: buildAscendVm(state, content),
+    ways: buildWaysVm(state, content, shownWay),
+    premise: buildPremiseVm(state, content),
   };
 }

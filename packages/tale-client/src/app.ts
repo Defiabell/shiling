@@ -17,14 +17,18 @@ import {
   combatAct,
   composeChronicle,
   createLife,
+  lifeTuning,
   performAction,
+  premiseOf,
   resolveChoice,
   stalkAct,
+  waysProgress,
   type ActionId,
   type ChronicleEntry,
   type CombatAct,
   type TaleEvent,
   type TaleState,
+  type WayId,
 } from "@shiling/tale-sim";
 
 import { CONTENT, USING_FIXTURE_CONTENT } from "./content.js";
@@ -108,11 +112,25 @@ export class TaleApp {
   private busy = false;
   private lifeIndex = 0;
   private chronicleVm: ChronicleVm | null = null;
+  /**
+   * [2026-08-13] 上一世的终态 —— 择神种屏那句「上一世你死在归山路上，差德行一二」要读它。
+   *
+   * 只留一世（不是全部历史）：那句话问的是「刚刚发生了什么」，而血统存档里的
+   * `ChronicleEntry` 只有岁数与器官数，算不出差距报告（同 `buildChronicleVm` 要 state 的理由）。
+   */
+  private lastLife: TaleState | null = null;
 
   // — 「看得懂」批次：详情浮层与引导链的界面状态（都不进引擎，也不影响任何结算） —
 
   /** 当前展开的那一处；再点同一处即收起 */
   private detail: DetailSel | null = null;
+  /**
+   * [2026-08-13] 横带上玩家点开的那条道；`null` ＝ 跟着引擎判的「最接近的那条」。
+   *
+   * 纯界面状态：不进引擎、不消耗回合、不影响任何结算（切 tab 是查看态，不是操作）。
+   * 每世重置 —— 上一世奔妖王不代表这一世也该默认看妖王。
+   */
+  private wayTab: WayId | null = null;
   /** 引导链走到第几步（每一世重来；走完即永久收起并持久化） */
   private guideIndex = 0;
   private guideDismissed: boolean;
@@ -195,7 +213,7 @@ export class TaleApp {
   private renderSeed(): void {
     this.swap(
       renderSeedSelect({
-        vm: buildSeedScreenVm(this.bloodline, CONTENT),
+        vm: buildSeedScreenVm(this.bloodline, CONTENT, this.nextSeedNum(), this.lastLife),
         // createLife 在神种 id 不存在时抛错（内容 bug）——同样不让它变成静默死局
         onChoose: (seedId) => void this.safely(async () => this.startLife(seedId)),
         onUnlock: (seedId) => this.tryUnlock(seedId),
@@ -214,9 +232,20 @@ export class TaleApp {
 
   // ===== 一世 =====
 
+  /**
+   * 下一世要用的种子数。
+   *
+   * 抽成方法是因为**择神种屏要提前用它**：`rollPremise(seedNum)` 能在 `createLife` 之前
+   * 算出这一世的天时与出身（那两次抽取恒在最前，见引擎 `createLife`）。两处必须是同一条
+   * 算式，否则预告的世道与真正降生的世道会不是一个 —— 那种谎最难发现。
+   */
+  private nextSeedNum(): number {
+    return (this.baseSeed + this.lifeIndex * 0x9e3779b1) >>> 0;
+  }
+
   startLife(seedId: string): void {
     // 同一 baseSeed 下每一世换个数：既可复现，又不会世世雷同。
-    const seedNum = (this.baseSeed + this.lifeIndex * 0x9e3779b1) >>> 0;
+    const seedNum = this.nextSeedNum();
     this.lifeIndex += 1;
     const born = createLife(seedNum, seedId, CONTENT);
     // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
@@ -235,20 +264,43 @@ export class TaleApp {
     this.openedAscend = false;
     this.dormantMolted = false;
     this.detail = null;
+    this.wayTab = null;
     if (this.guideHideTimer !== null) {
       clearTimeout(this.guideHideTimer);
       this.guideHideTimer = null;
     }
     const birth = state.records.find((record) => record.kind === "birth");
     this.appendLog(state.year, state.season, [{ text: birth?.text ?? "", tone: "omen" }]);
+    /*
+     * [2026-08-13] 降世屏要交代**这一局的前提**：天时、出身，以及四条道各自要什么。
+     *
+     * 这一屏是「每局不同」唯一能一次说清的地方 —— 玩家在按下第一个行动之前就该知道
+     * 「今年大旱、我是孤生、有四条路可走」。两条前提各带机制那一行（不是风味字），
+     * 四道各带门槛数（都从引擎的 `waysProgress` 现算，界面不写第二份门槛）。
+     */
+    const { sky, origin } = premiseOf(state, CONTENT);
     this.center = {
       kind: "narration",
       key: `birth:${seedId}:${seedNum}`,
       title: "降　世",
-      lines: [birth?.text ?? "", BIRTH_LEDE],
+      /*
+       * 正文三行（出生记录、引导语、四道指路）。**四道清单不进这张卡**，只留一行指路 —— 实机量过：卡片内容想要 652px
+       * 而 body 只有 476px，溢出的正好是四道那一段（屏幕上看得见被裁掉半行）。
+       * 而四道本来就有两处更好的落点：顶上那条横带常驻显示四条的进度、点 tab 即换、
+       * 点开还有每条门槛「怎么长、怎么收束」的完整详情。这一屏只负责让人知道**它们存在**。
+       */
+      lines: [
+        birth?.text ?? "",
+        BIRTH_LEDE,
+        "四道并列：登神／妖王／归山／化灵，走通任一条即成道 —— 顶上那条横带可逐条查看。",
+      ],
       // 降世这一屏用幼兽立绘（3:4 竖构图）：「托身青丘幼兽」说的就是画上这只，
       // 也是一世里第一次让玩家看见「我是什么」。
       media: { kind: "image", src: portraitArt("cub"), aspect: "3 / 4" },
+      omens: [
+        { kind: "天时", name: sky.name, effect: sky.effect, desc: sky.desc },
+        { kind: "出身", name: origin.name, effect: origin.effect, desc: origin.desc },
+      ],
       continueLabel: null,
     };
     this.screen = "play";
@@ -496,8 +548,14 @@ export class TaleApp {
     const death = buildDeathVm(state, CONTENT);
     await playCinematic(
       {
-        // B4 的四张结局图（16:9），文件名恒等于 EndingType —— 饿殍／横死／寿终／登神各一张
-        media: { kind: "image", src: endingArt(state.ending) },
+        /*
+         * B4 的四张结局图（16:9），文件名恒等于 EndingType。
+         *
+         * [2026-08-13] 四条道共用「登神」那一张会出错：归山是「卧于旧穴而化」，
+         * 配一幅白光贯顶的图是在讲另一件事。归山改借**寿终**那一张（山野送终），
+         * 其余三条道仍用登神那张。补画四条道各自的结局图是遗留项（美术管线要单独跑）。
+         */
+        media: { kind: "image", src: endingArt(state.wayAchieved === "guishan" ? "oldage" : state.ending) },
         durationMs: 4400,
         /*
          * 第一行是结局二字（当标题排），第二行是引擎写的那句死亡旁白，第三行是收束统计，
@@ -519,6 +577,8 @@ export class TaleApp {
     this.bloodline = recordLife(this.bloodline, gain, entry);
     saveBloodline(this.storage, this.bloodline);
     this.chronicleVm = buildChronicleVm(entry, gain, CONTENT, state);
+    // 择神种屏那句「换条路试试」要读上一世的终态（差距报告算不出于 ChronicleEntry）
+    this.lastLife = state;
 
     this.screen = "chronicle";
     this.particles.setAmbient([]);
@@ -546,7 +606,20 @@ export class TaleApp {
    */
   private setDetail(sel: DetailSel | null): void {
     this.detail = sel;
-    if (sel?.kind === "ascend") this.openedAscend = true;
+    if (sel?.kind === "way") this.openedAscend = true;
+    this.renderPlayScreen();
+  }
+
+  /**
+   * 切换横带展开哪一条道（`null` ＝ 回到「跟着最接近的那条」）。
+   *
+   * 顺带把详情浮层里那一条也切过去（若正开着某条道的详情）—— 否则玩家点了「化灵」的 tab，
+   * 浮层还写着「登神」，读起来是界面在自相矛盾。
+   */
+  private setWayTab(way: WayId | null): void {
+    this.wayTab = way;
+    if (this.detail?.kind === "way" && way !== null) this.detail = { kind: "way", way };
+    if (way !== null) this.openedAscend = true;
     this.renderPlayScreen();
   }
 
@@ -609,7 +682,7 @@ export class TaleApp {
   private renderPlayScreen(): void {
     const state = this.state;
     if (!state) return;
-    const status = buildStatusVm(state, CONTENT);
+    const status = buildStatusVm(state, CONTENT, this.wayTab);
     // 进两个战术全屏时主动收掉详情：那两屏的按钮在右下角，浮层压上去等于挡住操作
     if (this.center.kind === "stalk" || this.center.kind === "combat") this.detail = null;
     const detail = this.detail === null ? null : buildDetailVm(state, CONTENT, this.detail);
@@ -620,6 +693,7 @@ export class TaleApp {
         detail,
         guide: this.guideVm(state),
         onDetail: (sel) => this.setDetail(sel),
+        onWayTab: (way) => this.setWayTab(way),
         onGuideDismiss: () => this.dismissGuide(),
         actions: buildActionVms(state, CONTENT).map((action) => {
           // 未结算的事件卡在场时，行动面板整体压住（引擎无从强制这条纪律）。
@@ -657,7 +731,9 @@ export class TaleApp {
       if (!node) continue;
       const rect = node.getBoundingClientRect();
       const value = this.state.essence[type as keyof typeof ESSENCE_RGB];
-      const intensity = Math.min(1, value / Math.max(1, CONTENT.tuning.moltThreshold));
+      // 这一世生效的阈值（灵气盛之年更低）—— 粒子的浓度得跟着玩家真正要攒到的那个数走
+      const threshold = Math.max(1, lifeTuning(this.state, CONTENT).moltThreshold);
+      const intensity = Math.min(1, value / threshold);
       if (intensity <= 0.02) continue;
       sources.push({ x: rect.left + rect.width / 2, y: rect.bottom - 6, rgb, intensity, spreadX: rect.width });
     }
@@ -783,8 +859,15 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
 
+/**
+ * 这一季的季耗 —— **必须用这一世生效的调参**（大旱之年 −15 而不是基线的 −12）。
+ *
+ * 它的用途是把季耗从飘字里减掉（否则玩家会以为潜行本身在消耗饱食）；用错数会让飘字
+ * 少减 3 点，屏幕上就凭空多出一个 −3。
+ */
 function seasonHungerCost(state: TaleState): number {
-  return CONTENT.tuning.hungerPerSeason + (state.season === 3 ? CONTENT.tuning.winterHungerExtra : 0);
+  const t = lifeTuning(state, CONTENT);
+  return t.hungerPerSeason + (state.season === 3 ? t.winterHungerExtra : 0);
 }
 
 function noticeTone(text: string, molted: boolean): LogTone {

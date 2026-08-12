@@ -1100,15 +1100,78 @@
 
 /* — [M1-P2] 登神之路：状态栏底沿那条常驻横带 — */
 
-.ascend {
+/*
+ * [2026-08-13] 四道横带：`.ways` 占状态栏最后一行（原先是 `.ascend` 自己占），
+ * 里面上下两层 —— 四颗 tab ＋ 展开那条道的门槛。
+ *
+ * 为什么门槛那一层的列数改成 auto-fit：四条道的门槛数不一样（登神 3、其余 2），
+ * 写死 `repeat(4, 1fr)` 会让妖王那条剩两个空列，横带看着像掉了东西。
+ */
+.ways {
   grid-column: 1 / -1;
+  /*
+   * 宽屏**一行**排：tabs 在左，展开那条道的说明与门槛在右。
+   *
+   * 为什么不是上下两层：状态栏每高一像素，中央舞台就矮一像素 —— 实机量到两层版式让状态栏
+   * 从 40px 长到 79px，于是同一张事件卡在 1440×900 下从「刚好装下」变成溢出 49px
+   * （长正文 ＋ 四个带门槛提示的抉择那种卡）。这一批加的是横带，不该由别人的卡片付账。
+   * 窄屏（≤1080）再退回两层（那边横向本来就不够）。
+   */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hair);
+}
+
+.ways__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.waytab {
+  padding: 3px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--kai);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  color: var(--txt-3);
+  cursor: pointer;
+  transition: color 0.18s, border-color 0.18s, background 0.18s;
+}
+
+.waytab:hover {
+  color: var(--txt-2);
+  border-color: rgba(232, 236, 242, 0.24);
+}
+
+.waytab.is-active {
+  color: var(--txt-1);
+  border-color: var(--gold);
+  background: rgba(198, 160, 90, 0.1);
+}
+
+/* 门槛全备：那桩事随时会来 */
+.waytab.is-ready {
+  color: var(--gold);
+}
+
+/* 已闭（今天只有化灵会）：划掉，且不再吸引点击 */
+.waytab.is-lost {
+  color: var(--txt-4, rgba(232, 236, 242, 0.32));
+  text-decoration: line-through;
+}
+
+.ascend {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 16px;
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--hair);
 }
 
 .ascend__zi {
@@ -1126,7 +1189,7 @@
 
 .ascend__gates {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 12px;
 }
 
@@ -2676,4 +2739,181 @@
     from { opacity: 0; transform: translate(-50%, -50%) translateY(8px); }
     to { opacity: 1; transform: translate(-50%, -50%); }
   }
+}
+
+
+/* ===== 2026-08-13「每局不同」：降世屏的前提与四道清单、择神种屏的世道预告 ===== */
+
+/*
+ * 降世屏的两条前提。**机制那一行（`.omens__effect`）必须看得见** —— 只写名字与风味
+ * 的话，这一批的全部主张（开局变量真改机制）在屏幕上就不成立。
+ *
+ * 排版走 `dl` 的两列网格而不是 flex：两条前提的「天时／出身」二字要对齐，
+ * 而机制那一行长度差得很多（「无修正 —— 青丘少有的太平年」vs 三段账）。
+ */
+.omens {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  /* 间距一路收到 476px 的 body 装得下为止（实机量的：溢出 12px 就会裁掉风味句最后一行） */
+  gap: 3px 12px;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--r-md, 10px);
+  background: rgba(232, 236, 242, 0.04);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.omens__kind {
+  font-family: var(--kai);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  color: var(--txt-3);
+  white-space: nowrap;
+}
+
+.omens__body {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+
+.omens__name {
+  font-family: var(--kai);
+  font-size: 14px;
+  color: var(--txt-1);
+}
+
+.omens__effect {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+  color: var(--gold);
+  /* 三段账在窄屏要能折行 —— 截掉的正好是那几个数 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 风味句**两行封顶**：`effect` 那一行的长度按天时不同（大旱之年有四段账，比平年长一倍），
+ * 而 body 只有 476px —— 不封顶的话某个天时会把风味句挤成第三行，从而把整块推出卡片。
+ * 封的是风味（读不全不心疼），机制那一行永不封顶。
+ */
+.omens__desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--txt-3);
+}
+
+/*
+ * 矮视口（1280×800 那一档笔记本）：舞台只有 423px，前提块要再省 6px 才装得下。
+ * 省的是间距，不是内容 —— 机制那一行与风味句都还在。
+ */
+@media (max-height: 860px) {
+  .omens {
+    gap: 2px 12px;
+    margin: 8px 0 0;
+    padding: 8px 12px;
+  }
+}
+
+/* 择神种屏：此世天时预告 ＋ 「换条路试试」 */
+.nextlife {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.nextlife__caption {
+  font-family: var(--kai);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--txt-2);
+}
+
+.nextlife__omens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.nextlife__omen {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nextlife__omen > b {
+  font-family: var(--kai);
+  font-size: 12.5px;
+  color: var(--txt-1);
+}
+
+.nextlife__omen > em {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--gold);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.nextlife__advice {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--txt-2);
+}
+
+@media (max-width: 1080px) {
+  /*
+   * 窄屏（≤1080）是**单列纵向滚动**的版式（`.play` 从三栏变一列），所以这里省的每一像素
+   * 都直接换成「玩家少滚多少」。实测（1024×768，降世那一屏）：这一批加的四道横带 ＋ 降世屏
+   * 前提块把行动按钮从 top 1072 推到 1480，多出 408px —— 按钮本来就在 fold 以下（单列版式
+   * 从 M0 起就是滚动页，不是这一批引入的），但多推四百像素是实打实的代价。
+   *
+   * 前提的风味句与四道的一句话指向已经在**所有**宽度上从这个块里搬走了（风味句进正文、
+   * 指向进 tab 悬停与详情，见 `.omens`／`.birthways__list` 的注释），所以这里只再收紧间距。
+   * 机制那一行（`.omens__effect`）与门槛数（`.birthways__gates`）**一个都不许砍** ——
+   * 那两样正是这一批要让玩家看到的东西。
+   */
+  /* 窄屏退回两层：横向放不下「四颗 tab ＋ 说明 ＋ 门槛」 */
+  .ways {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .ways__tabs {
+    gap: 4px;
+  }
+
+  .waytab {
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+
+  .ascend {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .ascend__gates {
+    grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+    gap: 8px;
+  }
+
+  .omens {
+    gap: 4px 10px;
+    padding: 9px 11px;
+    margin-top: 10px;
+  }
+
 }

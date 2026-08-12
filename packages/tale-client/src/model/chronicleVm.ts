@@ -6,12 +6,20 @@
  * `chronicleTemplates.praisePrefix`（内容提供的「赞曰：」），不猜行数，行数不足时优雅降级。
  */
 
-import { ascendProgress, type ChronicleEntry, type EndingType, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import {
+  waysProgress,
+  type ChronicleEntry,
+  type EndingType,
+  type TaleContent,
+  type TaleState,
+  type WayId,
+} from "@shiling/tale-sim";
 import { PORTRAIT_LABELS, portraitArt, portraitStage } from "../art/assets.js";
 import {
-  ASCEND_GATE_SHORTFALL,
-  ENDING_EPITAPHS,
-  ENDING_LABELS,
+  WAY_GATE_SHORTFALL,
+  WAY_LABELS,
+  endingLabelOf,
+  epitaphOf,
   formatCountCn,
   formatYearCn,
 } from "./format.js";
@@ -43,13 +51,20 @@ export interface ChronicleVm {
   /** 本世结算的血统点 */
   bloodlineGain: number;
   /**
-   * [M1-P2] 差距报告 —— 死亡演出一闪而过，而**卷轴是玩家按「转世」之前盯着的那一屏**。
-   * 那颗按钮旁边就该写着「你差两件器官」。
+   * [M1-P2 ／ 2026-08-13 改按道] 差距报告 —— 死亡演出一闪而过，而**卷轴是玩家按「转世」
+   * 之前盯着的那一屏**。那颗按钮旁边就该写着「你差德行六」。
+   *
+   * 报的是**最接近的那条道**，不再只报登神：一个奔妖王的一世死时被告知「差灵性四十」
+   * 是一句与他这一世无关的话，而这一行的全部作用就是让他想「下一局我差的是那两件事」。
    */
   ascendGap: string;
   ascendGapItems: string[];
   ascendMet: number;
   ascendTotal: number;
+  /** 差距报告针对的那条道（成道则是成的那条） */
+  gapWay: WayId;
+  /** 那条道的汉字名 */
+  gapWayLabel: string;
   /** 终局形态的立绘（按器官数分阶），用于卷轴上的「其形」画像 */
   portrait: PortraitStage;
 }
@@ -90,7 +105,7 @@ export function buildChronicleVm(
   const gap = composeAscendGap(state, content);
   const praisePrefix = content.chronicleTemplates.praisePrefix;
   const parts = splitChronicleBody(entry.body, praisePrefix);
-  const stage = portraitStage(entry.organCount, content.tuning.ascendMinOrgans);
+  const stage = portraitStage(entry.organCount);
   return {
     title: entry.title,
     opening: parts.opening,
@@ -99,8 +114,8 @@ export function buildChronicleVm(
     praisePrefix,
     praise: parts.praise,
     ending: entry.ending,
-    endingLabel: ENDING_LABELS[entry.ending],
-    epitaph: ENDING_EPITAPHS[entry.ending],
+    endingLabel: endingLabelOf(entry.ending, state.wayAchieved),
+    epitaph: epitaphOf(entry.ending, state.wayAchieved),
     years: entry.years,
     yearsCn: formatYearCn(entry.years),
     organCount: entry.organCount,
@@ -110,6 +125,8 @@ export function buildChronicleVm(
     ascendGapItems: gap.gapItems,
     ascendMet: gap.met,
     ascendTotal: gap.total,
+    gapWay: gap.way,
+    gapWayLabel: WAY_LABELS[gap.way],
     portrait: { label: PORTRAIT_LABELS[stage], src: portraitArt(stage) },
   };
 }
@@ -141,6 +158,9 @@ export interface DeathVm {
   /** 达成了几条／共几条 —— 死亡屏上那排点亮的门槛 */
   ascendMet: number;
   ascendTotal: number;
+  /** 差距报告针对的那条道 */
+  gapWay: WayId;
+  gapWayLabel: string;
 }
 
 /**
@@ -161,24 +181,33 @@ export function composeDeathSummary(
 }
 
 /**
- * 「你差二件器官、灵性差三六。」—— 差距报告。
+ * 「离归山：寿数差三岁、德行差一二。」—— 差距报告。
  *
  * 只列**没达成**的门槛，且用「差多少」而不是「有多少」：`8/15` 是一个读数，
  * 「差七岁」是一件没做完的事。两者信息量相同，后者才会让人想再开一世。
+ *
+ * [2026-08-13] 报的是**最接近的那条道**（成道则是成的那条）。这一行的读法因此从
+ * 「你离唯一的目标有多远」变成「你这一世走的是哪条路、还差什么」—— 后者才接得上
+ * 转世屏那句「下一局换条路试试」。
  */
 export function composeAscendGap(
   state: TaleState,
   content: TaleContent,
-): { gap: string; gapItems: string[]; met: number; total: number } {
-  const progress = ascendProgress(state, content);
-  const gapItems = progress.gates
+): { gap: string; gapItems: string[]; met: number; total: number; way: WayId } {
+  const progress = waysProgress(state, content);
+  // 成道那一世报的是**成的那条**（它的门槛当然全备），否则报最接近的那条
+  const wayId = state.wayAchieved ?? progress.nearest;
+  const way = progress.ways.find((item) => item.id === wayId) ?? progress.ways[0];
+  if (!way) throw new Error("composeAscendGap: 四道为空");
+  const gapItems = way.gates
     .filter((gate) => !gate.met)
-    .map((gate) => ASCEND_GATE_SHORTFALL[gate.id](gate.short));
+    .map((gate) => WAY_GATE_SHORTFALL[gate.id](gate.short));
+  const label = WAY_LABELS[way.id];
   const gap =
     gapItems.length === 0
-      ? "四事既备 —— 天门曾为你开过。"
-      : `离登神：${gapItems.join("、")}。`;
-  return { gap, gapItems, met: progress.metCount, total: progress.gates.length };
+      ? `${label}诸事既备 —— 那道门曾为你开过。`
+      : `离${label}：${gapItems.join("、")}。`;
+  return { gap, gapItems, met: way.metCount, total: way.gates.length, way: way.id };
 }
 
 export function buildDeathVm(state: TaleState, content: TaleContent): DeathVm {
@@ -187,11 +216,12 @@ export function buildDeathVm(state: TaleState, content: TaleContent): DeathVm {
   const organCount = state.organIds.length;
   const killCount = state.records.filter((record) => record.kind === "combat").length;
   const moltCount = state.records.filter((record) => record.kind === "molt").length;
-  const { gap, gapItems, met, total } = composeAscendGap(state, content);
+  const { gap, gapItems, met, total, way } = composeAscendGap(state, content);
+  const epitaph = epitaphOf(ending, state.wayAchieved);
   return {
-    endingLabel: ENDING_LABELS[ending],
-    epitaph: ENDING_EPITAPHS[ending],
-    lastWords: death?.text ?? ENDING_EPITAPHS[ending],
+    endingLabel: endingLabelOf(ending, state.wayAchieved),
+    epitaph,
+    lastWords: death?.text ?? epitaph,
     yearsCn: formatYearCn(state.year),
     organCount,
     killCount,
@@ -201,5 +231,7 @@ export function buildDeathVm(state: TaleState, content: TaleContent): DeathVm {
     gapItems,
     ascendMet: met,
     ascendTotal: total,
+    gapWay: way,
+    gapWayLabel: WAY_LABELS[way],
   };
 }

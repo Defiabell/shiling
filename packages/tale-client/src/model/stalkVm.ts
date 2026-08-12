@@ -13,6 +13,7 @@
  */
 
 import {
+  lifeTuning,
   stalkPreview,
   type StalkAct,
   type StalkPreview,
@@ -185,7 +186,7 @@ export function buildStalkVm(
   stalk: StalkState,
   content: TaleContent,
 ): StalkVm {
-  const t = content.tuning;
+  const t = lifeTuning(state, content);
   const preview = stalkPreview(state, content);
   const prey = content.enemies.find((candidate) => candidate.id === stalk.preyId);
   const startDistance = prey?.startDistance ?? t.stalkStartDistance;

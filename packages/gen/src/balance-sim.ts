@@ -9,6 +9,7 @@
  * 用法：
  *   pnpm -C packages/gen balance                # 200 世，谨慎玩家
  *   pnpm -C packages/gen balance -- --lives 500 --profile reckless
+ *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek   # 四道平衡（每世奔一条道）
  *   pnpm -C packages/gen balance -- --json      # 只吐 JSON，便于对比两次调参
  *   pnpm -C packages/gen balance -- --lab --lives 400   # 追猎实验台：打法×风向×build 的得手率
  *       （--lives 就是每格的场数，缺省沿用整世模式的 200；手感判据的实测值都是按 400 报的）
@@ -20,7 +21,7 @@
  */
 
 import {
-  ascendProgress,
+  WAY_ORDER,
   availableActions,
   bloodlineGain,
   combatAct,
@@ -37,10 +38,13 @@ import {
   type BodyPart,
   type CombatAct,
   type EndingType,
+  type EventChoice,
   type StalkAct,
   type TaleEvent,
   type TaleState,
+  type WayId,
   type WindDir,
+  waysProgress,
 } from "../../tale-sim/src/index.ts";
 import { CHANCE_BANDS } from "../../tale-client/src/model/stalkVm.ts";
 import {
@@ -100,14 +104,17 @@ let STALK_PLAN: StalkPlan = "patient";
 let COMBAT_PLAN: CombatPlan = "screen";
 
 /**
- * 抉择策略。三种画像，因为「平衡」对不同玩法是不同的数：
+ * 抉择策略。四种画像，因为「平衡」对不同玩法是不同的数：
  *
  * - `cautious`：优先最后一个可选抉择 —— 本库的抉择顺序是「诱人／有门槛／稳妥」，
  *   末条基本是不冒险那条。这是**人会怎么玩**的近似（新玩家第一世多半更谨慎）。
  * - `reckless`：优先第一条（最诱人也最容易死），一世时长的下界。
  * - `random`：满足门槛的选项里等概率乱点 —— B2 冒烟用的那个画像，好把贪心分支都踩到。
+ * - `wayseek`（2026-08-13）：**每一世先挑一条道，然后奔它**。它回答的是这一批唯一要紧的
+ *   平衡问题「四条道是不是都够得着」—— 前三种画像不奔任何道（它们饿了就猎、乱点抉择），
+ *   于是妖王与化灵在它们手里恒为 0%，而那既不能证明门槛太难，也不能证明门槛合适。
  */
-type Profile = "cautious" | "reckless" | "random";
+type Profile = "cautious" | "reckless" | "random" | "wayseek";
 
 interface Args {
   lives: number;
@@ -189,8 +196,13 @@ function parseArgs(argv: readonly string[]): Args {
     }
     if (flag === "--profile") {
       const value = argv[i + 1];
-      if (value !== "cautious" && value !== "reckless" && value !== "random") {
-        throw new Error("--profile 只能是 cautious｜reckless｜random");
+      if (
+        value !== "cautious" &&
+        value !== "reckless" &&
+        value !== "random" &&
+        value !== "wayseek"
+      ) {
+        throw new Error("--profile 只能是 cautious｜reckless｜random｜wayseek");
       }
       args.profile = value;
       i += 1;
@@ -229,9 +241,20 @@ interface LifeSummary {
   /** 追猎场次与得手数（M1-P1 的核心手感指标） */
   hunts: number;
   caught: number;
-  /** [M1-P2] 死时达成了几条登神门槛 ＋ 逐条是否达成（差距报告的总体版） */
-  ascendMet: number;
-  ascendGates: Record<string, boolean>;
+  /** [2026-08-13] 死时四条道各自达成了几条门槛／是否够格／是否已闭 */
+  wayMet: Record<WayId, number>;
+  /** 逐条门槛是否达成：`"shen.ling"` → true。调门槛时唯一有用的那一列 */
+  wayGates: Record<string, boolean>;
+  wayReady: Record<WayId, boolean>;
+  /** 成道的那条道（null ＝ 没成） */
+  wayAchieved: WayId | null;
+  /** 这一世奔的是哪条道（只有 wayseek 画像有；别的画像为 null） */
+  waySought: WayId | null;
+  /** 本世夺命数（妖王的进度、化灵的断门，同一个计数器） */
+  livesTaken: number;
+  /** 这一世的天时／出身 —— 「每局不同」的两个开局变量 */
+  skyId: string;
+  originId: string;
   chars: CharCount;
   /** slain 的两种来源：战斗致死（死亡记录带击杀者 refId）与事件直杀 */
   slainBy: "combat" | "event" | null;
@@ -254,13 +277,58 @@ function decideAction(
   actions: readonly ActionId[],
   roll: () => number,
   restsThisInjury: number,
+  /** [2026-08-13] 这一世奔的那条道（`wayseek` 画像才有）——它改变的是**行动**，不只是抉择 */
+  way: WayId | null,
 ): ActionId {
   if (actions.includes("dormant")) return "dormant";
   const hurt = state.flags.includes(FLAG_WOUND) || state.flags.includes(FLAG_SICK);
+  /*
+   * 化灵是四条道里唯一**改变操作序列**的一条：狩猎得手就是夺命，所以这条道根本不能猎。
+   * 它只能靠休憩回饱食、靠探索撞事件挣灵 —— 这就是「第二局玩法完全不同」的最强证据，
+   * 也是这个画像存在的理由（前三种画像饿了就猎，永远量不到这条道）。
+   */
+  if (way === "hualing") {
+    if (state.hunger <= 55) return "rest";
+    if (hurt && restsThisInjury < 2) return "rest";
+    return "explore";
+  }
   if (state.hunger <= 50) return "hunt";
   if (hurt && restsThisInjury < 2) return "rest";
+  // 妖王要夺命数：肚子不饿也照猎（那是它唯一稳定的夺命来源）
+  if (way === "yaowang") return roll() < 0.75 ? "hunt" : "explore";
+  // 归山要活得久：能歇就歇，探索去挣德
+  if (way === "guishan" && state.hunger <= 70) return "hunt";
+  if (way === "guishan") return roll() < 0.3 ? "rest" : "explore";
   if (state.hunger >= 70) return "explore";
   return roll() < 0.5 ? "hunt" : "explore";
+}
+
+/**
+ * 「奔某条道」的抉择偏好：按 outcome 声明的 effects 给每个抉择打分，挑分最高的。
+ *
+ * 它只读**内容自己声明的 effects**（与玩家读得到的抉择文案同源），不碰引擎内部 ——
+ * 同 `screenCombat` 的纪律：机器玩家不许用真人拿不到的信息。
+ */
+function scoreChoiceForWay(choice: EventChoice, way: WayId): number {
+  let score = 0;
+  for (const outcome of choice.outcomes) {
+    const e = outcome.effects;
+    const w = outcome.weight;
+    const stats = e.stats ?? {};
+    const lives = e.takesLife ?? 0;
+    if (way === "shen") {
+      score += w * ((stats.ling ?? 0) * 2 + (stats.de ?? 0) * 2 + (e.devourDivine ? 40 : 0));
+    } else if (way === "yaowang") {
+      score += w * ((stats.meng ?? 0) * 3 + lives * 4 - (stats.de ?? 0) * 0);
+    } else if (way === "guishan") {
+      score += w * ((stats.de ?? 0) * 3 + (e.lifespan ?? 0) * 20 + (stats.ti ?? 0) + (e.hunger ?? 0) * 0.2);
+    } else {
+      // 化灵：灵最重要，而**任何夺命都是终局** —— 一条命就把这条道关上
+      score += w * ((stats.ling ?? 0) * 3 - lives * 500);
+    }
+    if (e.die !== undefined && e.die !== "ascend") score -= w * 400;
+  }
+  return score;
 }
 
 function isHurt(state: TaleState): boolean {
@@ -449,6 +517,7 @@ function pickChoice(
   eligible: readonly number[],
   profile: Profile,
   roll: () => number,
+  way: WayId | null,
 ): number {
   const ascendIdx = eligible.find((idx) =>
     event.choices[idx]?.outcomes.every((outcome) => outcome.effects.die === "ascend"),
@@ -456,16 +525,36 @@ function pickChoice(
   if (ascendIdx !== undefined) return ascendIdx;
   const last = eligible[eligible.length - 1] ?? 0;
   const first = eligible[0] ?? 0;
+  if (profile === "wayseek" && way !== null) {
+    let best = first;
+    let bestScore = -Infinity;
+    for (const idx of eligible) {
+      const choice = event.choices[idx];
+      if (!choice) continue;
+      const score = scoreChoiceForWay(choice, way);
+      if (score > bestScore) {
+        bestScore = score;
+        best = idx;
+      }
+    }
+    return best;
+  }
   if (profile === "cautious") return last;
   if (profile === "reckless") return first;
   return eligible[Math.floor(roll() * eligible.length)] ?? first;
 }
 
-function runLife(seed: number, profile: Profile): LifeSummary {
+function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   // 策略自己的随机源与引擎的 rngState 分开，互不污染（同 seed 仍完全可复现）
   const cursor = createCursor(seed ^ 0x5f3759df);
   const roll = (): number => cursor.next();
   const fired = new Set<string>();
+  /*
+   * 奔哪条道：**按序轮转**而不是随机挑 —— 500 世要给出「每条道各自成道率」，随机挑会让
+   * 四条道的样本量各自带 ±5% 的抖动，而目标区间只有 0.5〜5%，那点抖动能把结论翻过来。
+   */
+  const waySought: WayId | null =
+    profile === "wayseek" ? (WAY_ORDER[index % WAY_ORDER.length] ?? "shen") : null;
 
   let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
   let steps = 0;
@@ -494,7 +583,13 @@ function runLife(seed: number, profile: Profile): LifeSummary {
       continue;
     }
     if (!isHurt(state)) restsThisInjury = 0;
-    const action = decideAction(state, availableActions(state, CONTENT), roll, restsThisInjury);
+    const action = decideAction(
+      state,
+      availableActions(state, CONTENT),
+      roll,
+      restsThisInjury,
+      waySought,
+    );
     if (action === "rest") restsThisInjury += 1;
     decisions.action += 1;
     const turn = performAction(state, action, CONTENT);
@@ -508,7 +603,12 @@ function runLife(seed: number, profile: Profile): LifeSummary {
     chars.prose += event.title.length + event.body.length;
     // 玩家会把每个抉择都看一遍（含点不了的那些 —— 那正是「欲望展示位」的用处）
     chars.options += event.choices.reduce((sum, choice) => sum + choice.label.length, 0);
-    const outcome = resolveChoice(state, event, pickChoice(event, eligible, profile, roll), CONTENT);
+    const outcome = resolveChoice(
+      state,
+      event,
+      pickChoice(event, eligible, profile, roll, waySought),
+      CONTENT,
+    );
     chars.prose += outcome.outcomeText.length;
     state = outcome.state;
     fired.add(event.id);
@@ -520,14 +620,24 @@ function runLife(seed: number, profile: Profile): LifeSummary {
   const death = deaths[deaths.length - 1];
   const chronicle = composeChronicle(state, CONTENT);
   chars.chronicle = chronicle.body.length;
-  const progress = ascendProgress(state, CONTENT);
+  const progress = waysProgress(state, CONTENT);
+  const byWay = <T,>(pick: (way: (typeof progress.ways)[number]) => T): Record<WayId, T> =>
+    Object.fromEntries(progress.ways.map((way) => [way.id, pick(way)])) as Record<WayId, T>;
   return {
     decisions,
     chars,
     hunts,
     caught,
-    ascendMet: progress.metCount,
-    ascendGates: Object.fromEntries(progress.gates.map((gate) => [gate.id, gate.met])),
+    wayMet: byWay((way) => way.metCount),
+    wayGates: Object.fromEntries(
+      progress.ways.flatMap((way) => way.gates.map((gate) => [`${way.id}.${gate.id}`, gate.met])),
+    ),
+    wayReady: byWay((way) => way.ready),
+    wayAchieved: state.wayAchieved,
+    waySought,
+    livesTaken: state.livesTaken,
+    skyId: state.skyId,
+    originId: state.originId,
     ending: state.ending,
     years: state.year,
     molts: state.records.filter((record) => record.kind === "molt").length,
@@ -909,7 +1019,9 @@ function main(): number {
   COMBAT_PLAN = args.combatPlan;
   if (args.lab === "combat") return runCombatLab(args.lives);
   if (args.lab === "stalk") return runLab(args.lives);
-  const lives = Array.from({ length: args.lives }, (_, index) => runLife(1000 + index * 7919, args.profile));
+  const lives = Array.from({ length: args.lives }, (_, index) =>
+    runLife(1000 + index * 7919, args.profile, index),
+  );
 
   const rate = (ending: EndingType): number => pct(lives.filter((life) => life.ending === ending).length, lives.length);
   const years = lives.map((life) => life.years);
@@ -974,26 +1086,78 @@ function main(): number {
     eventCoverage: `${fired.size}/${EVENTS.length}`,
     missingEvents: missing,
     /**
-     * [M1-P2] 登神诊断：四条门槛各自的达成率 ＋ 差一条／差两条的分布。
+     * [2026-08-13] 四道诊断：每条道的**成道率**、够格率、门槛达成分布。
      *
-     * 存在的理由：M0/P1 实测「登神率 0%」只是一个数，看不出**卡在哪一条**。分开量之后
-     * 一眼能看出瓶颈（实测是德，其次是灵），于是调参有的放矢，而不是把四条一起放宽。
+     * 存在的理由与 M1-P2 的登神诊断相同（一个「0%」看不出卡在哪），只是从一条道扩到四条：
+     * 逐条列出来，才知道该调哪一个门槛，而不是把四条一起放软 —— 后者会把「四条道难度不同」
+     * 这件事一起调没。
+     *
+     * `sought` 那一列是 `wayseek` 画像特有的：**奔这条道的那些一世里**有多少真的成了。
+     * 它比总体成道率有用得多 —— 总体率被「另外三条道的一世」摊薄了四倍。
      */
-    ascend: {
-      gates: {
-        year: pct(lives.filter((life) => life.ascendGates.year).length, lives.length),
-        organs: pct(lives.filter((life) => life.ascendGates.organs).length, lives.length),
-        ling: pct(lives.filter((life) => life.ascendGates.ling).length, lives.length),
-        de: pct(lives.filter((life) => life.ascendGates.de).length, lives.length),
-      },
-      met4: pct(lives.filter((life) => life.ascendMet === 4).length, lives.length),
-      met3: pct(lives.filter((life) => life.ascendMet === 3).length, lives.length),
-      meanMet: Math.round(mean(lives.map((life) => life.ascendMet)) * 100) / 100,
+    ways: Object.fromEntries(
+      WAY_ORDER.map((way) => {
+        const sought = lives.filter((life) => life.waySought === way);
+        return [
+          way,
+          {
+            achieved: pct(lives.filter((life) => life.wayAchieved === way).length, lives.length),
+            ready: pct(lives.filter((life) => life.wayReady[way]).length, lives.length),
+            meanMet: Math.round(mean(lives.map((life) => life.wayMet[way])) * 100) / 100,
+            soughtLives: sought.length,
+            soughtAchieved: pct(
+              sought.filter((life) => life.wayAchieved === way).length,
+              sought.length,
+            ),
+          },
+        ];
+      }),
+    ) as Record<WayId, { achieved: number; ready: number; meanMet: number; soughtLives: number; soughtAchieved: number }>,
+    livesTaken: {
+      mean: Math.round(mean(lives.map((life) => life.livesTaken)) * 10) / 10,
+      p90: quantile(lives.map((life) => life.livesTaken), 0.9),
+      zero: pct(lives.filter((life) => life.livesTaken === 0).length, lives.length),
     },
+    /** 开局变量的分布：五天时 × 四出身都得真的掷得出来（权重写错会静默少一档） */
+    premises: {
+      skies: Object.fromEntries(
+        [...new Set(lives.map((life) => life.skyId))].sort().map((id) => [
+          id,
+          pct(lives.filter((life) => life.skyId === id).length, lives.length),
+        ]),
+      ),
+      origins: Object.fromEntries(
+        [...new Set(lives.map((life) => life.originId))].sort().map((id) => [
+          id,
+          pct(lives.filter((life) => life.originId === id).length, lives.length),
+        ]),
+      ),
+    },
+    /*
+     * 目标分两组，因为**问的不是同一件事**：
+     *
+     * - 三条通用目标（活过 8 岁／平均蜕变／五天时四出身都掷得出）对每个画像都该成立。
+     * - 「合计成道率 8〜15%」与「每条道各自 0.5〜5%」只对 `wayseek` 有意义 —— 别的画像
+     *   不奔任何道（cautious 挑末条、random 乱点、reckless 挑最贪的），化灵在它们手里
+     *   恒为 0%，那既不能证明门槛太难也不能证明合适。把它们无条件列出来只会产出一个
+     *   「设计使然的 ✗」，而那种 ✗ 会让整张检查表失去意义。别的画像换成一条上界：
+     *   成道不能变得太容易。
+     */
     targets: {
       "活过 8 岁 ≥60%": pct(lives.filter((life) => life.years >= 8).length, lives.length) >= 60,
       "平均蜕变 2〜4": mean(molts) >= 2 && mean(molts) <= 4,
-      "登神率 0.5〜3%": rate("ascend") >= 0.5 && rate("ascend") <= 3,
+      "五天时四出身都掷得出":
+        new Set(lives.map((life) => life.skyId)).size === 5 &&
+        new Set(lives.map((life) => life.originId)).size === 4,
+      ...(args.profile === "wayseek"
+        ? {
+            "合计成道率 8〜15%": rate("ascend") >= 8 && rate("ascend") <= 15,
+            "每条道各自 0.5〜5%": WAY_ORDER.every((way) => {
+              const r = pct(lives.filter((life) => life.wayAchieved === way).length, lives.length);
+              return r >= 0.5 && r <= 5;
+            }),
+          }
+        : { "成道率 ≤15%（不奔道的画像只守上界）": rate("ascend") <= 15 }),
     },
   };
 
@@ -1022,9 +1186,39 @@ function main(): number {
   console.log(
     `估算真人时长：慢 ${report.reading.minutesSlow} 分／中 ${report.reading.minutesMid} 分（p90 ${report.reading.minutesMidP90} 分）／快 ${report.reading.minutesFast} 分　（设计目标 60〜180 分）`,
   );
+  const WAY_NAMES: Record<WayId, string> = {
+    shen: "登神",
+    yaowang: "妖王",
+    guishan: "归山",
+    hualing: "化灵",
+  };
+  console.log("四道：");
+  for (const way of WAY_ORDER) {
+    const row = report.ways[way];
+    console.log(
+      `  ${WAY_NAMES[way]}　成道 ${String(row.achieved).padStart(4)}%　够格 ${String(row.ready).padStart(4)}%　` +
+        `平均达成 ${row.meanMet} 条` +
+        (row.soughtLives > 0 ? `　奔它的 ${row.soughtLives} 世里成 ${row.soughtAchieved}%` : ""),
+    );
+    // 逐条门槛（只看奔这条道的那些一世）—— 调门槛时唯一有用的那一列
+    const sought = lives.filter((life) => life.waySought === way || args.profile !== "wayseek");
+    const gateIds = Object.keys(sought[0]?.wayGates ?? {}).filter((key) => key.startsWith(`${way}.`));
+    if (gateIds.length > 0 && sought.length > 0) {
+      console.log(
+        `      门槛：${gateIds
+          .map((key) => `${key.slice(way.length + 1)} ${pct(sought.filter((life) => life.wayGates[key]).length, sought.length)}%`)
+          .join(" ／ ")}`,
+      );
+    }
+  }
   console.log(
-    `登神门槛达成率：岁 ${report.ascend.gates.year}% ／器官 ${report.ascend.gates.organs}% ／灵 ${report.ascend.gates.ling}% ／德 ${report.ascend.gates.de}%　` +
-      `四项全达 ${report.ascend.met4}%　差一条 ${report.ascend.met3}%　平均达成 ${report.ascend.meanMet} 条`,
+    `夺命数：均 ${report.livesTaken.mean}（p90 ${report.livesTaken.p90}）　一世不杀 ${report.livesTaken.zero}%`,
+  );
+  console.log(
+    `天时分布：${Object.entries(report.premises.skies).map(([id, r]) => `${id} ${r}%`).join(" ／ ")}`,
+  );
+  console.log(
+    `出身分布：${Object.entries(report.premises.origins).map(([id, r]) => `${id} ${r}%`).join(" ／ ")}`,
   );
   console.log(`事件覆盖：${report.eventCoverage}　未触发：${report.missingEvents.join("、") || "无"}`);
   for (const [name, ok] of Object.entries(report.targets)) console.log(`${ok ? "✓" : "✗"} ${name}`);

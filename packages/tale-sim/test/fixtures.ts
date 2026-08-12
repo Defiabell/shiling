@@ -18,6 +18,7 @@ import {
   type CombatState,
   type EnemyDef,
   type OrganDef,
+  type PremiseDef,
   type SeedDef,
   type StalkState,
   type TaleContent,
@@ -272,6 +273,14 @@ const FIXTURE_CHRONICLE: ChronicleTemplates = {
     oldage: "寿数既尽，卧于旧穴而化。",
     ascend: "白光贯顶，遂脱兽籍而列神班。",
   },
+  // [2026-08-13] 四条道各一段（必填）；fixture 里刻意各带一个可识别的词，
+  // 好让测试断言「读到的是这一条道的结语」而不是兜底那句
+  wayEndings: {
+    shen: "白光贯顶，遂脱兽籍而列神班。",
+    yaowang: "青丘之兽尽伏，自此山中之事决于其一念。",
+    guishan: "寿全德厚，卧于旧穴而化，山中之兽皆来送之。",
+    hualing: "未尝杀一命，形骸透明，风过而散。",
+  },
   praisePrefix: "赞曰：",
   praise: [
     {
@@ -295,12 +304,37 @@ const FIXTURE_TUNING: TaleTuning = {
   huntPreyIds: [ENEMY_YE_ZHI],
 };
 
+/**
+ * [2026-08-13] fixture 的天时／出身：**各只有一条、且都不带任何修正**。
+ *
+ * 刻意做成「无修正」：既有的两百多条断言全都建立在「tuning 就是 fixture 那一份」之上，
+ * 若 fixture 的开局变量带修正，每一条数值断言都要按天时重算一遍 —— 那样测的就不是被测的
+ * 那个公式了。开局变量本身的行为由 `premise.test.ts` 用**显式声明修正**的 content 专测。
+ */
+export const FIXTURE_SKY: PremiseDef = {
+  id: "sky-fixture",
+  name: "常年",
+  effect: "无修正",
+  desc: "测试用的天时：什么都不改。",
+  weight: 1,
+};
+
+export const FIXTURE_ORIGIN: PremiseDef = {
+  id: "origin-fixture",
+  name: "常胎",
+  effect: "无修正",
+  desc: "测试用的出身：什么都不改。",
+  weight: 1,
+};
+
 /** fixture 内容聚合体，形状与 B2 的 `TALE_CONTENT` 一致。 */
 export const FIXTURE_CONTENT: TaleContent = {
   events: FIXTURE_EVENTS,
   organs: FIXTURE_ORGANS,
   seeds: FIXTURE_SEEDS,
   enemies: FIXTURE_ENEMIES,
+  skies: [FIXTURE_SKY],
+  origins: [FIXTURE_ORIGIN],
   tuning: FIXTURE_TUNING,
   chronicleTemplates: FIXTURE_CHRONICLE,
 };
@@ -311,6 +345,8 @@ export interface ContentOverrides {
   organs?: OrganDef[];
   seeds?: SeedDef[];
   enemies?: EnemyDef[];
+  skies?: PremiseDef[];
+  origins?: PremiseDef[];
   tuning?: Partial<TaleTuning>;
   chronicleTemplates?: ChronicleTemplates;
 }
@@ -325,6 +361,8 @@ export function makeContent(overrides: ContentOverrides = {}): TaleContent {
     organs: overrides.organs ?? FIXTURE_CONTENT.organs,
     seeds: overrides.seeds ?? FIXTURE_CONTENT.seeds,
     enemies: overrides.enemies ?? FIXTURE_CONTENT.enemies,
+    skies: overrides.skies ?? FIXTURE_CONTENT.skies,
+    origins: overrides.origins ?? FIXTURE_CONTENT.origins,
     tuning: { ...FIXTURE_CONTENT.tuning, ...overrides.tuning },
     chronicleTemplates: overrides.chronicleTemplates ?? FIXTURE_CONTENT.chronicleTemplates,
   };

@@ -36,12 +36,26 @@ export const FLAG_HUNTED = "hunted";
 /** 穴中容留过异类小兽 */
 export const FLAG_KIN_GUEST = "kin-guest";
 
+// — 开局变量（2026-08-13）：由 `PremiseDef.flags` 在降世那一刻挂上，一世不摘 —
+//
+// 它们与「奇遇线索」的分工是：线索记「这一世发生过什么」，这三个记「这一世生在什么局面里」。
+// 都是普通内容 flag（不带 `sys:`）—— 引擎只负责把它们挂上，读取全在事件 trigger 里，
+// 于是「专属事件线」是纯内容决定的事。
+
+/** 天时＝大旱之年（开泉眼干涸那条线） */
+export const FLAG_SKY_DROUGHT = "sky-drought";
+/** 出身＝孤生（开独行那条线） */
+export const FLAG_BORN_SOLITARY = "born-solitary";
+/** 出身＝双生（开同胞那条线） */
+export const FLAG_BORN_TWIN = "born-twin";
+
 /**
  * 全部合法内容 flag（schema 测试用）。
  *
- * 测试还会断言**每个 flag 都既被写过（`addFlags`）又被读过**（某事件的
- * `requiresFlags`／`forbidsFlags`，或 `tuning.restHealFlags`）—— 只写不读的 flag 是
- * 死数据，看起来像内容其实什么都不做，最容易在后续批次里被误当成「已经实现的机制」。
+ * 测试还会断言**每个 flag 都既被写过又被读过**：写＝某事件的 `addFlags` **或**某个开局
+ * 变量的 `PremiseDef.flags`（2026-08-13 起多了这个来源），读＝某事件的
+ * `requiresFlags`／`forbidsFlags`，或 `tuning.restHealFlags`。只写不读的 flag 是死数据，
+ * 看起来像内容其实什么都不做，最容易在后续批次里被误当成「已经实现的机制」。
  */
 export const ALL_FLAGS: readonly string[] = [
   FLAG_WOUND,
@@ -55,4 +69,7 @@ export const ALL_FLAGS: readonly string[] = [
   FLAG_FIREFLY_LED,
   FLAG_HUNTED,
   FLAG_KIN_GUEST,
+  FLAG_SKY_DROUGHT,
+  FLAG_BORN_SOLITARY,
+  FLAG_BORN_TWIN,
 ];

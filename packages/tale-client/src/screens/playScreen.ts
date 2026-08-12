@@ -19,7 +19,7 @@ import type { GuideVm } from "../model/guideVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { StatusVm } from "../model/statusVm.js";
-import type { ActionId, CombatAct } from "@shiling/tale-sim";
+import type { ActionId, CombatAct, WayId } from "@shiling/tale-sim";
 
 export type CenterVm =
   | {
@@ -29,10 +29,27 @@ export type CenterVm =
       lines: string[];
       media: MediaAsset | null;
       continueLabel: string | null;
+      /**
+       * [2026-08-13] 降世屏那两条「前提」：天时与出身，各带**机制那一行**。
+       *
+       * 为什么不塞进 `lines`：它们不是旁白而是**账**（「每季多饿 3　水泽之事 ×2」），
+       * 要跟正文分开排、要能被 E2E 逐条读出来。只有降世那一屏用得上，所以是可选字段。
+       */
+      omens?: NarrationOmenVm[];
     }
   | { kind: "event"; key: string; card: EventCardVm }
   | { kind: "combat"; key: string; combat: CombatVm }
   | { kind: "stalk"; key: string; stalk: StalkVm };
+
+/** 降世屏上的一条前提（天时／出身）：名字 ＋ 机制账 ＋ 风味一句。 */
+export interface NarrationOmenVm {
+  /** 「天时」／「出身」 */
+  kind: string;
+  name: string;
+  /** 机制那一行 —— 这一批的全部主张就在这一行上，它不许被省 */
+  effect: string;
+  desc: string;
+}
 
 export interface PlayProps {
   status: StatusVm;
@@ -53,6 +70,8 @@ export interface PlayProps {
   onContinue(): void;
   /** 点同一处 ＝ 收起（调用方传 null）；详情的开合不进引擎 */
   onDetail(sel: DetailSel | null): void;
+  /** 切换横带展开哪一条道；`null` ＝ 回到「跟着最接近的那条」。纯查看态，不进引擎 */
+  onWayTab(way: WayId | null): void;
   onGuideDismiss(): void;
 }
 
@@ -225,51 +244,80 @@ function guideBar(guide: GuideVm, props: PlayProps): HTMLElement {
 }
 
 /**
- * 登神之路 —— **常驻**在状态栏底沿的一条横带（计划 P2 的第一条）。
+ * 四道并列 —— **常驻**在状态栏底沿的一条横带（P2 的「登神之路」在 2026-08-13 扩成四条）。
  *
- * 为什么必须常驻而不是放进某个面板：M0 的登神门槛只存在于引擎里，玩家好几世都不知道
- * 自己在往哪走，于是一世结束只剩「哦，死了」。摆在最常看的那一栏之后，每一次蜕变、
- * 每一次德行抉择才有了指向 —— 也让死亡屏那句「你差二件器官」有了前情。
+ * 为什么必须常驻而不是放进某个面板：M0 的门槛只存在于引擎里，玩家好几世都不知道自己在
+ * 往哪走，于是一世结束只剩「哦，死了」。摆在最常看的那一栏之后，每一次蜕变、每一次德行
+ * 抉择才有了指向 —— 也让死亡屏那句「离归山：德行差一二」有了前情。
+ *
+ * ## 切 tab 是**查看态**，不是操作
+ * 四颗 tab 只换「横带上展开哪一条」，不进引擎、不消耗回合、不影响任何结算（M1 的既定
+ * 裁决：不得增加每回合的必点次数）。缺省展开的是引擎判的「最接近的那条」——
+ * 玩家什么都不点也总看得见一条与自己这一世有关的道。
  */
-function ascendPath(ascend: StatusVm["ascend"], props: PlayProps): HTMLElement {
-  const children = [
-    el("span", { class: "ascend__zi", text: ascend.caption }),
-    el(
-      "div",
-      { class: "ascend__gates" },
-      ascend.gates.map((gate) =>
-        el(
-          "div",
-          {
-            class: `agate${gate.met ? " is-met" : ""}`,
-            title: gate.hint,
-            attrs: { "data-gate": gate.id, "data-met": gate.met ? "1" : "0" },
-          },
-          [
-            el("b", { class: "agate__zi", text: gate.label }),
-            el("span", { class: "agate__num", text: `${gate.have}／${gate.need}` }),
-            el("div", { class: "agate__track" }, [
-              el("i", { class: "agate__fill", style: `width:${gate.percent}%` }),
-            ]),
-          ],
-        ),
+function waysPath(ways: StatusVm["ways"], props: PlayProps): HTMLElement {
+  const tabs = el(
+    "div",
+    { class: "ways__tabs", attrs: { role: "tablist", "aria-label": "四道" } },
+    ways.ways.map((way) => {
+      const active = way.id === ways.shown;
+      return el("button", {
+        class: `waytab${active ? " is-active" : ""}${way.ready ? " is-ready" : ""}${way.lost ? " is-lost" : ""}`,
+        text: way.caption,
+        title: `${way.label}：${way.scope}`,
+        attrs: {
+          type: "button",
+          role: "tab",
+          "aria-selected": String(active),
+          "data-waytab": way.id,
+          "data-way-met": String(way.metCount),
+          "data-way-lost": way.lost ? "1" : "0",
+        },
+        // 点已展开的那条 ＝ 回到「跟着最接近的那条走」（传 null），同详情浮层的开合体例
+        on: { click: () => props.onWayTab(active ? null : way.id) },
+      });
+    }),
+  );
+
+  const current = ways.current;
+  const gates = el(
+    "div",
+    { class: "ascend__gates" },
+    current.gates.map((gate) =>
+      el(
+        "div",
+        {
+          class: `agate${gate.met ? " is-met" : ""}`,
+          title: gate.hint,
+          attrs: { "data-gate": gate.id, "data-met": gate.met ? "1" : "0" },
+        },
+        [
+          el("b", { class: "agate__zi", text: gate.label }),
+          // 读数由 VM 给（`max` 类门槛不是「几比几」而是「未夺／已夺 N」）—— 界面不自己拼
+          el("span", { class: "agate__num", text: gate.read }),
+          el("div", { class: "agate__track" }, [
+            el("i", { class: "agate__fill", style: `width:${gate.percent}%` }),
+          ]),
+        ],
       ),
     ),
-  ];
-  return detailButton(
-    props,
-    { kind: "ascend" },
-    "ascend",
-    {
-      class: `ascend${ascend.ready ? " is-ready" : ""}`,
-      // 点开看「四门槛各自怎么长」—— 常驻横带只给进度，而「德只能从抉择里挣」这种事
-      // 没处可写，玩家于是不知道该往哪走（引导链第四步指的就是这里）
-      title: "点开看这一世要凑齐什么",
-      anchor: "ascend",
-      extra: { "data-ascend-met": String(ascend.metCount) },
-    },
-    children,
   );
+
+  const body = detailButton(
+    props,
+    { kind: "way", way: current.id },
+    `way:${current.id}`,
+    {
+      class: `ascend${current.ready ? " is-ready" : ""}${current.lost ? " is-lost" : ""}`,
+      // 点开看「这条道的门槛各自怎么长、它怎么收束」—— 横带只给「差多少」
+      title: `点开看${current.label}要凑齐什么`,
+      anchor: "ascend",
+      extra: { "data-way": current.id, "data-ascend-met": String(current.metCount) },
+    },
+    [el("span", { class: "ascend__zi", text: current.scope }), gates],
+  );
+
+  return el("div", { class: "ways" }, [tabs, body]);
 }
 
 function statusBar(status: StatusVm, props: PlayProps): HTMLElement {
@@ -349,7 +397,7 @@ function statusBar(status: StatusVm, props: PlayProps): HTMLElement {
       ),
     ]),
 
-    ascendPath(status.ascend, props),
+    waysPath(status.ways, props),
   ]);
 }
 
@@ -460,6 +508,24 @@ function narrationCard(center: Extract<CenterVm, { kind: "narration" }>, props: 
           { class: "card__prose" },
           center.lines.map((line) => el("p", { text: line })),
         ),
+        /*
+         * [2026-08-13] 降世屏的两条前提。**机制那一行必须上屏** —— 只写名字（「大旱之年」）
+         * 与「一行风味字」无从区分，而这一批的全部主张就是开局变量真改机制。
+         */
+        center.omens && center.omens.length > 0
+          ? el(
+              "dl",
+              { class: "omens", attrs: { "data-omens": String(center.omens.length) } },
+              center.omens.flatMap((omen) => [
+                el("dt", { class: "omens__kind", text: omen.kind }),
+                el("dd", { class: "omens__body", attrs: { "data-omen": omen.name } }, [
+                  el("b", { class: "omens__name", text: omen.name }),
+                  el("em", { class: "omens__effect", text: omen.effect }),
+                  el("span", { class: "omens__desc", text: omen.desc }),
+                ]),
+              ]),
+            )
+          : null,
         center.continueLabel
           ? el("div", { class: "card__foot" }, [
               el("button", {

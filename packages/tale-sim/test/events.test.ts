@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SYS_FLAG_ASCEND_READY,
+  SYS_FLAG_DIVINE_EATEN,
   createLife,
   eligibleChoiceIdxs,
   performAction,
@@ -350,14 +351,20 @@ describe("trigger 匹配", () => {
     ).not.toBeNull();
   });
 
-  it("登神门槛靠引擎挂的 sys:ascend-ready flag 生效", () => {
+  it("成道出口靠引擎挂的 sys:way-* flag 生效（登神：灵德齐备且尝过神兽）", () => {
     const content = soloContent(MANDATE);
-    const notYet: TaleState = { ...life(), year: 15, stats: { meng: 10, ling: 60, ti: 20, de: 40 } };
-    // organIds 只有神种 1 个，不满足 ascendMinOrgans=5
+    const t = content.tuning;
+    // 灵德都够，但没尝过神兽 → 门槛不齐，天命不入池
+    const notYet: TaleState = {
+      ...life(),
+      // year 15 是 fixture 那张卡自己 trigger 上的 minYear（与引擎的四道门槛无关）
+      year: 15,
+      stats: { meng: 10, ling: t.wayShenLing, ti: 20, de: t.wayShenDe },
+    };
     expect(notYet.flags).not.toContain(SYS_FLAG_ASCEND_READY);
     expect(performAction(notYet, "rest", content).pendingEvent).toBeNull();
 
-    const ready = withOrgans(notYet, ORGAN_GOU_CHI, ORGAN_WU_MU, ORGAN_LIN_JIA, ORGAN_JI_ZU);
+    const ready: TaleState = { ...notYet, flags: [...notYet.flags, SYS_FLAG_DIVINE_EATEN] };
     const turn = performAction(ready, "rest", content);
     expect(turn.state.flags).toContain(SYS_FLAG_ASCEND_READY);
     expect(turn.pendingEvent?.id).toBe(EVENT_MANDATE);

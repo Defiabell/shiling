@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { lifeTuning, waysProgress } from "@shiling/tale-sim";
 import { ORGAN_JI_ZU, ORGAN_LONG_XIAN, TALE_CONTENT } from "@shiling/tale-content";
 import {
   GUIDE_STEPS,
@@ -17,9 +18,17 @@ import {
   guideSnapshot,
   type GuideSnapshot,
 } from "../src/model/guideVm.js";
-import { newState, withPatch } from "./helpers.js";
+import { WAY_LABELS } from "../src/model/format.js";
+import { realState as newState, withPatch } from "./helpers.js";
 
-const T = TALE_CONTENT.tuning;
+/**
+ * [2026-08-13] 期望值一律按**这一世生效的调参**算，不按 `TALE_CONTENT.tuning` 算。
+ *
+ * 天时会改 `hungerPerSeason`／`huntFoodGain`／`moltThreshold` 这几项（大旱之年每季 −15
+ * 而不是基线的 −12），而引导链的提示读的就是生效值 —— 拿基线当期望值只会在下一次
+ * 「这个种子换了个天时」时红一次，而红的是测试而不是产品。
+ */
+const T = lifeTuning(newState(), TALE_CONTENT);
 const SEED_ORGAN = "organ-ling-yun";
 
 function snap(patch: Partial<GuideSnapshot> = {}): GuideSnapshot {
@@ -79,7 +88,12 @@ describe("guideSnapshot", () => {
     // 身上已有第二枚器官，但没蛰伏过 —— 快照照实报 false
     expect(result.dormantMolted).toBe(false);
     expect(guideSnapshot(state, TALE_CONTENT, { ...ui, dormantMolted: true }).dormantMolted).toBe(true);
-    expect(result.gatesMet).toBe(0);
+    /*
+     * 最接近的那条道达成了几条门槛。这一世还没夺过命，于是**化灵**的「不杀一命」已经
+     * 达成 —— 那正是引擎判的「最近的一条」，`gatesMet` 照实报 1。
+     * （这一位只用来判断引导链第四步是否该自动打勾。）
+     */
+    expect(result.gatesMet).toBe(1);
   });
 });
 
@@ -114,10 +128,19 @@ describe("每一步的提示都带真数（不是「去猎食吧」这种废话�
     expect(buildGuideVm(newState(), TALE_CONTENT, 2).hint).toContain("先蜕一枚器官");
   });
 
-  it("第四步：四门槛的当前进度一行摆齐", () => {
-    const vm = buildGuideVm(newState(), TALE_CONTENT, 3);
-    expect(vm.hint).toContain(`器 1／${T.ascendMinOrgans}`);
-    expect(vm.hint).toContain(`灵 13／${T.ascendMinLing}`);
+  /**
+   * [2026-08-13] 第四步教的是那条**横带**（四道并列），提示报的是「最接近的那条道」的
+   * 逐条门槛 —— 与横带缺省展开的那条同源，首尾对得上。
+   */
+  it("第四步：最接近那条道的门槛一行摆齐", () => {
+    const state = newState();
+    const vm = buildGuideVm(state, TALE_CONTENT, 3);
+    const progress = waysProgress(state, TALE_CONTENT);
+    const nearest = progress.ways.find((way) => way.id === progress.nearest);
+    expect(vm.hint).toContain(WAY_LABELS[progress.nearest]);
+    for (const gate of nearest?.gates ?? []) {
+      expect(vm.hint).toContain(`${gate.have}／${gate.need}`);
+    }
   });
 });
 

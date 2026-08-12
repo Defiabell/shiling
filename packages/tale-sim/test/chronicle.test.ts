@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   SYS_FLAG_ASCEND_READY,
-  ascendProgress,
+  SYS_FLAG_DIVINE_EATEN,
+  WAY_FLAGS,
   bloodlineGain,
   cnNumeral,
   composeChronicle,
   createLife,
   performAction,
   render,
+  waysProgress,
   type EndingType,
   type LifeRecord,
   type TaleState,
+  type WayId,
 } from "../src/index.js";
 import {
   ENEMY_YE_ZHI,
@@ -25,11 +28,21 @@ import {
 
 const CONTENT = contentWithoutEvents();
 
-/** 造一个「已经过完」的一世：给定结局、岁数与若干素材记录。 */
+/**
+ * 造一个「已经过完」的一世：给定结局、岁数与若干素材记录。
+ *
+ * [2026-08-13] `livesTaken` 缺省 **1**（「一世总要吃点活的」）—— 缺省 0 会让「化灵」那条道
+ * 的「不杀一命」门槛在每一个 fixture 一世里都是达成的，于是每条血统点断言都白拿一分，
+ * 而那一分与被测的东西无关。要测化灵就显式传 0（见「化灵」那几条）。
+ */
 function finishedLife(options: {
   ending: EndingType;
   year?: number;
   de?: number;
+  ling?: number;
+  livesTaken?: number;
+  /** 成道时是哪条道（`ending: "ascend"` 才有意义） */
+  way?: WayId;
   extraRecords?: LifeRecord[];
   organIds?: string[];
 }): TaleState {
@@ -37,10 +50,12 @@ function finishedLife(options: {
   return {
     ...base,
     year: options.year ?? 7,
-    stats: { ...base.stats, de: options.de ?? 5 },
+    stats: { ...base.stats, de: options.de ?? 5, ling: options.ling ?? base.stats.ling },
     organIds: options.organIds ?? base.organIds,
+    livesTaken: options.livesTaken ?? 1,
     alive: false,
     ending: options.ending,
+    wayAchieved: options.ending === "ascend" ? (options.way ?? null) : null,
     records: [...base.records, ...(options.extraRecords ?? [])],
   };
 }
@@ -298,19 +313,30 @@ describe("bloodlineGain 四来源（M1-P2 加了「距登神多近」）", () =>
     expect(gain(finishedLife({ ending: "oldage", year: 25 }))).toBe(3);
   });
 
-  it("登神 +3，其余结局无此项", () => {
-    expect(gain(finishedLife({ ending: "ascend", year: 3 }))).toBe(3);
+  /**
+   * [2026-08-13] 成道那一笔按**道**给（`tuning.wayBloodline`），不再是固定 +3：
+   * 四条道的难度不一样，同一个 +3 会让「哪条道都一样」。
+   */
+  it("成道按道加权，其余结局无此项", () => {
+    for (const way of ["shen", "yaowang", "guishan", "hualing"] as const) {
+      expect(gain(finishedLife({ ending: "ascend", way, year: 3 }))).toBe(
+        CONTENT.tuning.wayBloodline[way],
+      );
+    }
     expect(gain(finishedLife({ ending: "slain", year: 3 }))).toBe(0);
+    // 四条给的不是同一个数（否则「按道加权」这句话是空的）
+    expect(new Set(Object.values(CONTENT.tuning.wayBloodline)).size).toBeGreaterThan(1);
   });
 
   it("四来源叠加", () => {
     const state = finishedLife({
       ending: "ascend",
+      way: "shen",
       year: 21,
       extraRecords: [MOLT_RECORD, { ...MOLT_RECORD, year: 4 }, { ...MOLT_RECORD, year: 9 }],
     });
-    // 3 蜕变 ＋ 2 个十年 ＋ 3 登神 ＋ 1 条门槛（21 ≥ 15 岁）
-    expect(gain(state)).toBe(9);
+    // 3 蜕变 ＋ 2 个十年 ＋ 4 登神成道 ＋ 0 条门槛（最接近的是归山，寿 21／25 与德 5／60 都没到）
+    expect(gain(state)).toBe(3 + 2 + CONTENT.tuning.wayBloodline.shen);
   });
 
   it("击杀不计入血统点", () => {
@@ -334,77 +360,120 @@ describe("bloodlineGain 四来源（M1-P2 加了「距登神多近」）", () =>
   });
 
   /**
-   * 第四项存在的理由（计划 P2「血统结算按距登神多近加权」）：让「差一点」也算数。
+   * 第四项存在的理由（计划 P2「血统结算按距登神多近加权」，2026-08-13 改按**最接近的那条道**）：
+   * 让「差一点」也算数。
    *
-   * 原来的三项只认寿数 —— 一个活到十八岁、攒了五件器官、灵性六十的一世，与一个活到十八岁
-   * 什么都没干的一世拿一样的血统点，于是「往登神走」在跨世层面**没有回报**，玩家死后
-   * 没有任何理由觉得「这一世比上一世更近了」。
+   * 为什么不是四条道求和：化灵的「不杀一命」在降世那一刻就是达成的，求和等于每一世白拿
+   * 一分，也把「差一点」稀释掉。按最接近的那条算，读法才与死亡屏那句差距报告一致。
    */
-  it("每达成一条登神门槛 +1（同寿同蜕变，走得更近的那一世给得更多）", () => {
+  it("最接近那条道每达成一条门槛 +1（同寿同蜕变，走得更近的那一世给得更多）", () => {
+    // 寿 18／25、德 5／60：归山最接近，一条也没达成
     const plain = finishedLife({ ending: "oldage", year: 18 });
-    // 18 岁那条已达成
-    expect(gain(plain)).toBe(1 + 1);
-    const closer: TaleState = {
-      ...plain,
-      organIds: ["a", "b", "c", "d", "e"],
-      stats: { ...plain.stats, ling: 60 },
-    };
-    // 岁数 ＋ 器官 ＋ 灵 三条达成，德还差 → 1 个十年 ＋ 3
-    expect(gain(closer)).toBe(1 + 3);
-    const almost: TaleState = { ...closer, stats: { ...closer.stats, ling: 60, de: 40 } };
-    expect(gain(almost)).toBe(1 + 4);
+    expect(gain(plain)).toBe(1);
+    // 德挣到 60 → 归山的德那条达成（寿还差七岁）
+    const closer: TaleState = { ...plain, stats: { ...plain.stats, de: 60 } };
+    expect(gain(closer)).toBe(1 + 1);
+    // 寿也到 25 → 归山两条全达（活着的话就该成道了）
+    const almost: TaleState = { ...closer, year: 25 };
+    expect(gain(almost)).toBe(2 + 2);
     expect(gain(almost)).toBeGreaterThan(gain(plain));
   });
 
-  it("四项全满但没登神，也比什么都没做的同龄人高出 4 点", () => {
+  it("门槛全满但没成道，也比什么都没做的同龄人高", () => {
     const wasted = finishedLife({ ending: "oldage", year: 18 });
-    const ready: TaleState = {
-      ...wasted,
-      organIds: ["a", "b", "c", "d", "e"],
-      stats: { ...wasted.stats, ling: 70, de: 45 },
-    };
-    expect(gain(ready) - gain(wasted)).toBe(3);
+    const ready: TaleState = { ...wasted, stats: { ...wasted.stats, de: 62 } };
+    expect(gain(ready) - gain(wasted)).toBe(1);
+  });
+
+  it("一世不杀的那条道也进得了这一项（化灵：不杀一命本身就是一条门槛）", () => {
+    const pacifist = finishedLife({ ending: "starve", year: 4, livesTaken: 0 });
+    // 化灵：不杀一命达成、灵还差 → 最接近的是化灵，metCount 1
+    expect(waysProgress(pacifist, CONTENT).nearest).toBe("hualing");
+    expect(gain(pacifist)).toBe(1);
+    // 夺过一命 → 化灵已闭，它不再是「最接近的那条」
+    const hunter: TaleState = { ...pacifist, livesTaken: 1 };
+    expect(waysProgress(hunter, CONTENT).nearest).not.toBe("hualing");
+    expect(gain(hunter)).toBe(0);
   });
 });
 
-describe("ascendProgress（主界面进度条与死亡屏差距报告共用一份判据）", () => {
-  it("四条门槛按固定顺序给出，have/need/short 都是原始数值", () => {
-    const state = finishedLife({ ending: "oldage", year: 9 });
-    const progress = ascendProgress(state, CONTENT);
-    expect(progress.gates.map((gate) => gate.id)).toEqual(["year", "organs", "ling", "de"]);
-    const [year, organs, ling, de] = progress.gates;
-    expect(year).toMatchObject({ have: 9, need: 15, met: false, short: 6 });
-    // 神种器官恒占 organIds[0]
-    expect(organs).toMatchObject({ have: 1, need: 5, met: false, short: 4 });
-    expect(ling?.short).toBe(CONTENT.tuning.ascendMinLing - state.stats.ling);
-    expect(de?.short).toBe(CONTENT.tuning.ascendMinDe - state.stats.de);
-    expect(progress.metCount).toBe(0);
-    expect(progress.ready).toBe(false);
+describe("waysProgress（主界面横带与死亡屏差距报告共用一份判据）", () => {
+  it("四条道按固定顺序给出，各自的门槛也定序", () => {
+    const progress = waysProgress(finishedLife({ ending: "oldage", year: 9 }), CONTENT);
+    expect(progress.ways.map((way) => way.id)).toEqual(["shen", "yaowang", "guishan", "hualing"]);
+    expect(progress.ways.map((way) => way.gates.map((gate) => gate.id))).toEqual([
+      ["ling", "de", "divine"],
+      ["lives", "meng"],
+      ["year", "de"],
+      ["ling", "nokill"],
+    ]);
   });
 
-  it("达成的门槛 short 归零、met 为真", () => {
-    const state: TaleState = { ...finishedLife({ ending: "oldage", year: 20 }) };
-    const [year] = ascendProgress(state, CONTENT).gates;
-    expect(year).toMatchObject({ met: true, short: 0 });
+  it("`min` 门槛的 have／need／short 都是原始数值", () => {
+    const state = finishedLife({ ending: "oldage", year: 9, de: 5 });
+    const guishan = waysProgress(state, CONTENT).ways.find((way) => way.id === "guishan");
+    const [year, de] = guishan?.gates ?? [];
+    expect(year).toMatchObject({
+      bound: "min",
+      have: 9,
+      need: CONTENT.tuning.wayGuishanYear,
+      met: false,
+      short: CONTENT.tuning.wayGuishanYear - 9,
+    });
+    expect(de?.short).toBe(CONTENT.tuning.wayGuishanDe - 5);
   });
 
-  it("四项全满 → ready，且与引擎自己挂的 SYS_FLAG_ASCEND_READY 同进同退", () => {
+  /**
+   * `max` 那一档只有「不杀一命」用得上，但它必须是**数据里的一位**而不是特例分支：
+   * 用 `min` 硬套（need 0、have 0）的话，任何 `have >= need` 的通用判定都会把「已夺三命」
+   * 判成达标 —— 而那正是化灵这条道唯一的本钱。
+   */
+  it("`nokill` 是 max 类门槛：short 读作「已夺几命」，破了就 lost", () => {
+    const clean = finishedLife({ ending: "starve", year: 2, livesTaken: 0 });
+    const hualingClean = waysProgress(clean, CONTENT).ways.find((way) => way.id === "hualing");
+    expect(hualingClean?.gates[1]).toMatchObject({ bound: "max", have: 0, need: 0, met: true, short: 0 });
+    expect(hualingClean?.lost).toBe(false);
+
+    const bloodied: TaleState = { ...clean, livesTaken: 3 };
+    const hualingBlood = waysProgress(bloodied, CONTENT).ways.find((way) => way.id === "hualing");
+    expect(hualingBlood?.gates[1]).toMatchObject({ met: false, short: 3 });
+    expect(hualingBlood?.lost).toBe(true);
+    // 别的道没有 max 门槛，永远不会「闭」
+    for (const way of waysProgress(bloodied, CONTENT).ways) {
+      if (way.id !== "hualing") expect(way.lost).toBe(false);
+    }
+  });
+
+  it("已闭的道不参与「最接近」的竞争", () => {
+    // 灵 71／72 差一点、但已夺一命 → 化灵接近度最高却已闭，nearest 不能是它
+    const state = finishedLife({ ending: "starve", year: 1, ling: 71, livesTaken: 1 });
+    const progress = waysProgress(state, CONTENT);
+    const hualing = progress.ways.find((way) => way.id === "hualing");
+    // 灵那一条几乎满（71／门槛），可另一条门槛破了 → 接近度仍是四条里最高的
+    const others = progress.ways.filter((way) => way.id !== "hualing");
+    expect(hualing?.closeness).toBeGreaterThan(Math.max(...others.map((way) => way.closeness)));
+    expect(progress.nearest).not.toBe("hualing");
+  });
+
+  it("某条道全满 → readyIds 含它，且与引擎挂的 WAY_FLAGS 同进同退", () => {
     const born = createLife(1, FIXTURE_SEED_ID, CONTENT);
     const ready: TaleState = {
       ...born,
-      year: 15,
-      organIds: [...born.organIds, "a", "b", "c", "d"],
-      stats: { ...born.stats, ling: 60, de: 40 },
+      hunger: 80,
+      stats: { ...born.stats, ling: CONTENT.tuning.wayShenLing, de: CONTENT.tuning.wayShenDe },
+      flags: [...born.flags, SYS_FLAG_DIVINE_EATEN],
     };
-    expect(ascendProgress(ready, CONTENT).ready).toBe(true);
+    expect(waysProgress(ready, CONTENT).readyIds).toContain("shen");
     // 走一个回合让引擎重算 flag：进度说 ready，flag 就必须亮
-    const after = performAction({ ...ready, hunger: 80 }, "rest", CONTENT).state;
+    const after = performAction(ready, "rest", CONTENT).state;
     expect(after.flags).toContain(SYS_FLAG_ASCEND_READY);
-    expect(ascendProgress(after, CONTENT).ready).toBe(true);
+    expect(after.flags).toContain(WAY_FLAGS.shen);
+    expect(waysProgress(after, CONTENT).readyIds).toContain("shen");
   });
 
   it("死亡后仍算得出进度（差距报告是在死亡屏上读的）", () => {
     const dead = finishedLife({ ending: "oldage", year: 12 });
-    expect(ascendProgress(dead, CONTENT).gates[0]?.short).toBe(3);
+    const guishan = waysProgress(dead, CONTENT).ways.find((way) => way.id === "guishan");
+    expect(guishan?.gates[0]?.short).toBe(CONTENT.tuning.wayGuishanYear - 12);
   });
 });

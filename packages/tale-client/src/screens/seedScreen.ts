@@ -124,6 +124,30 @@ export function renderSeedSelect(props: SeedProps): HTMLElement {
         el("b", { text: String(vm.points), attrs: { "data-points": "1" } }),
       ]),
     ]),
+    /*
+     * [2026-08-13] 「此世天时」预告 ＋ 「换条路试试」。
+     *
+     * 摆在神种卡**之前**：这一屏原本只有三张卡，于是第二局就是从同一个起点再来一次。
+     * 天时与出身能提前显示，是因为引擎 `rollPremise(seedNum)` 是纯函数、且降世时那两次
+     * 抽取恒在最前 —— 界面不掷骰，只是提前问了同一个答案（选哪枚神种因此成了一道
+     * 有前提的题：旱年该不该挑那枚偏灵的种）。
+     */
+    el("section", { class: "nextlife", attrs: { "data-nextlife": "1" } }, [
+      el("b", { class: "nextlife__caption", text: vm.next.caption }),
+      el("div", { class: "nextlife__omens" }, [
+        el("span", { class: "nextlife__omen", attrs: { "data-omen": vm.next.skyName } }, [
+          el("b", { text: vm.next.skyName }),
+          el("em", { text: vm.next.skyEffect }),
+        ]),
+        el("span", { class: "nextlife__omen", attrs: { "data-omen": vm.next.originName } }, [
+          el("b", { text: vm.next.originName }),
+          el("em", { text: vm.next.originEffect }),
+        ]),
+      ]),
+      vm.next.advice
+        ? el("p", { class: "nextlife__advice", text: vm.next.advice, attrs: { "data-advice": "1" } })
+        : null,
+    ]),
     el("div", { class: "seed__grid" }, vm.cards.map((card) => seedCard(card, props))),
     vm.chronicle.length > 0
       ? el("section", { class: "seed__past" }, [

@@ -202,9 +202,11 @@ describe("确定性回归", () => {
   });
 
   /*
-   * ⚠️ 下面两条 golden 的数值被整批重掷过**两次**：M1-P1（追猎屏把狩猎从一次掷骰换成状态机）
-   * 与 M1-P2（搏杀重做：每回合多了「守备＋意图＋意图旁白」三次抽取，且开战时也要摇一次）。
-   * 两次都是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
+   * ⚠️ 下面两条 golden 的数值被整批重掷过**三次**：
+   * M1-P1（追猎屏把狩猎从一次掷骰换成状态机）、M1-P2（搏杀重做：每回合多了「守备＋意图＋
+   * 意图旁白」三次抽取，且开战时也要摇一次）、以及 2026-08-13「每局不同」（`createLife`
+   * 在最前面加了**两次**抽取：天时与出身 —— 于是每个已存种子的整条剧本从第一步就错开了）。
+   * 三次都是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
    * ① 同种子同操作仍恒等（上一条测试）② 换种子仍有分岔 ③ 30 世仍全部收束得出列传。
    */
   // 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
@@ -214,9 +216,9 @@ describe("确定性回归", () => {
   // 要么确认是有意的破坏性变更再更新期望值。**
   it("golden：轮转策略下 3 个种子的终态逐字锁定", () => {
     const golden = [
-      { seed: 20260811, steps: 9, rngState: 1596061836, year: 2, ending: "starve", organs: 1 },
-      { seed: 1, steps: 17, rngState: 1320036238, year: 2, ending: "starve", organs: 1 },
-      { seed: 4242, steps: 21, rngState: 56369139, year: 4, ending: "starve", organs: 1 },
+      { seed: 20260811, steps: 26, rngState: 2284262403, year: 4, ending: "starve", organs: 1 },
+      { seed: 1, steps: 15, rngState: 752141765, year: 3, ending: "starve", organs: 1 },
+      { seed: 4242, steps: 16, rngState: 1383981676, year: 2, ending: "starve", organs: 1 },
     ] as const;
     for (const expected of golden) {
       const { state, steps } = playLife(expected.seed, BUSY);
@@ -254,12 +256,12 @@ describe("确定性回归", () => {
       },
       {
         seed: 7,
-        steps: 107,
-        rngState: 1801260620,
-        year: 6,
-        organIds: ["organ-ling-yun", "lin-jia", "wu-mu", "gou-chi"],
-        molts: 3,
-        kills: 5,
+        steps: 119,
+        rngState: 785777768,
+        year: 8,
+        organIds: ["organ-ling-yun", "wu-mu", "ji-zu", "gou-chi", "lin-jia"],
+        molts: 4,
+        kills: 6,
       },
     ] as const;
     for (const expected of golden) {
@@ -377,10 +379,15 @@ describe("禁用 API 纪律（源码扫描）", () => {
       "enemies",
       "events",
       "organs",
+      "origins",
       "seeds",
+      "skies",
       "tuning",
     ]);
     expect(FIXTURE_CONTENT.events).toHaveLength(3);
+    // [2026-08-13] 开局变量：fixture 各一条且都无修正（见 fixtures.ts 的理由）
+    expect(FIXTURE_CONTENT.skies).toHaveLength(1);
+    expect(FIXTURE_CONTENT.origins).toHaveLength(1);
     expect(FIXTURE_CONTENT.organs).toHaveLength(4);
     expect(FIXTURE_CONTENT.enemies).toHaveLength(2);
     expect(FIXTURE_CONTENT.seeds).toHaveLength(1);

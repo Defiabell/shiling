@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SYS_FLAG_ASCEND_READY,
+  SYS_FLAG_DIVINE_EATEN,
   SYS_FLAG_STARVING,
   combatAct,
   createLife,
@@ -167,45 +168,57 @@ describe("登神（ascend）", () => {
   const CONTENT = contentWithoutEvents();
   const MANDATE = FIXTURE_CONTENT.events.find((event) => event.id === EVENT_MANDATE)!;
 
-  it("四项门槛齐备才挂 sys:ascend-ready", () => {
+  /**
+   * [2026-08-13] 登神的门槛换成了「灵德双修 ＋ 尝过神兽」（岁数与器官件数不再看）——
+   * 那两条搬去了归山（寿）与形貌分阶（器官），而「尝神兽」是这条道新的、也是最难的一关。
+   */
+  it("三条门槛齐备才挂 sys:way-shen（灵、德、尝过神兽）", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CONTENT);
     const nearly: TaleState = {
-      ...withOrgans(life, ORGAN_GOU_CHI, ORGAN_WU_MU, ORGAN_LIN_JIA, ORGAN_JI_ZU),
-      year: 15,
-      stats: { meng: 10, ling: 60, ti: 20, de: 39 },
+      ...life,
+      stats: { meng: 10, ling: CONTENT.tuning.wayShenLing, ti: 20, de: CONTENT.tuning.wayShenDe },
     };
-    // de 差 1
+    // 灵德都够，但没尝过神兽
     expect(performAction(nearly, "explore", CONTENT).state.flags).not.toContain(
       SYS_FLAG_ASCEND_READY,
     );
-    const ready: TaleState = { ...nearly, stats: { ...nearly.stats, de: 40 } };
+    const ready: TaleState = { ...nearly, flags: [...nearly.flags, SYS_FLAG_DIVINE_EATEN] };
     expect(performAction(ready, "explore", CONTENT).state.flags).toContain(SYS_FLAG_ASCEND_READY);
+    // 德差一点就不够 —— 德是这条道实测的瓶颈
+    const shortOfDe: TaleState = {
+      ...ready,
+      stats: { ...ready.stats, de: CONTENT.tuning.wayShenDe - 1 },
+    };
+    expect(performAction(shortOfDe, "explore", CONTENT).state.flags).not.toContain(
+      SYS_FLAG_ASCEND_READY,
+    );
   });
 
-  it("选对分支即登神，flag 随死亡摘掉", () => {
+  it("选对分支即成道，flag 随死亡摘掉，且记下走的是哪条道", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CONTENT);
     const ready: TaleState = {
-      ...withOrgans(life, ORGAN_GOU_CHI, ORGAN_WU_MU, ORGAN_LIN_JIA, ORGAN_JI_ZU),
-      year: 15,
-      stats: { meng: 10, ling: 60, ti: 20, de: 40 },
-      flags: [SYS_FLAG_ASCEND_READY],
+      ...life,
+      stats: { meng: 10, ling: CONTENT.tuning.wayShenLing, ti: 20, de: CONTENT.tuning.wayShenDe },
+      flags: [SYS_FLAG_DIVINE_EATEN, SYS_FLAG_ASCEND_READY],
     };
     const { state } = resolveChoice(ready, MANDATE, 0, CONTENT);
     expect(state.ending).toBe("ascend");
     expect(state.alive).toBe(false);
+    // 成道的道必须落进 state：列传结语与赞语都按它分（不落就退回泛用结语）
+    expect(state.wayAchieved).toBe("shen");
     expect(state.flags).not.toContain(SYS_FLAG_ASCEND_READY);
   });
 
-  it("辞而不受则继续活着，flag 仍在", () => {
+  it("辞而不受则继续活着，flag 仍在，且没有 wayAchieved", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CONTENT);
     const ready: TaleState = {
-      ...withOrgans(life, ORGAN_GOU_CHI, ORGAN_WU_MU, ORGAN_LIN_JIA, ORGAN_JI_ZU),
-      year: 15,
-      stats: { meng: 10, ling: 60, ti: 20, de: 40 },
-      flags: [SYS_FLAG_ASCEND_READY],
+      ...life,
+      stats: { meng: 10, ling: CONTENT.tuning.wayShenLing, ti: 20, de: CONTENT.tuning.wayShenDe },
+      flags: [SYS_FLAG_DIVINE_EATEN, SYS_FLAG_ASCEND_READY],
     };
     const { state } = resolveChoice(ready, MANDATE, 1, CONTENT);
     expect(state.alive).toBe(true);
+    expect(state.wayAchieved).toBeNull();
     expect(state.flags).toContain(SYS_FLAG_ASCEND_READY);
   });
 });

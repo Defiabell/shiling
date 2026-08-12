@@ -9,6 +9,7 @@
  */
 
 import type { TaleEvent } from "@shiling/tale-sim";
+import { EV_KIN, EV_WONDER } from "../eventTags.js";
 import { FLAG_BAIZE_MET, FLAG_KIN_GUEST, FLAG_MERCY, FLAG_SICK, FLAG_WOUND } from "../flags.js";
 import { TAG_INSIGHT, TAG_VENOM } from "../tags.js";
 import { VT } from "../visualTokens.js";
@@ -22,6 +23,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
       actions: ["rest"],
       forbidsFlags: [FLAG_BAIZE_MET],
       weight: 30,
+      tags: [EV_WONDER],
     },
     title: "梦中白兽",
     body: "浅眠里你见到一头白兽站在雪上，四只眼睛都睁着，看你，不说话。醒来时穴口的草被压平了一片，压出的形状不是你的，也不是这一带任何一种兽的。",
@@ -133,6 +135,7 @@ export const REST_EVENTS: readonly TaleEvent[] = [
       requiresFlags: [FLAG_MERCY],
       forbidsFlags: [FLAG_KIN_GUEST],
       weight: 46,
+      tags: [EV_KIN],
     },
     title: "同穴之客",
     body: "你的穴里多了一只小兽，缩在最里侧，见你回来也不逃，只把耳朵放平贴住后脑。它身上有血味，不是它自己的。外头的风一夜比一夜冷。",

@@ -12,14 +12,20 @@ import {
   createLife,
   type EndingType,
   type TaleState,
+  type WayId,
 } from "@shiling/tale-sim";
 import { CHRONICLE_TEMPLATES, SEED_CHANG_TAI, TALE_CONTENT } from "../src/index.js";
 
 const ENDINGS: readonly EndingType[] = ["starve", "slain", "oldage", "ascend"];
 const DE_LEVELS = [0, 5, 20, 42, 70];
 
-/** 造一具「刚死的」状态：真出生记录 ＋ 几条中段素材 ＋ 指定德行与结局。 */
-function deadLife(ending: EndingType, de: number): TaleState {
+/**
+ * 造一具「刚死的」状态：真出生记录 ＋ 几条中段素材 ＋ 指定德行与结局。
+ *
+ * [2026-08-13] `ending: "ascend"` 时必须同时给出**哪条道**（`wayAchieved`）：四条道的
+ * ending 都是 `ascend`，结语与赞语按道分，不给就退回泛用兜底那一段。
+ */
+function deadLife(ending: EndingType, de: number, way: WayId = "shen"): TaleState {
   const born = createLife(4321, SEED_CHANG_TAI, TALE_CONTENT);
   return {
     ...born,
@@ -27,6 +33,7 @@ function deadLife(ending: EndingType, de: number): TaleState {
     season: 2,
     alive: false,
     ending,
+    wayAchieved: ending === "ascend" ? way : null,
     stats: { ...born.stats, de, ling: 30 },
     organIds: [...born.organIds, "gou-chi", "wu-mu"],
     records: [
@@ -48,7 +55,12 @@ describe("列传模板", () => {
         expect(entry.title).toBe("食灵列传·常胎");
         expect(entry.ending).toBe(ending);
         expect(entry.body.startsWith("食灵者")).toBe(true);
-        expect(entry.body).toContain(CHRONICLE_TEMPLATES.endings[ending]);
+        // 成道走 wayEndings 那一段（`endings.ascend` 只是兜底，正常路径读不到）
+        expect(entry.body).toContain(
+          ending === "ascend"
+            ? CHRONICLE_TEMPLATES.wayEndings.shen
+            : CHRONICLE_TEMPLATES.endings[ending],
+        );
         expect(entry.body).toContain(CHRONICLE_TEMPLATES.praisePrefix);
       }
     }
@@ -116,10 +128,41 @@ describe("列传模板", () => {
   });
 
   it("登神＋厚德是最高一档评语，寡德横死是最低一档", () => {
-    const saintly = composeChronicle(deadLife("ascend", 70), TALE_CONTENT).body;
+    const saintly = composeChronicle(deadLife("ascend", 70, "shen"), TALE_CONTENT).body;
     expect(saintly).toContain("与云气同流");
     const brute = composeChronicle(deadLife("slain", 0), TALE_CONTENT).body;
     expect(brute).toContain("青丘无为之惜者");
+  });
+
+  /**
+   * [2026-08-13] 四条道各有自己的结语与赞语 —— 这一条是这一批最要紧的断言之一。
+   *
+   * 尤其归山：owner 此前说「最后寿终正寝，让人没有再次玩的欲望」，而奔归山这条道养的一世
+   * **寿终就是成道**。若它读到的仍是「终未成器，与草木同朽」那一段（或泛用的登神段），
+   * 这一批立起来的东西当场就塌了。
+   */
+  it("四条道各读到自己的结语与赞语，互不串味", () => {
+    const marks: Record<WayId, readonly [string, string]> = {
+      shen: ["脱兽籍而列于神班", "与云气同流"],
+      yaowang: ["太史氏谓之兽王", "以杀立威"],
+      guishan: ["青丘为之寂三日", "此亦成也"],
+      hualing: ["风过而散", "一世未饮血"],
+    };
+    for (const [way, [ending, praise]] of Object.entries(marks) as [WayId, readonly [string, string]][]) {
+      const body = composeChronicle(deadLife("ascend", 70, way), TALE_CONTENT).body;
+      expect(body, `${way} 的结语`).toContain(ending);
+      expect(body, `${way} 的赞语`).toContain(praise);
+      // 不串味：别的道的结语一句都不许出现
+      for (const [other, [otherEnding]] of Object.entries(marks) as [WayId, readonly [string, string]][]) {
+        if (other !== way) expect(body, `${way} 串进了 ${other} 的结语`).not.toContain(otherEnding);
+      }
+    }
+  });
+
+  it("寿终而归山门槛不备时仍是失败结语（oldage 的语义分叉）", () => {
+    const failed = composeChronicle(deadLife("oldage", 20), TALE_CONTENT).body;
+    expect(failed).toContain("终未成器");
+    expect(failed).not.toContain("此亦成也");
   });
 
   /**
