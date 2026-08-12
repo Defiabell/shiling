@@ -6,6 +6,7 @@
  */
 
 import {
+  SYS_FLAG_STARVING,
   ascendProgress,
   ownedOrgans,
   type AscendGateId,
@@ -19,21 +20,36 @@ import {
   ASCEND_GATE_SHORTFALL,
   ESSENCE_LABELS,
   ESSENCE_ORDER,
-  STAT_HINTS,
   STAT_LABELS,
   STAT_ORDER,
   formatWhen,
   toPercent,
   type StatKey,
 } from "./format.js";
+import { essenceLede, hungerLede, statLede } from "./detailVm.js";
 
 export interface StatGaugeVm {
   key: StatKey;
   label: string;
+  /**
+   * 悬停提示 ＝ **用当前数值实例化的机制**（「猛 10　出手底伤 4　·　扑击命中 +4%」）。
+   *
+   * 原先这里是 `STAT_HINTS` 的风味词（「搏杀之力」），而它是 owner「每个属性值有啥用……
+   * 只能乱点」那句话的第一现场：读完仍然不知道那个数改变了什么。真正的说明在点开的详情里，
+   * 这一句是它的第一行 —— 两处同源（`detailVm.statLede`），不各写一版。
+   */
   hint: string;
   value: number;
   /** 0〜100，环形仪表的填充百分比（属性上限恒为 100） */
   percent: number;
+}
+
+/** 右栏「身内」那一排 chip —— 带 id 才点得开详情（此前只有名字，chip 是死的）。 */
+export interface OrganChipVm {
+  id: string;
+  name: string;
+  /** [0] 那枚神种（chip 上多一个「神」印） */
+  isSeed: boolean;
 }
 
 export interface HungerVm {
@@ -45,6 +61,8 @@ export interface HungerVm {
   /** 引擎已挂 sys:starving：再一季就饿死 */
   starving: boolean;
   caption: string;
+  /** 悬停／详情第一行：「饱食 60／100　每季 −12（冬 −18）」 */
+  hint: string;
 }
 
 export interface EssenceBarVm {
@@ -56,6 +74,8 @@ export interface EssenceBarVm {
   percent: number;
   /** 已达阈值 → 该柱发光，且底部「蛰伏」点亮 */
   ripe: boolean;
+  /** 悬停／详情第一行：「足之精气 45／90　尚差 45」 */
+  hint: string;
 }
 
 /** 状态栏那枚小立绘：形貌随器官数长，是玩家在界面上唯一能「看见自己」的地方。 */
@@ -104,6 +124,8 @@ export interface StatusVm {
   /** 器官件数（含神种），主界面用来给「蜕变」进度一点存在感 */
   organCount: number;
   organNames: string[];
+  /** 同 `organNames`，但带 id：右栏 chip 要能点开详情 */
+  organs: OrganChipVm[];
   lifespanMax: number;
   stats: StatGaugeVm[];
   hunger: HungerVm;
@@ -143,7 +165,8 @@ export function buildAscendVm(state: TaleState, content: TaleContent): AscendVm 
   };
 }
 
-const SYS_FLAG_STARVING = "sys:starving";
+// 引擎导出了这个保留 flag 的常量（`SYS_FLAG_STARVING`），此处不再手抄字面量：
+// 抄一份就会有一天与引擎那份对不上，而对不上的表现是「饿殍告警永远不亮」——没有任何测试会红。
 
 export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm {
   const t = content.tuning;
@@ -160,6 +183,8 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     critical: hungerPercent < 25,
     starving,
     caption: starving ? "再一季便要饿殍" : hungerPercent < 25 ? "腹中空空" : "饱食",
+    // 每季扣多少、一次得手补多少 —— 开局第一回合就要知道的账，此前一个字没写
+    hint: hungerLede(state, content),
   };
 
   const essences: EssenceBarVm[] = ESSENCE_ORDER.map((type) => {
@@ -171,6 +196,7 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
       threshold: t.moltThreshold,
       percent: toPercent(t.moltThreshold > 0 ? value / t.moltThreshold : 0),
       ripe: value >= t.moltThreshold,
+      hint: essenceLede(state, content, type),
     };
   });
 
@@ -182,11 +208,17 @@ export function buildStatusVm(state: TaleState, content: TaleContent): StatusVm 
     portrait: { stage, label: PORTRAIT_LABELS[stage], src: portraitArt(stage) },
     organCount: state.organIds.length,
     organNames: organs.map((organ) => organ.name),
+    // isSeed 按 id 判而不按下标：`ownedOrgans` 会跳过查不到的 id，下标可能整体前移
+    organs: organs.map((organ) => ({
+      id: organ.id,
+      name: organ.name,
+      isSeed: organ.id === state.organIds[0],
+    })),
     lifespanMax: state.lifespanMax,
     stats: STAT_ORDER.map((key) => ({
       key,
       label: STAT_LABELS[key],
-      hint: STAT_HINTS[key],
+      hint: statLede(state, content, key),
       value: Math.round(state.stats[key]),
       percent: toPercent(state.stats[key] / 100),
     })),

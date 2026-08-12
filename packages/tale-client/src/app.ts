@@ -34,7 +34,9 @@ import { buildActionVms } from "./model/actionVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm } from "./model/combatVm.js";
 import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
-import { buildEventCardVm } from "./model/eventVm.js";
+import { buildDetailVm, detailKey, type DetailSel } from "./model/detailVm.js";
+import { buildEventCardVm, type EventCardVm } from "./model/eventVm.js";
+import { advanceGuide, buildGuideVm, guideSnapshot, type GuideVm } from "./model/guideVm.js";
 import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type LogTone } from "./model/logVm.js";
 import { buildSeedScreenVm } from "./model/seedVm.js";
 import { buildStalkVm, type StalkActId } from "./model/stalkVm.js";
@@ -57,6 +59,7 @@ import {
   unlockSeed,
   type StorageLike,
 } from "./persist/bloodline.js";
+import { loadGuideDismissed, saveGuideDismissed } from "./persist/guide.js";
 import type { Bloodline } from "@shiling/tale-sim";
 
 export type ScreenId = "title" | "seed" | "play" | "chronicle";
@@ -66,6 +69,9 @@ const BIRTH_LEDE = "青丘多狐，草木有灵。你尚不知自己是什么，
 
 /** 死亡／登神后那颗按钮的字样。 */
 const CLOSE_LABELS = { ascend: "登　临", other: "瞑　目" } as const;
+
+/** 引导链走完那句「这条链你已走完：……」停留多久（读完一句的时间），之后永久收起。 */
+const GUIDE_COMPLETE_HOLD_MS = 9000;
 
 export interface AppOptions {
   /** 固定随机种子（`?seed=` 传入），用于可复现的手测与 E2E */
@@ -103,6 +109,33 @@ export class TaleApp {
   private lifeIndex = 0;
   private chronicleVm: ChronicleVm | null = null;
 
+  // — 「看得懂」批次：详情浮层与引导链的界面状态（都不进引擎，也不影响任何结算） —
+
+  /** 当前展开的那一处；再点同一处即收起 */
+  private detail: DetailSel | null = null;
+  /** 引导链走到第几步（每一世重来；走完即永久收起并持久化） */
+  private guideIndex = 0;
+  private guideDismissed: boolean;
+  private guideCompleteShown = false;
+  private guideHideTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 「曾在事件卡上看到一条自己够得着的器官门槛」——引导链第三步的判据。
+   *
+   * 引擎不记这件事（`TaleState` 里没有「玩家见过什么」），而它恰恰是「进化有啥好处」
+   * 被玩家亲眼看到的那一刻，所以由界面累积，同 3D 版 `ObjectiveSnapshot` 的分工。
+   */
+  private sawOrganGate = false;
+  /** 曾点开过「登神之路」详情——引导链第四步的判据 */
+  private openedAscend = false;
+  /**
+   * **真的蛰伏成功过一次**——引导链第二步的判据。
+   *
+   * 只认 `TurnResult.moltResult` 非空：器官也能由事件的 `addOrganId` 送到手上，
+   * 而那条路径不该让「蛰伏是你变强的唯一途径」这一步自动打勾（引擎给两种来源写的是
+   * 同一种 `molt` 记录，所以数记录也分不出来）。
+   */
+  private dormantMolted = false;
+
   constructor(root: HTMLElement, options: AppOptions = {}) {
     this.root = root;
     this.storage = options.storage === undefined ? browserStorage() : options.storage;
@@ -110,6 +143,7 @@ export class TaleApp {
     this.grantOrganIds = options.grantOrganIds ?? [];
     this.bloodline = loadBloodline(this.storage, CONTENT);
     this.lifeIndex = this.bloodline.chronicle.length;
+    this.guideDismissed = loadGuideDismissed(this.storage);
 
     installMotionClass();
     this.screenHost = el("div", { class: "app__screen" });
@@ -193,6 +227,18 @@ export class TaleApp {
     this.state = state;
     this.pendingEvent = null;
     this.log = emptyLog();
+    // 引导链按「世」重来：上一世没走完（多半是早死）说明这条链还没讲通。走完过的那份
+    // 已经持久化在 guideDismissed 里，不会回来。
+    this.guideIndex = 0;
+    this.guideCompleteShown = false;
+    this.sawOrganGate = false;
+    this.openedAscend = false;
+    this.dormantMolted = false;
+    this.detail = null;
+    if (this.guideHideTimer !== null) {
+      clearTimeout(this.guideHideTimer);
+      this.guideHideTimer = null;
+    }
     const birth = state.records.find((record) => record.kind === "birth");
     this.appendLog(state.year, state.season, [{ text: birth?.text ?? "", tone: "omen" }]);
     this.center = {
@@ -207,6 +253,21 @@ export class TaleApp {
     };
     this.screen = "play";
     this.renderPlayScreen();
+  }
+
+  /**
+   * 引导链第三步的判据：这张事件卡上有没有一条**因为器官才点得开**的抉择。
+   *
+   * 只认 `met` 的那种（灰着的门槛是欲望展示，不是兑现）—— 第三步要教的是
+   * 「你蜕的那枚器官刚刚替你开了一条路」，看到一条灰的反而说明还没到。
+   */
+  private noteOrganGate(card: EventCardVm): void {
+    if (this.sawOrganGate) return;
+    this.sawOrganGate = card.choices.some(
+      (choice) =>
+        choice.enabled &&
+        choice.requirements.some((requirement) => requirement.kind === "organ" && requirement.met),
+    );
   }
 
   private appendLog(year: number, season: TaleState["season"], inputs: readonly LogInput[]): void {
@@ -244,6 +305,8 @@ export class TaleApp {
     const next = result.state;
     this.state = next;
     this.pendingEvent = result.pendingEvent;
+    // 蛰伏开奖成功过一次（引导链第二步的判据；事件送的器官不算，见字段注释）
+    if (result.moltResult) this.dormantMolted = true;
     const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
       ...result.notices.map((text) => ({ text, tone: noticeTone(text, result.moltResult !== null) })),
@@ -251,10 +314,12 @@ export class TaleApp {
     ]);
 
     if (result.pendingEvent) {
+      const card = buildEventCardVm(next, result.pendingEvent, CONTENT);
+      this.noteOrganGate(card);
       this.center = {
         kind: "event",
         key: `event:${result.pendingEvent.id}:${next.rngState}`,
-        card: buildEventCardVm(next, result.pendingEvent, CONTENT),
+        card,
       };
     } else if (next.stalk) {
       // 起追：这一季**尚未收束**（引擎把季推进推迟到追猎的终局），所以这里不放 continue 按钮，
@@ -471,16 +536,91 @@ export class TaleApp {
     blot?.remove();
   }
 
+  // ===== 详情浮层与引导链（纯界面状态，不进引擎） =====
+
+  /**
+   * 开／关详情浮层。`null` ＝ 收起（界面点同一处第二次时传的就是 null）。
+   *
+   * 点开「登神之路」顺带记一笔：那是引导链第四步的判据 —— 第四步要教的正是
+   * 「这一世的目标写在顶上那条带里」，而它此前只是一条没人点的进度条。
+   */
+  private setDetail(sel: DetailSel | null): void {
+    this.detail = sel;
+    if (sel?.kind === "ascend") this.openedAscend = true;
+    this.renderPlayScreen();
+  }
+
+  private dismissGuide(): void {
+    this.guideDismissed = true;
+    saveGuideDismissed(this.storage);
+    if (this.guideHideTimer !== null) {
+      clearTimeout(this.guideHideTimer);
+      this.guideHideTimer = null;
+    }
+    this.hideGuideNode();
+  }
+
+  /**
+   * 把引导那一行**就地摘掉**，而不是整屏重建。
+   *
+   * 理由是 `renderPlay` 的既定行为：它每回合整棵重建，而**中央卡带入场动画**（水墨浮现）。
+   * 一行提示的消失若走整屏重建，玩家正在读的那张事件卡会莫名重放一次入场 —— 走完引导链
+   * 的那一刻恰好可能落在读卡中途（实机撞到过：9 秒的收尾停留正好跨在一张事件卡上）。
+   * 顺手摘掉 `play--guided`，否则网格里会剩一条空行的 gap。
+   */
+  private hideGuideNode(): void {
+    this.screenHost.querySelector(".guide")?.remove();
+    this.screenHost.querySelector(".play--guided")?.classList.remove("play--guided");
+  }
+
   // ===== 渲染 =====
+
+  /**
+   * 引导链的当前一步（顺带推进它）。
+   *
+   * 推进放在渲染前而不是每个动作里：判据全是**状态**（精气总量、器官数）而不是事件，
+   * 于是「一季里同时满足两步」不会卡在中间那一格 —— 同 3D 版 `advanceObjective` 的
+   * while 循环，那条是踩出来的。
+   */
+  private guideVm(state: TaleState): GuideVm | null {
+    if (this.guideDismissed) return null;
+    this.guideIndex = advanceGuide(
+      this.guideIndex,
+      guideSnapshot(state, CONTENT, {
+        dormantMolted: this.dormantMolted,
+        sawOrganGateChoice: this.sawOrganGate,
+        openedAscend: this.openedAscend,
+      }),
+    );
+    const vm = buildGuideVm(state, CONTENT, this.guideIndex);
+    if (vm.complete && !this.guideCompleteShown) {
+      this.guideCompleteShown = true;
+      // 即刻持久化：玩家可能在这句话读完前就刷新，重开不该再从第一步教一遍
+      saveGuideDismissed(this.storage);
+      this.guideHideTimer = setTimeout(() => {
+        this.guideHideTimer = null;
+        this.guideDismissed = true;
+        if (this.screen === "play") this.hideGuideNode();
+      }, GUIDE_COMPLETE_HOLD_MS);
+    }
+    return vm;
+  }
 
   private renderPlayScreen(): void {
     const state = this.state;
     if (!state) return;
     const status = buildStatusVm(state, CONTENT);
+    // 进两个战术全屏时主动收掉详情：那两屏的按钮在右下角，浮层压上去等于挡住操作
+    if (this.center.kind === "stalk" || this.center.kind === "combat") this.detail = null;
+    const detail = this.detail === null ? null : buildDetailVm(state, CONTENT, this.detail);
     this.swap(
       renderPlay({
         status,
         center: this.center,
+        detail,
+        guide: this.guideVm(state),
+        onDetail: (sel) => this.setDetail(sel),
+        onGuideDismiss: () => this.dismissGuide(),
         actions: buildActionVms(state, CONTENT).map((action) => {
           // 未结算的事件卡在场时，行动面板整体压住（引擎无从强制这条纪律）。
           // highlight 必须一起熄掉 —— 一个禁用却还在发金光呼吸的按钮是在骗点击。
@@ -576,6 +716,12 @@ export class TaleApp {
     if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
 
     if (this.screen !== "play") return;
+    // 详情浮层：Esc 收起（点开它的是鼠标，收起它不该也只能用鼠标）
+    if (event.key === "Escape" && this.detail !== null) {
+      event.preventDefault();
+      this.setDetail(null);
+      return;
+    }
     const digit = Number.parseInt(event.key, 10);
     if (Number.isInteger(digit) && digit >= 1 && digit <= 4) {
       const selector =
@@ -612,14 +758,22 @@ export class TaleApp {
     state: TaleState | null;
     bloodline: Bloodline;
     pendingEventId: string | null;
+    /** 当前展开的详情（`detailKey` 的值），没开则 null —— E2E 据此对账「点开的是哪一处」 */
+    detail: string | null;
+    /** 引导链：第几步／那两句话／有没有走完。验收第三问就查它 */
+    guide: { step: number; total: number; text: string; hint: string; complete: boolean } | null;
   } {
+    const state = this.state;
     return {
       screen: this.screen,
       center: this.center.kind,
       busy: this.busy,
-      state: this.state,
+      state,
       bloodline: this.bloodline,
       pendingEventId: this.pendingEvent?.id ?? null,
+      detail: this.detail === null ? null : detailKey(this.detail),
+      // 只读：不推进 guideIndex（推进只在渲染那一条路上发生），照实报当前那一步
+      guide: state && !this.guideDismissed ? buildGuideVm(state, CONTENT, this.guideIndex) : null,
     };
   }
 }

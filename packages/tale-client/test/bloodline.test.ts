@@ -12,6 +12,7 @@ import {
   unlockSeed,
   type StorageLike,
 } from "../src/persist/bloodline.js";
+import { GUIDE_KEY, loadGuideDismissed, saveGuideDismissed } from "../src/persist/guide.js";
 import { FIXTURE_CONTENT, FIXTURE_SEED_ID } from "./helpers.js";
 
 /** 内存 Storage —— 单测不需要 jsdom。 */
@@ -172,5 +173,41 @@ describe("unlockSeed", () => {
     expect(unlockSeed(rich, "seed-nope", CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, FIXTURE_SEED_ID, CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
+  });
+});
+
+/*
+ * 引导链的「看过了」标记（`persist/guide.ts`）——与血统同一套 StorageLike 注入，
+ * 所以搭在同一份内存 Storage 上测。三条失败模式都盖：无 storage、写不进去、读时抛。
+ */
+describe("引导链持久化", () => {
+  it("默认没看过；写入后跨会话生效", () => {
+    const storage = new MemoryStorage();
+    expect(loadGuideDismissed(storage)).toBe(false);
+    expect(saveGuideDismissed(storage)).toBe(true);
+    expect(storage.getItem(GUIDE_KEY)).toBe("1");
+    expect(loadGuideDismissed(storage)).toBe(true);
+  });
+
+  it("没有 storage（隐私模式／无 window）时一律当作没看过，且写入不抛", () => {
+    expect(loadGuideDismissed(null)).toBe(false);
+    expect(saveGuideDismissed(null)).toBe(false);
+  });
+
+  it("写入失败只返回 false —— 本次会话内仍生效，不该炸掉一世", () => {
+    const storage = new MemoryStorage();
+    storage.failWrites = true;
+    expect(saveGuideDismissed(storage)).toBe(false);
+  });
+
+  it("读取抛异常时退回「没看过」（宁可多教一次，也不白屏）", () => {
+    const throwing: StorageLike = {
+      getItem() {
+        throw new Error("SecurityError");
+      },
+      setItem() {},
+      removeItem() {},
+    };
+    expect(loadGuideDismissed(throwing)).toBe(false);
   });
 });

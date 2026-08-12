@@ -9,6 +9,7 @@ import {
   type AscendGateId,
   type EndingType,
   type EssenceType,
+  type OrganSlot,
   type Season,
 } from "@shiling/tale-sim";
 
@@ -54,11 +55,29 @@ export const STAT_LABELS = { meng: "猛", ling: "灵", ti: "体", de: "德" } as
 export type StatKey = keyof typeof STAT_LABELS;
 export const STAT_ORDER: readonly StatKey[] = ["meng", "ling", "ti", "de"];
 
-export const STAT_HINTS: Record<StatKey, string> = {
-  meng: "搏杀之力",
-  ling: "悟性与神通",
-  ti: "血肉与寿数",
-  de: "气运与人心",
+/**
+ * 属性的**一句机制**（不是风味）。
+ *
+ * 原先这里写的是「搏杀之力」「血肉与寿数」——读完仍然不知道那个数字改变了什么，于是
+ * owner 的原话是「每个属性值有啥用……只能乱点」。真正的说明由 `detailVm` 用玩家当前的
+ * 数值实例化（「出手底伤 4　·　扑击命中 +4%」），本表只留一句**它管哪一摊**，
+ * 用在详情浮层的副标题上，好让人知道点开会看到什么。
+ */
+export const STAT_SCOPES: Record<StatKey, string> = {
+  meng: "搏杀出手与扑击命中",
+  ling: "遁走成算、登神门槛与抉择",
+  ti: "搏杀血量与寿限",
+  de: "登神门槛与抉择",
+};
+
+/** 器官槽位的汉字名（`OrganDef.slot` → 屏幕上的字）。 */
+export const ORGAN_SLOT_LABELS: Record<OrganSlot, string> = {
+  eye: "目",
+  tooth: "齿",
+  hide: "皮",
+  limb: "肢",
+  gut: "腹",
+  spirit: "神",
 };
 
 export const ESSENCE_LABELS: Record<EssenceType, string> = {
@@ -111,6 +130,27 @@ export function formatSigned(value: number): string {
   if (value > 0) return `+${value}`;
   if (value < 0) return `−${Math.abs(value)}`;
   return "0";
+}
+
+const CN_DIGITS = ["〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
+
+/**
+ * 概率的汉字读法：0.72 → 「七成二」。整成时省掉零（0.7 → 「七成」）。
+ *
+ * 追猎屏、搏杀屏与属性详情共用一份 —— 同一个游戏里「命中七成四」与「遁走 66%」两种读法
+ * 并置，玩家要在脑子里换算两次单位。
+ *
+ * `zeroLabel` 是唯一的方言：搏杀屏的「招反击」写 `无` 比写 `〇成` 短且更像话，
+ * 而量表类读数要的是「〇成」这个量。除此之外三处逐字同解。
+ */
+export function chanceCn(chance: number, zeroLabel = "〇成"): string {
+  const tenths = Math.round(chance * 100);
+  if (tenths >= 100) return "十成";
+  if (tenths <= 0) return zeroLabel;
+  const shi = Math.floor(tenths / 10);
+  const yu = tenths % 10;
+  const head = CN_DIGITS[shi] ?? "〇";
+  return yu === 0 ? `${head}成` : `${head}成${CN_DIGITS[yu] ?? ""}`;
 }
 
 /** 百分比（0〜1 → 0〜100 整数），越界夹紧。 */

@@ -21,7 +21,7 @@ import {
   type TaleState,
 } from "@shiling/tale-sim";
 import { enemyArt } from "../art/assets.js";
-import { toPercent } from "./format.js";
+import { chanceCn, toPercent } from "./format.js";
 import type { MediaAsset } from "./eventVm.js";
 
 export type StalkActId = StalkAct;
@@ -150,17 +150,6 @@ const ACT_META: Record<StalkActId, { glyph: string; label: string }> = {
 
 function bandOf(value: number, bands: readonly { max: number; label: string }[]): string {
   return bands.find((band) => value <= band.max)?.label ?? bands[bands.length - 1]?.label ?? "";
-}
-
-/** 命中率的汉字读法：0.72 → 「七成二」。整成时省掉零，如 0.7 → 「七成」。 */
-const CN_DIGITS = ["〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
-function chanceCn(chance: number): string {
-  const tenths = Math.round(chance * 100);
-  if (tenths >= 100) return "十成";
-  const shi = Math.floor(tenths / 10);
-  const yu = tenths % 10;
-  const head = CN_DIGITS[shi] ?? "〇";
-  return yu === 0 ? `${head}成` : `${head}成${CN_DIGITS[yu] ?? ""}`;
 }
 
 /** 带符号的整数（全角减号，与 format.formatSigned 同体例）。 */

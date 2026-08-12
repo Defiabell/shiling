@@ -1377,15 +1377,24 @@
   color: var(--txt);
 }
 
+/*
+ * 行动提示**允许折两行**（「看得懂」批次改的）。
+ *
+ * 这一行原先是 nowrap ＋ ellipsis，那时它写的是「稍复饱食」这类风味词，截掉也不心疼；
+ * 现在它写的是「追猎一头猎物　得手 +30 饱食，另得那一型精气」——**截掉的正好是那个数**，
+ * 而这一批的全部目的就是把那个数摆到玩家眼前。两行封顶（line-clamp），底栏至多长 18px，
+ * 实机量过按钮不会被挤出屏幕（e2e/legibility.py 每屏都在量）。
+ */
 .act__text em {
   font-style: normal;
   font-family: var(--sans);
   font-size: 11px;
   line-height: 1.6;
   color: var(--txt-4);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .act.is-locked {
@@ -2418,5 +2427,253 @@
 
   .scroll__paper {
     padding: 34px 26px 38px;
+  }
+}
+
+/* ==========================================================================
+   「看得懂」批次：可点开的读数 ／ 详情浮层 ／ 首世引导链
+   （病灶：属性说明只在原生 title 里，触控板用户发现不了；器官 chip 是死的；
+    精气柱不说通向什么。修法照追猎屏的规矩 —— 每个可点的东西都摊开它的后果。）
+   ========================================================================== */
+
+/* 属性环／饱食条／精气柱／器官 chip／登神带都变成了 <button>：把浏览器默认样式压掉，
+   视觉与改造前逐像素一致（它们的外观规则仍在各自的 .gauge/.hunger/.ess/... 里）。 */
+.has-detail {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* 可点的暗示：极轻的一层，不能盖过「饱食告急」「精气已满」那些真信号 */
+.has-detail:hover {
+  filter: brightness(1.12);
+}
+
+.has-detail:focus-visible {
+  outline: 1px solid var(--hair-3);
+  outline-offset: 2px;
+}
+
+/* 展开中的那一处：一圈金发丝线，好知道浮层讲的是谁 */
+.gauge.is-open,
+.organ-chip.is-open {
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.55);
+}
+
+.hunger.is-open .hunger__zi,
+.ess.is-open .ess__zi,
+.ascend.is-open .ascend__zi {
+  color: var(--gold);
+}
+
+.ascend {
+  /* 整条横带成了按钮：grid-column 仍由 .ascend 自己声明，这里只补按钮的横向铺满 */
+  width: 100%;
+}
+
+/* — 详情浮层 —
+   position: fixed 是刻意的：P1/P2 两轮都踩过「新元素把按钮挤出屏幕」（搏杀卡 608px
+   而舞台 588px，日志被压到一行）。详情是临时读物，让它完全不参与布局流；追猎与搏杀
+   进场时由 app 主动关掉（那两屏的按钮就在右下角）。 */
+.dsheet {
+  position: fixed;
+  right: 26px;
+  top: 50%;
+  /* 只需盖住 .play 自己那几层；`.app__screen` 是 z-index:1 的层叠上下文，所以这一层
+     天然在 `.app__overlays`（蜕变卷轴／结局演出，z-index:40）之下 —— 那是对的顺序。 */
+  z-index: 12;
+  width: min(430px, calc(100vw - 52px));
+  max-height: 62vh;
+  overflow-y: auto;
+  transform: translateY(-50%);
+  padding: 16px 18px 18px;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-2);
+  backdrop-filter: blur(14px);
+  animation: dsheet-in var(--t) var(--ease);
+}
+
+@keyframes dsheet-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(10px); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+
+.dsheet__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dsheet__title {
+  flex: 1;
+  font-family: var(--kai);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  color: var(--txt);
+}
+
+.dsheet__close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--txt-3);
+}
+
+.dsheet__close:hover {
+  color: var(--txt);
+}
+
+.dsheet__lede {
+  margin: 8px 0 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--hair);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--gold-soft);
+}
+
+.dsheet__rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px 12px;
+  margin: 0;
+}
+
+.dsheet__label {
+  font-family: var(--kai);
+  font-size: 12.5px;
+  letter-spacing: 0.16em;
+  color: var(--txt-4);
+  white-space: nowrap;
+}
+
+.dsheet__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--txt-2);
+}
+
+.dsheet__text.tone-gain { color: #ddd6c4; }
+.dsheet__text.tone-warn { color: var(--cinnabar-lt); }
+.dsheet__text.tone-dim { color: var(--txt-3); }
+
+.dsheet__foot {
+  margin: 13px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--hair);
+  font-family: var(--kai);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--gold-soft);
+}
+
+/* — 首世引导链 —
+   占网格里独立的一行（不是浮层）：它要跟着屏幕滚、不遮任何东西。只在非全屏模式渲染。 */
+.play--guided {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "status status"
+    "guide  guide"
+    "stage  rail"
+    "acts   acts";
+}
+
+.guide {
+  grid-area: guide;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 9px 16px;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.2);
+}
+
+.guide__step {
+  flex-shrink: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+}
+
+.guide.is-complete .guide__step {
+  font-family: var(--kai);
+  font-size: 13px;
+}
+
+.guide__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.guide__text {
+  font-family: var(--kai);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--txt);
+}
+
+.guide__hint {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--txt-3);
+}
+
+.guide__close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--txt-4);
+}
+
+.guide__close:hover {
+  color: var(--txt-2);
+}
+
+@media (max-width: 1080px) {
+  /* 窄屏：.play 已改成单列，引导那一行跟着单列排（否则会被自动放到第二列而消失） */
+  .play--guided {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto;
+    grid-template-areas:
+      "status"
+      "guide"
+      "stage"
+      "rail"
+      "acts";
+  }
+
+  /* 浮层改为居中：窄屏右贴边会压住中央卡 */
+  .dsheet {
+    left: 50%;
+    right: auto;
+    width: min(430px, calc(100vw - 32px));
+    transform: translate(-50%, -50%);
+  }
+
+  @keyframes dsheet-in {
+    from { opacity: 0; transform: translate(-50%, -50%) translateY(8px); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
   }
 }

@@ -13,7 +13,9 @@ import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import type { ActionButtonVm } from "../model/actionVm.js";
 import type { CombatVm } from "../model/combatVm.js";
+import type { DetailSel, DetailVm } from "../model/detailVm.js";
 import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
+import type { GuideVm } from "../model/guideVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { StatusVm } from "../model/statusVm.js";
@@ -40,11 +42,18 @@ export interface PlayProps {
   freshLogIds: ReadonlySet<number>;
   /** 演出播放中：所有按钮禁用，避免连点打穿引擎的「先结算再行动」纪律 */
   busy: boolean;
+  /** 当前展开的详情浮层（属性／饱食／精气／器官／登神），null ＝ 没开 */
+  detail: DetailVm | null;
+  /** 首世引导链的当前一步；null ＝ 已跳过／已看完 */
+  guide: GuideVm | null;
   onAction(id: ActionId): void;
   onChoice(idx: number): void;
   onCombat(act: CombatAct): void;
   onStalk(act: StalkActId): void;
   onContinue(): void;
+  /** 点同一处 ＝ 收起（调用方传 null）；详情的开合不进引擎 */
+  onDetail(sel: DetailSel | null): void;
+  onGuideDismiss(): void;
 }
 
 const STAT_HUE: Record<string, string> = {
@@ -54,14 +63,80 @@ const STAT_HUE: Record<string, string> = {
   de: "var(--c-de)",
 };
 
-function gauge(stat: StatusVm["stats"][number]): HTMLElement {
+/**
+ * 一处可点开详情的读数（属性环／饱食条／精气柱／器官 chip／登神带共用这一层壳）。
+ *
+ * 为什么是 `<button>` 而不是 hover 提示：原先属性说明只在原生 `title=` 里，**触控板用户
+ * 基本发现不了**，而它恰好是「每个属性值有啥用」的唯一答案所在。`title` 仍然保留
+ * （鼠标用户白拿一层），但真正的说明挂在点击上。
+ *
+ * `data-anchor` 必须留在同一个元素上：数值飘字与精气粒子按它定位（app.ts 的
+ * `showDelta`／`syncAmbient` 查的就是这个属性），换了标签名不影响，丢了就飘字没了。
+ */
+function detailButton(
+  props: PlayProps,
+  sel: DetailSel,
+  key: string,
+  attrs: {
+    class: string;
+    style?: string;
+    title: string;
+    anchor?: string;
+    /** 额外的 data-* （E2E 与样式钩子，两种形态下都要保留） */
+    extra?: Record<string, string>;
+  },
+  children: (HTMLElement | null)[],
+): HTMLElement {
+  const open = props.detail?.key === key;
+  const shared = { ...(attrs.anchor === undefined ? {} : { "data-anchor": attrs.anchor }), ...attrs.extra };
+  /*
+   * 追猎／搏杀的全屏模式里这些读数**退回不可点**（`div`）：浮层在那两屏是关着的
+   * （见 `renderPlay`），若还留着按钮的样子，玩家点一下什么也不会发生 —— 一颗按了没反应
+   * 的按钮比没有按钮更糟。悬停提示仍在（title 里就是那句实例化的机制）。
+   */
+  if (props.center.kind === "stalk" || props.center.kind === "combat") {
+    return el(
+      "div",
+      {
+        class: attrs.class,
+        ...(attrs.style === undefined ? {} : { style: attrs.style }),
+        title: attrs.title,
+        attrs: shared,
+      },
+      children,
+    );
+  }
   return el(
-    "div",
+    "button",
+    {
+      class: `${attrs.class} has-detail${open ? " is-open" : ""}`,
+      ...(attrs.style === undefined ? {} : { style: attrs.style }),
+      title: attrs.title,
+      attrs: {
+        type: "button",
+        "data-detail": key,
+        // 必须给字符串：`el()` 对布尔 false 是「整条属性不写」（见 dom.ts），
+        // 于是折叠态永远不宣告 aria-expanded="false"，读屏只听得见展开那一半
+        "aria-expanded": String(open),
+        ...shared,
+      },
+      // 同一处再点＝收起（把 null 递给调用方），别的处则换成那一处
+      on: { click: () => props.onDetail(open ? null : sel) },
+    },
+    children,
+  );
+}
+
+function gauge(stat: StatusVm["stats"][number], props: PlayProps): HTMLElement {
+  return detailButton(
+    props,
+    { kind: "stat", key: stat.key },
+    `stat:${stat.key}`,
     {
       class: "gauge",
       style: `--p:${stat.percent / 100};--c:${STAT_HUE[stat.key] ?? "var(--gold)"}`,
-      title: `${stat.label}　${stat.hint}`,
-      attrs: { "data-anchor": `stat:${stat.key}` },
+      title: stat.hint,
+      anchor: `stat:${stat.key}`,
     },
     [
       el("div", { class: "gauge__ring" }),
@@ -74,47 +149,130 @@ function gauge(stat: StatusVm["stats"][number]): HTMLElement {
 }
 
 /**
+ * 详情浮层。
+ *
+ * **`position: fixed` 是刻意的**：P1/P2 两轮都踩过「新元素把按钮挤出屏幕」（搏杀卡在
+ * 780px 版式里量到 608px 而舞台只有 588px，日志被压到一行）。详情是临时读物，让它
+ * 完全不参与布局流最安全 —— 追猎／搏杀两个战术屏进场时 app 会主动关掉它（那两屏的
+ * 按钮就在右下角，浮层压上去等于挡住操作）。
+ */
+function detailSheet(detail: DetailVm, props: PlayProps): HTMLElement {
+  return el(
+    "aside",
+    {
+      class: "dsheet",
+      /*
+       * `role="region"` 而不是 `dialog`：dialog 向读屏承诺的是模态 ＋ 焦点被移进来 ＋
+       * 焦点被困住，而这是一张随手开、随手关（× ／ Esc ／再点同一处）的旁注，
+       * 底下那一屏仍然可点可读。承诺做不到的语义比不给语义更坏。
+       */
+      attrs: { "data-detail-open": detail.key, role: "region", "aria-label": detail.title },
+    },
+    [
+      el("div", { class: "dsheet__head" }, [
+        el("b", { class: "dsheet__title", text: detail.title }),
+        el("button", {
+          class: "dsheet__close",
+          text: "×",
+          attrs: { type: "button", "aria-label": "收起", "data-detail-close": "1" },
+          on: { click: () => props.onDetail(null) },
+        }),
+      ]),
+      el("p", { class: "dsheet__lede", text: detail.lede }),
+      el(
+        "dl",
+        { class: "dsheet__rows" },
+        detail.rows.flatMap((row) => [
+          el("dt", { class: "dsheet__label", text: row.label }),
+          el("dd", { class: `dsheet__text tone-${row.tone}`, text: row.text }),
+        ]),
+      ),
+      detail.foot ? el("p", { class: "dsheet__foot", text: detail.foot }) : null,
+    ],
+  );
+}
+
+/**
+ * 首世引导链（交付内容 E）——一行目标 ＋ 一行实例化提示 ＋ 跳过。
+ *
+ * 占的是 `.play` 网格里 `guide` 那一行（不是浮层）：它要跟着屏幕一起滚、不遮任何东西。
+ * 追猎与搏杀的全屏模式里整条不渲染 —— 那两屏自己已经把每颗按钮的后果写在脸上了。
+ */
+function guideBar(guide: GuideVm, props: PlayProps): HTMLElement {
+  return el(
+    "div",
+    {
+      class: `guide${guide.complete ? " is-complete" : ""}`,
+      attrs: { "data-guide": guide.complete ? "done" : String(guide.step) },
+    },
+    [
+      el("span", {
+        class: "guide__step",
+        text: guide.complete ? "成" : `${guide.step}／${guide.total}`,
+      }),
+      el("div", { class: "guide__body" }, [
+        el("b", { class: "guide__text", text: guide.text }),
+        guide.hint ? el("em", { class: "guide__hint", text: guide.hint }) : null,
+      ]),
+      el("button", {
+        class: "guide__close",
+        text: "×",
+        attrs: { type: "button", "aria-label": "跳过引导", "data-guide-close": "1" },
+        on: { click: () => props.onGuideDismiss() },
+      }),
+    ],
+  );
+}
+
+/**
  * 登神之路 —— **常驻**在状态栏底沿的一条横带（计划 P2 的第一条）。
  *
  * 为什么必须常驻而不是放进某个面板：M0 的登神门槛只存在于引擎里，玩家好几世都不知道
  * 自己在往哪走，于是一世结束只剩「哦，死了」。摆在最常看的那一栏之后，每一次蜕变、
  * 每一次德行抉择才有了指向 —— 也让死亡屏那句「你差二件器官」有了前情。
  */
-function ascendPath(ascend: StatusVm["ascend"]): HTMLElement {
-  return el(
-    "div",
-    {
-      class: `ascend${ascend.ready ? " is-ready" : ""}`,
-      attrs: { "data-anchor": "ascend", "data-ascend-met": String(ascend.metCount) },
-    },
-    [
-      el("span", { class: "ascend__zi", text: ascend.caption }),
-      el(
-        "div",
-        { class: "ascend__gates" },
-        ascend.gates.map((gate) =>
-          el(
-            "div",
-            {
-              class: `agate${gate.met ? " is-met" : ""}`,
-              title: gate.hint,
-              attrs: { "data-gate": gate.id, "data-met": gate.met ? "1" : "0" },
-            },
-            [
-              el("b", { class: "agate__zi", text: gate.label }),
-              el("span", { class: "agate__num", text: `${gate.have}／${gate.need}` }),
-              el("div", { class: "agate__track" }, [
-                el("i", { class: "agate__fill", style: `width:${gate.percent}%` }),
-              ]),
-            ],
-          ),
+function ascendPath(ascend: StatusVm["ascend"], props: PlayProps): HTMLElement {
+  const children = [
+    el("span", { class: "ascend__zi", text: ascend.caption }),
+    el(
+      "div",
+      { class: "ascend__gates" },
+      ascend.gates.map((gate) =>
+        el(
+          "div",
+          {
+            class: `agate${gate.met ? " is-met" : ""}`,
+            title: gate.hint,
+            attrs: { "data-gate": gate.id, "data-met": gate.met ? "1" : "0" },
+          },
+          [
+            el("b", { class: "agate__zi", text: gate.label }),
+            el("span", { class: "agate__num", text: `${gate.have}／${gate.need}` }),
+            el("div", { class: "agate__track" }, [
+              el("i", { class: "agate__fill", style: `width:${gate.percent}%` }),
+            ]),
+          ],
         ),
       ),
-    ],
+    ),
+  ];
+  return detailButton(
+    props,
+    { kind: "ascend" },
+    "ascend",
+    {
+      class: `ascend${ascend.ready ? " is-ready" : ""}`,
+      // 点开看「四门槛各自怎么长」—— 常驻横带只给进度，而「德只能从抉择里挣」这种事
+      // 没处可写，玩家于是不知道该往哪走（引导链第四步指的就是这里）
+      title: "点开看这一世要凑齐什么",
+      anchor: "ascend",
+      extra: { "data-ascend-met": String(ascend.metCount) },
+    },
+    children,
   );
 }
 
-function statusBar(status: StatusVm): HTMLElement {
+function statusBar(status: StatusVm, props: PlayProps): HTMLElement {
   const organs = status.organNames.length > 0 ? status.organNames.join("、") : "尚无";
   return el("header", { class: "statusbar" }, [
     el("div", { class: "statusbar__when", attrs: { "data-anchor": "when" } }, [
@@ -143,15 +301,21 @@ function statusBar(status: StatusVm): HTMLElement {
       ]),
     ]),
 
-    el("div", { class: "statusbar__stats" }, status.stats.map(gauge)),
+    el(
+      "div",
+      { class: "statusbar__stats" },
+      status.stats.map((stat) => gauge(stat, props)),
+    ),
 
     el("div", { class: "statusbar__vitals" }, [
-      el(
-        "div",
+      detailButton(
+        props,
+        { kind: "hunger" },
+        "hunger",
         {
           class: `hunger${status.hunger.critical ? " is-critical" : ""}${status.hunger.starving ? " is-starving" : ""}`,
-          attrs: { "data-anchor": "hunger" },
-          title: `饱食 ${status.hunger.value}／${status.hunger.max}　${status.hunger.caption}`,
+          title: `${status.hunger.hint}　${status.hunger.caption}`,
+          anchor: "hunger",
         },
         [
           el("span", { class: "hunger__zi", text: "饱" }),
@@ -163,14 +327,16 @@ function statusBar(status: StatusVm): HTMLElement {
       ),
       el(
         "div",
-        { class: "essences", title: `精气满 ${status.essences[0]?.threshold ?? 0} 可蛰伏` },
+        { class: "essences" },
         status.essences.map((essence) =>
-          el(
-            "div",
+          detailButton(
+            props,
+            { kind: "essence", type: essence.type },
+            `essence:${essence.type}`,
             {
               class: `ess ess--${essence.type}${essence.ripe ? " is-ripe" : ""}`,
-              attrs: { "data-anchor": `essence:${essence.type}` },
-              title: `${essence.label}之精气 ${essence.value}／${essence.threshold}`,
+              title: essence.hint,
+              anchor: `essence:${essence.type}`,
             },
             [
               el("div", { class: "ess__track" }, [
@@ -183,7 +349,7 @@ function statusBar(status: StatusVm): HTMLElement {
       ),
     ]),
 
-    ascendPath(status.ascend),
+    ascendPath(status.ascend, props),
   ]);
 }
 
@@ -634,16 +800,30 @@ function logRail(props: PlayProps): HTMLElement {
     ),
     el("div", { class: "rail__organs" }, [
       el("div", { class: "rail__title", text: "身　内" }),
+      /*
+       * chip **可点开详情**（交付内容 B）。此前它只渲染名字：`OrganDef.desc`／`tags`／
+       * `combatSkill` 一个字都没露面，器官详情只存在于选神种屏 —— 于是「进化能有啥好处」
+       * 在游戏里无处可查，而它恰好是 build 的全部内容。
+       */
       el(
         "div",
         { class: "organs" },
-        props.status.organNames.length === 0
+        props.status.organs.length === 0
           ? [el("span", { class: "rail__empty", text: "唯神种一枚。" })]
-          : props.status.organNames.map((name, index) =>
-              el("span", { class: `organ-chip${index === 0 ? " is-seed" : ""}` }, [
-                index === 0 ? el("i", { class: "organ-chip__mark", text: "神" }) : null,
-                el("b", { text: name }),
-              ]),
+          : props.status.organs.map((organ) =>
+              detailButton(
+                props,
+                { kind: "organ", id: organ.id },
+                `organ:${organ.id}`,
+                {
+                  class: `organ-chip${organ.isSeed ? " is-seed" : ""}`,
+                  title: "点开看它给了什么、开了哪些抉择",
+                },
+                [
+                  organ.isSeed ? el("i", { class: "organ-chip__mark", text: "神" }) : null,
+                  el("b", { text: organ.name }),
+                ],
+              ),
             ),
       ),
     ]),
@@ -680,10 +860,19 @@ export function renderPlay(props: PlayProps): HTMLElement {
   const kind = props.center.kind;
   const fullscreen = kind === "stalk" || kind === "combat";
   const mode = kind === "stalk" ? " play--stalk" : kind === "combat" ? " play--combat" : "";
-  return el("div", { class: `screen screen--play play${mode}` }, [
-    statusBar(props.status),
+  /*
+   * 引导链与详情浮层都**不进两个战术全屏**：那两屏的按钮带两行说明、纵向已经量到极限
+   * （P2 那次实测卡片 608px／舞台 588px），再插一行或压一张浮层就是重犯「新元素把按钮
+   * 挤出屏幕」。追猎与搏杀本来也不需要 —— 它们每颗按钮都自带后果预览。
+   */
+  const guide = fullscreen ? null : props.guide;
+  const detail = fullscreen ? null : props.detail;
+  return el("div", { class: `screen screen--play play${mode}${guide ? " play--guided" : ""}` }, [
+    statusBar(props.status, props),
+    guide ? guideBar(guide, props) : null,
     el("main", { class: "stage" }, [centerNode(props)]),
     fullscreen ? null : logRail(props),
     fullscreen ? null : actionBar(props),
+    detail ? detailSheet(detail, props) : null,
   ]);
 }

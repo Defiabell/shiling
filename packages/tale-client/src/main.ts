@@ -8,6 +8,7 @@
 
 import { TaleApp } from "./app.js";
 import { BLOODLINE_KEY, browserStorage } from "./persist/bloodline.js";
+import { GUIDE_KEY } from "./persist/guide.js";
 
 const params = new URLSearchParams(globalThis.location.search);
 const rawSeed = params.get("seed");
@@ -15,7 +16,11 @@ const seed = rawSeed !== null && /^\d+$/.test(rawSeed) ? Number.parseInt(rawSeed
 
 if (params.get("reset") === "1") {
   try {
-    browserStorage()?.removeItem(BLOODLINE_KEY);
+    const storage = browserStorage();
+    storage?.removeItem(BLOODLINE_KEY);
+    // 引导链的「看过了」标记一并清掉：`?reset=1` 的用处就是「当一个全新玩家」，
+    // 留着它会让首世引导在验收与手测时永远不出现（E2E 首先要看的就是它）。
+    storage?.removeItem(GUIDE_KEY);
   } catch {
     /* 存档清不掉也不该挡住开局 */
   }

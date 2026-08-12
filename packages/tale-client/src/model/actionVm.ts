@@ -7,7 +7,7 @@
  */
 
 import { availableActions, type ActionId, type TaleContent, type TaleState } from "@shiling/tale-sim";
-import { ESSENCE_LABELS, ESSENCE_ORDER } from "./format.js";
+import { moltPreviewText } from "./detailVm.js";
 
 export interface ActionButtonVm {
   id: ActionId;
@@ -21,25 +21,41 @@ export interface ActionButtonVm {
   highlight: boolean;
 }
 
-const ACTION_META: Record<ActionId, { glyph: string; label: string; hint: string }> = {
-  hunt: { glyph: "猎", label: "狩猎", hint: "循迹搏杀。得食与精气，亦可能反被所噬。" },
-  explore: { glyph: "行", label: "探索", hint: "深入青丘。遇事的机会最多。" },
-  rest: { glyph: "息", label: "休憩", hint: "敛息养神，稍复饱食。" },
-  dormant: { glyph: "蛰", label: "蛰伏", hint: "以一季精气换一枚新器官。" },
+const ACTION_GLYPHS: Record<ActionId, { glyph: string; label: string }> = {
+  hunt: { glyph: "猎", label: "狩猎" },
+  explore: { glyph: "行", label: "探索" },
+  rest: { glyph: "息", label: "休憩" },
+  dormant: { glyph: "蛰", label: "蛰伏" },
 };
+
+/**
+ * 四个行动的提示 —— **数字从 tuning 来**，不是风味词。
+ *
+ * 原文案是「得食与精气，亦可能反被所噬」「稍复饱食」这种：读完仍然不知道该点哪个，
+ * 而每季只能点一次，这正是「我该干什么、为什么」的第一现场。调参改了这几个值，
+ * 按钮上的字会跟着改。
+ */
+function actionHint(id: ActionId, content: TaleContent): string {
+  const t = content.tuning;
+  switch (id) {
+    case "hunt":
+      return `追猎一头猎物　得手 +${t.huntFoodGain} 饱食，另得那一型精气`;
+    case "explore":
+      return `深入青丘　遇事的机会是别处的 ${t.exploreEventBonus} 倍（抉择才长灵与德）`;
+    case "rest":
+      return `敛息养神　+${t.restHungerGain} 饱食，病可自愈`;
+    default:
+      return "以一季精气换一枚新器官";
+  }
+}
 
 const ACTION_ORDER: readonly ActionId[] = ["hunt", "explore", "rest", "dormant"];
 
 export function buildActionVms(state: TaleState, content: TaleContent): ActionButtonVm[] {
   const available = new Set(availableActions(state, content));
-  const threshold = content.tuning.moltThreshold;
-  const best = ESSENCE_ORDER.reduce(
-    (top, type) => (state.essence[type] > state.essence[top] ? type : top),
-    ESSENCE_ORDER[0] ?? "zu",
-  );
 
   return ACTION_ORDER.map((id) => {
-    const meta = ACTION_META[id];
+    const meta = ACTION_GLYPHS[id];
     const enabled = available.has(id);
     let disabledReason: string | null = null;
     if (!enabled) {
@@ -50,10 +66,10 @@ export function buildActionVms(state: TaleState, content: TaleContent): ActionBu
       } else if (state.combat) {
         disabledReason = "战事未了";
       } else if (id === "dormant") {
-        // 差多少 ＋ **攒它干什么**：按钮禁用时 hint 被 disabledReason 顶掉，而「蛰伏＝换器官」
-        // 恰恰是新玩家头一个小时最需要知道的一句（不然精气条只是四根会涨的柱子）。
-        const need = Math.max(0, threshold - Math.round(state.essence[best]));
-        disabledReason = `尚需${ESSENCE_LABELS[best]}之精气 ${need}　满则蜕一器官`;
+        // 差多少 ＋ **攒它干什么** ＋ **怎么攒**：按钮禁用时 hint 被 disabledReason 顶掉，
+        // 而「蛰伏＝换器官、这一型靠猎野雉／穴鼠涨」恰恰是新玩家最需要知道的那一句
+        // （不然精气条只是四根会涨的柱子）。
+        disabledReason = moltPreviewText(state, content);
       } else {
         disabledReason = "此刻不可行";
       }
@@ -62,7 +78,8 @@ export function buildActionVms(state: TaleState, content: TaleContent): ActionBu
       id,
       glyph: meta.glyph,
       label: meta.label,
-      hint: meta.hint,
+      // 蛰伏可按时，hint 换成「按下去会发生什么」——追猎屏立的规矩：没有预览的按钮就是翻牌
+      hint: id === "dormant" && enabled ? moltPreviewText(state, content) : actionHint(id, content),
       enabled,
       disabledReason,
       highlight: id === "dormant" && enabled,

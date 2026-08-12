@@ -32,7 +32,7 @@ import {
   type TaleState,
 } from "@shiling/tale-sim";
 import { enemyArt } from "../art/assets.js";
-import { toPercent } from "./format.js";
+import { chanceCn as chanceCnOf, toPercent } from "./format.js";
 import type { MediaAsset } from "./eventVm.js";
 
 /**
@@ -141,16 +141,13 @@ const INTENT_KIND_TAG = {
   flee: "要走",
 } as const;
 
-/** 「五成」「三成五」——与 stalkVm 的 `chanceCn` 同一体例（那边是私有的，这里只需要整成档）。 */
-const CN_DIGITS = ["〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"] as const;
+/**
+ * 「五成」「三成五」—— 读法在 `format.chanceCn` 里只有一份（追猎屏、搏杀屏、属性详情共用）。
+ *
+ * 这里只指定 0 的说法：搏杀屏的「招反击」写「无」比「〇成」短且更像话。
+ */
 function chanceCn(chance: number): string {
-  const tenths = Math.round(chance * 100);
-  if (tenths >= 100) return "十成";
-  if (tenths <= 0) return "无";
-  const shi = Math.floor(tenths / 10);
-  const yu = tenths % 10;
-  const head = CN_DIGITS[shi] ?? "〇";
-  return yu === 0 ? `${head}成` : `${head}成${CN_DIGITS[yu] ?? ""}`;
+  return chanceCnOf(chance, "无");
 }
 
 /**
