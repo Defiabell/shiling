@@ -1,22 +1,23 @@
 /**
- * 内容冒烟测试 —— 用**真引擎**（tale-sim）把 `TALE_CONTENT` 跑 50 世。
+ * 内容冒烟测试 —— 用**真引擎**（tale-sim）把 `TALE_CONTENT` 跑 150 世。
  *
  * schema 测试只能证明数据自洽；能不能玩、玩起来是什么形状，只有真跑才知道。这里量三件事：
  *
  * | 指标 | 目标 | 为什么是这个数 |
  * |---|---|---|
- * | 事件触发覆盖率 | ≥80%（44 中 ≥36），且未触发集合只许是 `EXPECTED_MISSES` 那两条 | 触发不到的事件＝白写的内容 |
+ * | 事件触发覆盖率 | ≥80%（44 中 ≥36），且未触发集合只许是 `EXPECTED_MISSES` 那一条 | 触发不到的事件＝白写的内容 |
  * | 平均蜕变次数 | 2〜4 | 计划 B5 的平衡目标；器官 build 是核心玩法，一世只蜕 1 件就没得搭 |
  * | 饿死率 | ≤60% | 饥饿要真的能杀人，但不能让别的死法（战死／寿终）没机会出场 |
  *
  * ## 这里的「玩家」是谁
- * `decideAction`／`decideCombat` 是一个**明理但不作弊的玩家**：能蛰伏就蛰伏、饿了就猎、
- * 伤病歇两季、饱了就探；血少就逃。抉择则在**满足门槛的选项里等概率乱点** —— 刻意不挑最优，
- * 这样 50 世能把各分支（包括那些会死人的贪心选项）都踩到。
+ * `decideAction`／`decideCombat`／`decideStalk` 是一个**明理但不作弊的玩家**：能蛰伏就蛰伏、
+ * 饿了就猎、伤病歇两季、饱了就探；血少就逃；追猎则先绕上风再逼近、七成命中就出手。
+ * 抉择在**满足门槛的选项里等概率乱点** —— 刻意不挑最优，这样能把各分支（包括那些会死人的
+ * 贪心选项）都踩到。
  *
  * 指标不达标时的修法（计划 B2 的纪律）：调 tuning 或事件 effects，**不改引擎**。
  *
- * ⚠️ 这份 50 世快照是**护栏而不是调参依据**：活过 8 岁这类比例在 n=50 上的方差有 ±10 个点
+ * ⚠️ 这份快照是**护栏而不是调参依据**：活过 8 岁这类比例在 n=50 上的方差有 ±10 个点
  * （B2 报告的 72% 与 B5 复测的 50% 是同策略同种子的同一件事）。调参看
  * `pnpm -C packages/gen balance`（默认 200 世，三种玩家画像）。
  */
@@ -33,7 +34,10 @@ import {
   eligibleChoiceIdxs,
   performAction,
   resolveChoice,
+  stalkAct,
+  stalkPreview,
   type ActionId,
+  type StalkAct,
   type ChronicleEntry,
   type EndingType,
   type TaleState,
@@ -41,20 +45,25 @@ import {
 import { EVENTS, FLAG_MERCY, FLAG_SICK, FLAG_WOUND, SEED_CHANG_TAI, TALE_CONTENT } from "../src/index.js";
 
 const CONTENT = TALE_CONTENT;
-const LIFE_COUNT = 50;
 /**
- * 允许在 50 世里一次都触发不到的事件。**每一条都必须有一条专门的可达性测试兜着**
+ * 世数。**M1-P1 从 50 提到 150**：50 世那一档的「未触发集合」是过拟合的 —— 追猎屏换掉了
+ * 整条抽取序列（同一份内容、同一套策略，掷出来的剧本全变了），于是白名单里那两条一条变得
+ * 撞得到、另一条（`qiu-rest-white-dream`，一条**普通**的休憩事件、权重 30、无二重条件）
+ * 反而没撞到。这不是内容坏了，是 n=50 的方差。150 世稳定在 43/44 且仍只跑 0.4 秒。
+ */
+const LIFE_COUNT = 150;
+/**
+ * 允许在 150 世里一次都触发不到的事件。**每一条都必须有一条专门的可达性测试兜着**
  * （见文件末尾），否则「触发不到」与「写死了」在这份快照里长得一模一样。
  *
  * - `qiu-heaven-mandate`（天命）：登神出口，门槛 year≥15＋器官≥5＋ling≥60＋de≥40 就是要让
- *   登神率 <2%，靠 50 世撞不出来是**设计使然**。
- * - `qiu-rest-guest`（同穴之客）：需要「先放过幼弱（mercy）× 之后又休憩」这个二重条件，
- *   而休憩是四个行动里用得最少的那个（明理玩家只在伤病时歇，且每次伤病最多歇两季）。
- *   B5 实测：50／80／100／120 世都撞不到，200 世能撞到 —— 它是**难触发**而不是够不着。
- *   注：B5 之前它在这份快照里是「能触发」的，那是因为旧策略有无限休憩的 bug（见 decideAction），
- *   机器玩家一世要歇几十季 —— 覆盖率是被那条 bug 顶上去的。
+ *   登神率 <2%，靠机器玩家撞不出来是**设计使然**。
+ *
+ * 名单在 M1-P1 从两条**收窄到一条**：`qiu-rest-guest`（同穴之客，需「先放过幼弱 × 之后又
+ * 休憩」的二重条件）在 150 世里稳定撞得到了，于是它不再享有豁免 —— 它专门的可达性测试留着，
+ * 但现在多了一道「它必须真的在实跑里出现」的约束。
  */
-const EXPECTED_MISSES: readonly string[] = ["qiu-heaven-mandate", "qiu-rest-guest"];
+const EXPECTED_MISSES: readonly string[] = ["qiu-heaven-mandate"];
 /** 一世的操作上限（寿数 18〜20 岁≈80 回合，加战斗回合，600 足够宽） */
 const MAX_STEPS = 600;
 
@@ -98,6 +107,25 @@ function isHurt(state: TaleState): boolean {
   return state.flags.includes(FLAG_WOUND) || state.flags.includes(FLAG_SICK);
 }
 
+/**
+ * 追猎策略（M1-P1）：**明理但不作弊的猎手** —— 只读 `stalkPreview`（也就是界面摆给玩家看的
+ * 那几个数），不碰引擎内部。
+ *
+ * 它同时是一份可执行的手感说明：懂规则的人会先绕到上风（把此后每一步的警觉减半），
+ * 再一步步逼近，到七成命中率就出手；贴身而警觉过高时宁可屏息一次。冒烟测试里的「饿死率
+ * ≤60%」这条护栏从此**同时**在守数值和守这套打法 —— 若一个明理玩家按它打还是会饿死，
+ * 那就是追猎的数值出了问题，不是玩家该更聪明。
+ */
+function decideStalk(state: TaleState): StalkAct {
+  const preview = stalkPreview(state, CONTENT);
+  if (preview.staminaLeft <= 1) return "pounce";
+  if (preview.pounceChance >= 0.7) return "pounce";
+  if (!preview.alreadyUpwind && preview.staminaLeft >= 3) return "circle";
+  if (preview.creepGain > 0 && preview.pounceChanceAfterCreep > preview.pounceChance) return "creep";
+  if (preview.waitAlertDrop > 0) return "wait";
+  return "pounce";
+}
+
 /** 战斗策略：血过半就打（有器官技先用），掉到三成以下就逃，开场偶尔诈一手。 */
 function decideCombat(
   state: TaleState,
@@ -124,6 +152,10 @@ function runLife(seed: number): LifeSummary {
     steps += 1;
     if (state.combat) {
       state = combatAct(state, decideCombat(state, roll), CONTENT).state;
+      continue;
+    }
+    if (state.stalk) {
+      state = stalkAct(state, decideStalk(state), CONTENT).state;
       continue;
     }
     if (!isHurt(state)) restsThisInjury = 0;
@@ -172,7 +204,7 @@ function rateOf(ending: EndingType): number {
   return LIVES.filter((life) => life.ending === ending).length / LIVES.length;
 }
 
-describe("50 世冒烟", () => {
+describe(`${LIFE_COUNT} 世冒烟`, () => {
   it("每一世都能跑到收束，不抛错、不空转", () => {
     expect(LIVES.length).toBe(LIFE_COUNT);
     for (const life of LIVES) {
@@ -183,7 +215,7 @@ describe("50 世冒烟", () => {
     }
   });
 
-  it("事件触发覆盖率 ≥80%，且只许白名单那两条够不到", () => {
+  it("事件触发覆盖率 ≥80%，且只许白名单那条够不到", () => {
     const fired = new Set(LIVES.flatMap((life) => life.firedEventIds));
     const missing = EVENTS.filter((event) => !fired.has(event.id)).map((event) => event.id);
     const coverage = fired.size / EVENTS.length;
@@ -194,7 +226,7 @@ describe("50 世冒烟", () => {
     ).toBeGreaterThanOrEqual(0.8);
     // 计划的硬指标是 80%，但实际已经 43/44 —— 只留 80% 这一条断言，等于给「以后某次内容
     // 改动悄悄弄死 7 个事件」留了 20% 的藏身空间（那类 bug 引用完整性测试查不出来）。
-    // 所以再压一道白名单：允许触发不到的只有那两条，各有专门的可达性测试兜着。
+    // 所以再压一道白名单：允许触发不到的只有天命那一条，它有专门的可达性测试兜着。
     // 比集合不比顺序 —— `missing` 跟着 EVENTS 的排列走，白名单不该被内容的排序左右。
     expect([...missing].sort(), `除 ${EXPECTED_MISSES.join("、")} 外不该有触发不到的事件`).toEqual(
       [...EXPECTED_MISSES].sort(),
@@ -231,7 +263,7 @@ describe("50 世冒烟", () => {
   });
 
   /**
-   * 「天命」是 44 事件里唯一在 50 世里**触发不到**的一条 —— 这是设计使然：登神门槛
+   * 「天命」是 44 事件里唯一在 150 世里**触发不到**的一条 —— 这是设计使然：登神门槛
    * （year≥15 且器官≥5 且 ling≥60 且 de≥40）就是要让登神率 <2%（计划 B5 目标）。
    * 所以不去放宽它的 trigger，而是在这里**证明它够得着**：一旦门槛真的满足，它必须入池，
    * 且「应命而升」必须真的收束成 ascend。否则登神线就是一条谁都走不到的死内容。

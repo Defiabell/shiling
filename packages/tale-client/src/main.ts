@@ -21,10 +21,25 @@ if (params.get("reset") === "1") {
   }
 }
 
+/**
+ * `?organs=ye-tong,ji-zu` —— **仅 dev**：出生时多给几枚器官，用于对照实验
+ * （P1 要证明「带夜瞳与不带」的信息差，而器官靠真玩要攒好几年）。
+ * 生产构建里这一段直接不生效，`import.meta.env.DEV` 为假时连读都不读。
+ */
+const grantOrganIds = import.meta.env.DEV
+  ? (params.get("organs") ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => /^[a-z0-9-]+$/.test(id))
+  : [];
+
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) throw new Error("main: 找不到 #app 挂载点");
 
-const app = new TaleApp(root, seed === undefined ? {} : { seed });
+const app = new TaleApp(root, {
+  ...(seed === undefined ? {} : { seed }),
+  ...(grantOrganIds.length > 0 ? { grantOrganIds } : {}),
+});
 app.start();
 
 if (import.meta.env.DEV) {

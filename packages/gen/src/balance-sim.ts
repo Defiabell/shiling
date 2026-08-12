@@ -10,6 +10,8 @@
  *   pnpm -C packages/gen balance                # 200 世，谨慎玩家
  *   pnpm -C packages/gen balance -- --lives 500 --profile reckless
  *   pnpm -C packages/gen balance -- --json      # 只吐 JSON，便于对比两次调参
+ *   pnpm -C packages/gen balance -- --lab       # 追猎实验台：打法×风向×build 的得手率
+ *   pnpm -C packages/gen balance -- --stalk-plan rush   # 整世模式里换机器猎手的打法
  *
  * 纪律：数值不达标只调 `tale-content/src/tuning.ts` 与事件 `effects`，**不改引擎**。
  */
@@ -25,11 +27,24 @@ import {
   eligibleChoiceIdxs,
   performAction,
   resolveChoice,
+  stalkAct,
+  stalkPreview,
   type ActionId,
   type EndingType,
+  type StalkAct,
   type TaleState,
+  type WindDir,
 } from "../../tale-sim/src/index.ts";
-import { EVENTS, FLAG_SICK, FLAG_WOUND, SEED_CHANG_TAI, TALE_CONTENT } from "../../tale-content/src/index.ts";
+import {
+  EVENTS,
+  FLAG_SICK,
+  FLAG_WOUND,
+  ORGAN_GOU_CHI,
+  ORGAN_JI_ZU,
+  ORGAN_YE_TONG,
+  SEED_CHANG_TAI,
+  TALE_CONTENT,
+} from "../../tale-content/src/index.ts";
 
 /** 一世的操作上限（寿数 16〜20 岁≈80 回合，加战斗回合，600 足够宽） */
 const MAX_STEPS = 600;
@@ -68,6 +83,7 @@ function applyTuneOverrides(spec: string): typeof TALE_CONTENT {
 }
 
 let CONTENT = TALE_CONTENT;
+let STALK_PLAN: StalkPlan = "patient";
 
 /**
  * 抉择策略。三种画像，因为「平衡」对不同玩法是不同的数：
@@ -84,14 +100,36 @@ interface Args {
   profile: Profile;
   json: boolean;
   tune: string | null;
+  /** 追猎实验台：只跑追猎、按打法×风向×build 拆表，不跑整世 */
+  lab: boolean;
+  stalkPlan: StalkPlan;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { lives: 200, profile: "cautious", json: false, tune: null };
+  const args: Args = { lives: 200, profile: "cautious", json: false, tune: null, lab: false, stalkPlan: "patient" };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--json") {
       args.json = true;
+      continue;
+    }
+    if (flag === "--lab") {
+      args.lab = true;
+      continue;
+    }
+    if (flag === "--stalk-plan") {
+      const value = argv[i + 1];
+      if (
+        value !== "patient" &&
+        value !== "rush" &&
+        value !== "screen" &&
+        value !== "nowait" &&
+        value !== "waiter"
+      ) {
+        throw new Error("--stalk-plan 只能是 patient｜screen｜nowait｜rush｜waiter");
+      }
+      args.stalkPlan = value;
+      i += 1;
       continue;
     }
     if (flag === "--tune") {
@@ -145,8 +183,11 @@ interface LifeSummary {
   organCount: number;
   bloodline: number;
   steps: number;
-  /** 决策次数：事件抉择／行动选择／战斗指令，分别有不同的思考成本 */
-  decisions: { event: number; action: number; combat: number };
+  /** 决策次数：事件抉择／行动选择／战斗指令／追猎指令，分别有不同的思考成本 */
+  decisions: { event: number; action: number; combat: number; stalk: number };
+  /** 追猎场次与得手数（M1-P1 的核心手感指标） */
+  hunts: number;
+  caught: number;
   chars: CharCount;
   /** slain 的两种来源：战斗致死（死亡记录带击杀者 refId）与事件直杀 */
   slainBy: "combat" | "event" | null;
@@ -182,6 +223,109 @@ function isHurt(state: TaleState): boolean {
   return state.flags.includes(FLAG_WOUND) || state.flags.includes(FLAG_SICK);
 }
 
+/**
+ * 追猎打法（M1-P1）。四种，因为「追猎好不好玩」问的就是**不同打法的成绩要拉得开**：
+ * 若四种打法成功率一样，那四个按钮就是装饰，玩家点哪个都行 —— 也就是 M0 的翻牌换了层皮。
+ *
+ * 全部只读 `stalkPreview`（＝界面摆给玩家看的那几个数），不碰引擎内部。
+ */
+export type StalkPlan = "patient" | "rush" | "screen" | "nowait" | "waiter" | "salvage";
+
+/**
+ * 命中率档位的**中点** —— 与 tale-client `model/stalkVm.ts` 的 `CHANCE_BANDS` 一一对应
+ * （那边是正本，这里只取中点）。
+ *
+ * 为什么实验台需要它：没有 `night-eye`／`insight` 的 build 在屏幕上**只看得见档位**
+ * （「参半」覆盖 0.34〜0.60）。若机器猎手照 `stalkPreview` 的精确值决策，它就在用一个真人
+ * 拿不到的信息，于是 bare 与 seer 两组会跑出**逐字相同**的成绩，「信息本身就是器官奖励」
+ * 这条设计主张也就无从验证（第一版实验台正是这样，两行数一模一样）。
+ */
+const BAND_MIDPOINTS: readonly { max: number; mid: number }[] = [
+  { max: 0.12, mid: 0.06 },
+  { max: 0.26, mid: 0.19 },
+  { max: 0.4, mid: 0.33 },
+  { max: 0.55, mid: 0.47 },
+  { max: 0.7, mid: 0.62 },
+  { max: 0.85, mid: 0.77 },
+  { max: 1, mid: 0.92 },
+];
+
+function banded(chance: number): number {
+  return BAND_MIDPOINTS.find((band) => chance <= band.max)?.mid ?? 0.91;
+}
+
+/**
+ * 把预览裁剪成**这个 build 真的看得见**的样子：读不出确数就只剩档位中点，
+ * 读不出风向就当作「不知道自己在不在上风」。
+ */
+function asSeen(p: ReturnType<typeof stalkPreview>): ReturnType<typeof stalkPreview> {
+  if (p.alertVisible && p.windVisible) return p;
+  return {
+    ...p,
+    pounceChance: p.alertVisible ? p.pounceChance : banded(p.pounceChance),
+    pounceChanceAfterCreep: p.alertVisible
+      ? p.pounceChanceAfterCreep
+      : banded(p.pounceChanceAfterCreep),
+    // 看不清风向 ＝ 不敢断定自己已在上风（界面也是这么劝的：绕一圈买个确定）
+    alreadyUpwind: p.windVisible ? p.alreadyUpwind : false,
+  };
+}
+
+function decideStalk(state: TaleState, plan: StalkPlan): StalkAct {
+  const p = asSeen(stalkPreview(state, CONTENT));
+  const stalk = state.stalk;
+  if (!stalk) throw new Error("decideStalk: 不在追猎中");
+  // 只剩最后一动：不扑就是空手而归
+  if (p.staminaLeft <= 1) return "pounce";
+
+  if (plan === "rush") {
+    // 无脑逼近：不绕风、不屏息，贴身就扑
+    return stalk.distance > 0 ? "creep" : "pounce";
+  }
+  /*
+   * salvage ＝ 与 rush 一模一样地硬冲，只在**贴身之后**发现命中率不行时屏息补救。
+   *
+   * 它存在的理由：`patient − nowait` 量不出屏息的价值（明理打法根本走不到需要屏息的局面，
+   * 出手时命中率已经 73%）。屏息真正的用处是**救一个已经打坏的接近**，所以要在坏局面里量。
+   */
+  if (plan === "salvage") {
+    if (stalk.distance > 0) return "creep";
+    if (p.pounceChance < 0.6 && p.waitAlertDrop > 0) return "wait";
+    return "pounce";
+  }
+  if (plan === "waiter") {
+    // 只会等：先等到它彻底松懈，再一路潜过去（体力预算基本不够，用来验证「等」不是万能解）
+    if (p.waitAlertDrop > 0 && p.staminaLeft >= 4) return "wait";
+    return stalk.distance > 0 ? "creep" : "pounce";
+  }
+  if (plan === "nowait") {
+    // 明理但从不屏息 —— 与 patient 的差额就是「屏息」这颗按钮值多少（交付线手感第三问）
+    if (!p.alreadyUpwind && p.staminaLeft >= 4) return "circle";
+    if (p.pounceChance >= 0.7) return "pounce";
+    if (p.creepGain > 0 && p.pounceChanceAfterCreep >= p.pounceChance) return "creep";
+    return "pounce";
+  }
+  if (plan === "patient") {
+    // 明理猎手：先买逆风（绕过一次后 windKnown 让 alreadyUpwind 变真，不会一圈接一圈），
+    // 再逼近，七成才出手；贴身而警觉高时屏息一次
+    if (!p.alreadyUpwind && p.staminaLeft >= 4) return "circle";
+    if (p.pounceChance >= 0.7) return "pounce";
+    if (p.creepGain > 0 && p.pounceChanceAfterCreep >= p.pounceChance) return "creep";
+    if (p.waitAlertDrop > 0) return "wait";
+    return "pounce";
+  }
+  /*
+   * "screen"：**只按屏幕上的金色提示打**（`buildStalkVm` 里 `highlight` 的那套判断）。
+   * 它回答的是一个比「最优解是什么」更要紧的问题：界面自己推荐的那一手，跟得住吗？
+   * 若这条的成绩明显低于 patient，那就是界面在**误导**玩家 —— 那种 bug 不会有测试变红。
+   */
+  if (!p.alreadyUpwind && p.staminaLeft > 2) return "circle";
+  if (p.pounceChance >= 0.7) return "pounce";
+  if (p.creepGain > 0 && p.pounceChanceAfterCreep >= p.pounceChance) return "creep";
+  if (stalk.distance <= 0 && p.waitAlertDrop > 0 && p.pounceChance < 0.6) return "wait";
+  return "pounce";
+}
+
 function decideCombat(state: TaleState, roll: () => number): "fight" | "flee" | "feint" | "organ" {
   const combat = state.combat;
   if (!combat) throw new Error("decideCombat: 不在战斗中");
@@ -207,7 +351,9 @@ function runLife(seed: number, profile: Profile): LifeSummary {
   let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
   let steps = 0;
   let restsThisInjury = 0;
-  const decisions = { event: 0, action: 0, combat: 0 };
+  const decisions = { event: 0, action: 0, combat: 0, stalk: 0 };
+  let hunts = 0;
+  let caught = 0;
   const chars: CharCount = { prose: 0, options: 0, chronicle: 0 };
 
   while (state.alive && steps < MAX_STEPS) {
@@ -217,6 +363,15 @@ function runLife(seed: number, profile: Profile): LifeSummary {
       const round = combatAct(state, decideCombat(state, roll), CONTENT);
       chars.prose += round.roundLog.join("").length;
       state = round.state;
+      continue;
+    }
+    if (state.stalk) {
+      decisions.stalk += 1;
+      const step = stalkAct(state, decideStalk(state, STALK_PLAN), CONTENT);
+      chars.prose += step.roundLog.join("").length;
+      if (step.over === "caught") caught += 1;
+      if (step.over !== null) hunts += 1;
+      state = step.state;
       continue;
     }
     if (!isHurt(state)) restsThisInjury = 0;
@@ -249,6 +404,8 @@ function runLife(seed: number, profile: Profile): LifeSummary {
   return {
     decisions,
     chars,
+    hunts,
+    caught,
     ending: state.ending,
     years: state.year,
     molts: state.records.filter((record) => record.kind === "molt").length,
@@ -298,9 +455,154 @@ function pct(part: number, whole: number): number {
   return whole === 0 ? 0 : Math.round((part / whole) * 1000) / 10;
 }
 
+
+// ===== 追猎实验台（M1-P1）=====
+
+/**
+ * 只跑追猎、不跑整世：把「一场追猎里玩家真的在做判断吗」变成一张表。
+ *
+ * 判据是**打法之间的差额**，不是单一数字：
+ * - patient（绕上风→逼近→七成才扑）vs rush（无脑逼近就扑）→ 差额 ＝ 「有得算」的分量；
+ * - patient vs nowait（同一套但从不屏息）→ 差额 ＝ 屏息那颗按钮值多少；
+ * - screen（只按屏幕金色提示打）贴不贴 patient → 界面推荐的那一手是否可信；
+ * - 按风向拆表 → 顺风是不是真的更难；按 build 拆表 → 器官改不改得动手感。
+ */
+interface StalkOutcome {
+  over: "caught" | "escaped" | "exhausted" | "combat";
+  wind: WindDir;
+  acts: number;
+  /** 真正扑出去那一下的命中率（没扑就是 null） */
+  pounceChance: number | null;
+}
+
+/** 一场孤立的追猎：起追 → 按打法打到收束。事件关掉（否则狩猎那一季可能撞上事件）。 */
+function runStalk(seed: number, plan: StalkPlan, organIds: readonly string[]): StalkOutcome | null {
+  let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
+  if (organIds.length > 0) {
+    // 只借 tag，不叠 statMods（同 tale-sim 测试的 withOrgans 体例）——
+    // 这样 bare 与 seer 两组的四个量完全一致，差的只有「看得见什么」。
+    state = { ...state, organIds: [...state.organIds, ...organIds] };
+  }
+  // 饱食拉满：这里只量追猎本身，不想被饿死打断
+  state = { ...state, hunger: CONTENT.tuning.hungerMax };
+  const started = performAction(state, "hunt", CONTENT);
+  state = started.state;
+  const stalk = state.stalk;
+  if (!stalk) return null;
+  const wind = stalk.wind;
+
+  let acts = 0;
+  let pounceChance: number | null = null;
+  while (state.stalk) {
+    const act = decideStalk(state, plan);
+    if (act === "pounce") pounceChance = stalkPreview(state, CONTENT).pounceChance;
+    const step = stalkAct(state, act, CONTENT);
+    acts += 1;
+    state = step.state;
+    if (step.over !== null) {
+      return { over: step.over, wind, acts, pounceChance };
+    }
+  }
+  return null;
+}
+
+const LAB_BUILDS: readonly { name: string; organs: readonly string[] }[] = [
+  { name: "bare（只有神种）", organs: [] },
+  { name: "seer（夜瞳：读得出确数）", organs: [ORGAN_YE_TONG] },
+  { name: "swift（疾足：少走一步）", organs: [ORGAN_JI_ZU] },
+  { name: "quiet（狩齿：脚步更轻）", organs: [ORGAN_GOU_CHI] },
+];
+
+function labRow(outcomes: readonly StalkOutcome[]): string {
+  const n = outcomes.length;
+  if (n === 0) return "（无样本）";
+  const rate = (over: StalkOutcome["over"]): string =>
+    `${pct(outcomes.filter((o) => o.over === over).length, n)}%`;
+  const pounced = outcomes.filter((o) => o.pounceChance !== null);
+  const meanChance = mean(pounced.map((o) => o.pounceChance ?? 0));
+  return [
+    `得手 ${rate("caught").padStart(6)}`,
+    `逃脱 ${rate("escaped").padStart(6)}`,
+    `力尽 ${rate("exhausted").padStart(6)}`,
+    `反噬 ${rate("combat").padStart(6)}`,
+    `均动作 ${mean(outcomes.map((o) => o.acts)).toFixed(1)}`,
+    `出手时均命中 ${(meanChance * 100).toFixed(0)}%`,
+  ].join("　");
+}
+
+function runLab(samples: number): number {
+  // 事件关掉：实验台只量追猎
+  CONTENT = { ...CONTENT, tuning: { ...CONTENT.tuning, eventChanceBase: 0 } };
+  const plans: readonly StalkPlan[] = ["patient", "screen", "nowait", "rush", "salvage", "waiter"];
+  const winds: readonly WindDir[] = ["into", "cross", "with"];
+
+  console.log(`[追猎实验台] 每格 ${samples} 场（事件已关，饱食拉满，只量追猎本身）\n`);
+
+  const byPlan = new Map<StalkPlan, StalkOutcome[]>();
+  for (const plan of plans) {
+    const outcomes: StalkOutcome[] = [];
+    for (let i = 0; i < samples; i += 1) {
+      const outcome = runStalk(1000 + i * 7919, plan, []);
+      if (outcome) outcomes.push(outcome);
+    }
+    byPlan.set(plan, outcomes);
+  }
+
+  console.log("— 打法（bare build，三种风向混合）—");
+  for (const plan of plans) console.log(`${plan.padEnd(8)} ${labRow(byPlan.get(plan) ?? [])}`);
+
+  console.log("\n— 风向（patient vs rush）—");
+  for (const plan of ["patient", "rush"] as const) {
+    for (const wind of winds) {
+      const rows = (byPlan.get(plan) ?? []).filter((o) => o.wind === wind);
+      console.log(`${plan.padEnd(8)} ${wind.padEnd(6)} ${labRow(rows)}`);
+    }
+  }
+
+  console.log("\n— build（patient 打法）—");
+  for (const build of LAB_BUILDS) {
+    const outcomes: StalkOutcome[] = [];
+    for (let i = 0; i < samples; i += 1) {
+      const outcome = runStalk(1000 + i * 7919, "patient", build.organs);
+      if (outcome) outcomes.push(outcome);
+    }
+    console.log(`${build.name.padEnd(26)} ${labRow(outcomes)}`);
+  }
+
+  const caughtRate = (plan: StalkPlan, filter: (o: StalkOutcome) => boolean = () => true): number => {
+    const rows = (byPlan.get(plan) ?? []).filter(filter);
+    return pct(rows.filter((o) => o.over === "caught").length, rows.length);
+  };
+  const downwind = (o: StalkOutcome): boolean => o.wind === "with";
+  const patient = caughtRate("patient");
+  const rush = caughtRate("rush");
+  const screen = caughtRate("screen");
+  // 屏息的价值要在**它有用的局面**里量：顺风硬冲到贴身、警觉已经飙起来的那一档
+  const rushDown = caughtRate("rush", downwind);
+  const salvageDown = caughtRate("salvage", downwind);
+  console.log("\n— 手感判据 —");
+  const checks: readonly [string, boolean][] = [
+    [`稳扎稳打得手率 ≥60%（实测 ${patient}%）`, patient >= 60],
+    [`稳扎稳打比无脑硬冲高 ≥12 个点（实测 ${(patient - rush).toFixed(1)}）`, patient - rush >= 12],
+    [
+      `顺风硬冲会失手（得手 ≤45%，实测 ${rushDown}%）`,
+      rushDown <= 45,
+    ],
+    [
+      `屏息能救回一个打坏的接近（顺风：salvage ${salvageDown}% − rush ${rushDown}% ≥ 8 个点）`,
+      salvageDown - rushDown >= 8,
+    ],
+    [`按屏幕提示打不比自己算差（≤4 个点，实测 ${(patient - screen).toFixed(1)}）`, patient - screen <= 4],
+  ];
+  for (const [name, ok] of checks) console.log(`${ok ? "✓" : "✗"} ${name}`);
+  return checks.every(([, ok]) => ok) ? 0 : 1;
+}
+
 function main(): number {
   const args = parseArgs(process.argv.slice(2));
   if (args.tune !== null) CONTENT = applyTuneOverrides(args.tune);
+  STALK_PLAN = args.stalkPlan;
+  if (args.lab) return runLab(args.lives);
   const lives = Array.from({ length: args.lives }, (_, index) => runLife(1000 + index * 7919, args.profile));
 
   const rate = (ending: EndingType): number => pct(lives.filter((life) => life.ending === ending).length, lives.length);

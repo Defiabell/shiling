@@ -17,6 +17,7 @@ import {
   type EnemyDef,
   type OrganDef,
   type SeedDef,
+  type StalkState,
   type TaleContent,
   type TaleEvent,
   type TaleState,
@@ -111,6 +112,17 @@ const FIXTURE_ENEMIES: EnemyDef[] = [
     essence: { zu: 12, xue: 4 },
     fleeBias: -10,
     desc: "羽色斑驳，惊则疾走。",
+    // 追猎参数写死（不吃 tuning 缺省），让距离/警觉的算式在测试里可手算
+    startDistance: 24,
+    wariness: 18,
+    /*
+     * 只填两槽、且带【雉】标记：追猎旁白有「猎物专属 → 引擎兜底」两条路，测试要能
+     * **分辨**走的是哪条。填满就分辨不出兜底路是否还活着（那正是内容漏写时的实际路径）。
+     */
+    stalkFlavor: {
+      creep: ["【雉】压草而近{{steps}}步。"],
+      miss: ["【雉】扑空，它贴地走了。"],
+    },
   },
   {
     id: ENEMY_QIONG_QI,
@@ -121,6 +133,10 @@ const FIXTURE_ENEMIES: EnemyDef[] = [
     essence: { meng: 30, xue: 6 },
     fleeBias: 15,
     desc: "生而有翼，啼声如婴。虽幼，已知食人。",
+    startDistance: 30,
+    wariness: 20,
+    // 反扑：追猎失手／受惊即转搏杀。刻意**不给** stalkFlavor —— 兜底旁白的测试靠它。
+    retaliates: true,
   },
 ];
 
@@ -341,6 +357,53 @@ export function enterCombat(
     },
   };
 }
+
+/**
+ * 手工把状态推进到「正在追某头猎物」，四个量逐项可覆写。
+ *
+ * 存在的理由：起追时距离与警觉都带抖动、风向三选一 —— 靠 `performAction("hunt")` 碰出
+ * 「顺风 ＋ 警觉 96 ＋ 体力 1」这种边界要试几百个种子，而那些边界正是最该被钉住的。
+ */
+export function enterStalk(
+  state: TaleState,
+  preyId: string,
+  overrides: Partial<Omit<StalkState, "preyId">> = {},
+  content: TaleContent = FIXTURE_CONTENT,
+): TaleState {
+  const prey = content.enemies.find((candidate) => candidate.id === preyId);
+  if (!prey) throw new Error(`enterStalk: 未知猎物 ${preyId}`);
+  const t = content.tuning;
+  return {
+    ...state,
+    stalk: {
+      preyId,
+      distance: prey.startDistance ?? t.stalkStartDistance,
+      alertness: prey.wariness ?? t.stalkStartAlert,
+      stamina: t.stalkStamina,
+      wind: "cross",
+      windKnown: false,
+      round: 0,
+      log: [],
+      ...overrides,
+    },
+  };
+}
+
+/** 扑击必中／必空的 content（`UNCLAMPED_CHANCE` 打底，把命中率钉成 1 或 0）。 */
+export const ALWAYS_POUNCE: Partial<TaleTuning> = {
+  ...UNCLAMPED_CHANCE,
+  stalkPounceBase: 1,
+  stalkPouncePerDistance: 0,
+  stalkPouncePerAlert: 0,
+  stalkPouncePerMeng: 0,
+};
+export const NEVER_POUNCE: Partial<TaleTuning> = {
+  ...UNCLAMPED_CHANCE,
+  stalkPounceBase: 0,
+  stalkPouncePerDistance: 0,
+  stalkPouncePerAlert: 0,
+  stalkPouncePerMeng: 0,
+};
 
 /** 直接塞器官 id（**不**叠加 statMods —— 只想借它的 tags 时用这个）。 */
 export function withOrgans(state: TaleState, ...organIds: string[]): TaleState {

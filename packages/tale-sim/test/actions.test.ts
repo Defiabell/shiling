@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { availableActions, createLife, performAction } from "../src/index.js";
+import { availableActions, createLife, performAction, stalkAct } from "../src/index.js";
 import {
+  ALWAYS_POUNCE,
   ENEMY_QIONG_QI,
   ENEMY_YE_ZHI,
   FIXTURE_CONTENT,
   FIXTURE_SEED_ID,
-  ORGAN_GOU_CHI,
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
   enterCombat,
+  enterStalk,
   makeContent,
-  withOrgans,
 } from "./fixtures.js";
 
 const NO_EVENTS = contentWithoutEvents();
@@ -29,10 +29,11 @@ describe("availableActions", () => {
     expect(availableActions(almost, FIXTURE_CONTENT)).not.toContain("dormant");
   });
 
-  it("死亡或战斗中一律无可选行动", () => {
+  it("死亡、战斗中、追猎中一律无可选行动", () => {
     const life = createLife(1, FIXTURE_SEED_ID, FIXTURE_CONTENT);
     expect(availableActions({ ...life, alive: false }, FIXTURE_CONTENT)).toEqual([]);
     expect(availableActions(enterCombat(life, ENEMY_YE_ZHI), FIXTURE_CONTENT)).toEqual([]);
+    expect(availableActions(enterStalk(life, ENEMY_YE_ZHI), FIXTURE_CONTENT)).toEqual([]);
   });
 });
 
@@ -54,59 +55,65 @@ describe("performAction 前置校验", () => {
   it("行动当前不可用时抛错（精气不够却要蛰伏）", () => {
     expect(() => performAction(life, "dormant", FIXTURE_CONTENT)).toThrow(/不可执行行动/);
   });
+
+  it("追猎未收束时抛错（追猎把一个回合拆成两段，中途不许换行动）", () => {
+    expect(() =>
+      performAction(enterStalk(life, ENEMY_YE_ZHI), "rest", FIXTURE_CONTENT),
+    ).toThrow(/追猎未收束/);
+  });
 });
 
-describe("狩猎", () => {
-  const alwaysHit = contentWithoutEvents({
-    tuning: { ...UNCLAMPED_CHANCE, huntBase: 1, huntPerMeng: 0, huntHunterTagBonus: 0 },
-  });
-  const alwaysMiss = contentWithoutEvents({
-    tuning: {
-      ...UNCLAMPED_CHANCE,
-      huntBase: 0,
-      huntPerMeng: 0,
-      huntHunterTagBonus: 0,
-      huntFailCombatChance: 0,
-    },
+describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
+  const QUIET = contentWithoutEvents();
+
+  it("没抽到事件就起追：摆出猎物与四个量，且**这一季还没推进**", () => {
+    const life = createLife(3, FIXTURE_SEED_ID, QUIET);
+    const { state, pendingEvent, notices } = performAction(life, "hunt", QUIET);
+
+    expect(pendingEvent).toBeNull();
+    expect(state.stalk).not.toBeNull();
+    expect(QUIET.tuning.huntPreyIds).toContain(state.stalk?.preyId);
+    expect(state.stalk?.stamina).toBe(QUIET.tuning.stalkStamina);
+    expect(state.stalk?.round).toBe(0);
+    expect(["into", "cross", "with"]).toContain(state.stalk?.wind);
+    // 季推进与饱食消耗推迟到追猎收束那一步 —— 否则饿到只剩一季的玩家会在猎物到嘴前先饿死
+    expect(state.season).toBe(life.season);
+    expect(state.year).toBe(life.year);
+    expect(state.hunger).toBe(life.hunger);
+    // 开场旁白进 notices，也进 stalk.log（界面两处都要读得到）
+    expect(notices.length).toBeGreaterThan(0);
+    expect(state.stalk?.log).toEqual([notices[0]]);
+    // 追猎未收束 → 行动面板整体压住
+    expect(availableActions(state, QUIET)).toEqual([]);
   });
 
-  it("成功则回饱食并吞得猎物精气", () => {
-    const life = createLife(3, FIXTURE_SEED_ID, alwaysHit);
-    const { state, notices } = performAction(life, "hunt", alwaysHit);
+  /*
+   * 这一条守着一个**会静默弄死四分之一内容池**的坑：内容库有 12 条 `actions:["hunt"]`
+   * 的狩猎事件，若「狩猎一律直接起追」，它们再也不会入池，而没有任何别的测试会变红。
+   */
+  it("撞上狩猎事件的那一季不起追（事件卡与追猎屏占同一块舞台）", () => {
+    const busy = makeContent({ tuning: { eventChanceBase: 1 } });
+    const { state, pendingEvent } = performAction(createLife(3, FIXTURE_SEED_ID, busy), "hunt", busy);
+    expect(pendingEvent).not.toBeNull();
+    expect(state.stalk).toBeNull();
+    // 这一季照常收束（该扣的饱食扣了）
+    expect(state.hunger).toBe(60 - 12);
+  });
+
+  it("扑中才回饱食与精气，且季消耗在收益之后结算", () => {
+    const content = contentWithoutEvents({ tuning: ALWAYS_POUNCE });
+    const life = createLife(3, FIXTURE_SEED_ID, content);
+    const stalking = enterStalk(life, ENEMY_YE_ZHI, {}, content);
+    const turn = stalkAct(stalking, "pounce", content);
+
+    expect(turn.over).toBe("caught");
+    expect(turn.state.stalk).toBeNull();
     // 60 + 26（huntFoodGain）− 12（春季消耗）
-    expect(state.hunger).toBe(74);
-    expect(state.essence.zu).toBe(12);
-    expect(state.essence.xue).toBe(4);
-    expect(notices.join("")).toContain("猎得野雉");
-  });
-
-  it("失败则无所得（仅扣季消耗），不开战", () => {
-    const life = createLife(3, FIXTURE_SEED_ID, alwaysMiss);
-    const { state, notices } = performAction(life, "hunt", alwaysMiss);
-    expect(state.hunger).toBe(48);
-    expect(state.essence).toEqual({ zu: 0, lin: 0, xue: 0, meng: 0 });
-    expect(state.combat).toBeNull();
-    expect(notices.join("")).toContain("空腹而返");
-  });
-
-  it("失败且掷中遭遇概率则转入战斗，起手血量 = ti", () => {
-    const ambush = contentWithoutEvents({
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        huntBase: 0,
-        huntPerMeng: 0,
-        huntHunterTagBonus: 0,
-        huntFailCombatChance: 1,
-      },
-    });
-    const life = createLife(3, FIXTURE_SEED_ID, ambush);
-    const { state, notices } = performAction(life, "hunt", ambush);
-    expect(state.combat).not.toBeNull();
-    expect(state.combat?.enemyId).toBe(ENEMY_YE_ZHI);
-    expect(state.combat?.enemyHp).toBe(6);
-    expect(state.combat?.playerHp).toBe(state.stats.ti);
-    expect(state.combat?.round).toBe(0);
-    expect(notices.join("")).toContain("盯上");
+    expect(turn.state.hunger).toBe(74);
+    expect(turn.state.essence.zu).toBe(12);
+    expect(turn.state.essence.xue).toBe(4);
+    // 收束这一步才推进季
+    expect(turn.state.season).toBe(1);
   });
 
   it("猎物表为空直接抛错（不伪装成「今天没猎到」）", () => {
@@ -121,46 +128,24 @@ describe("狩猎", () => {
     expect(() => performAction(life, "hunt", dangling)).toThrow(/未知敌人 no-such-beast/);
   });
 
-  it("hunter tag 的加成真的进了成功率", () => {
-    // huntBase 0 ＋ tag 加成 1：没 tag 必失手，有 tag 必得手。
-    const tagDecides = contentWithoutEvents({
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        huntBase: 0,
-        huntPerMeng: 0,
-        huntHunterTagBonus: 1,
-        huntFailCombatChance: 0,
-      },
+  it("猎物表有多个时会等权轮到不同猎物", () => {
+    const twoPrey = contentWithoutEvents({
+      tuning: { ...UNCLAMPED_CHANCE, huntPreyIds: [ENEMY_YE_ZHI, ENEMY_QIONG_QI] },
     });
-    const bare = createLife(9, FIXTURE_SEED_ID, tagDecides);
-    expect(performAction(bare, "hunt", tagDecides).state.essence.zu).toBe(0);
-    const fanged = withOrgans(bare, ORGAN_GOU_CHI);
-    expect(performAction(fanged, "hunt", tagDecides).state.essence.zu).toBe(12);
-  });
-
-  it("meng 也进成功率（huntPerMeng）", () => {
-    const mengDecides = contentWithoutEvents({
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        huntBase: 0,
-        huntPerMeng: 0.05, // meng 20 → 1.0
-        huntHunterTagBonus: 0,
-        huntFailCombatChance: 0,
-      },
-    });
-    const weak = createLife(11, FIXTURE_SEED_ID, mengDecides);
-    expect(performAction(weak, "hunt", mengDecides).state.essence.zu).toBe(0);
-    const strong = { ...weak, stats: { ...weak.stats, meng: 20 } };
-    expect(performAction(strong, "hunt", mengDecides).state.essence.zu).toBe(12);
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 40; seed += 1) {
+      const life = createLife(seed, FIXTURE_SEED_ID, twoPrey);
+      const { state } = performAction(life, "hunt", twoPrey);
+      if (state.stalk) seen.add(state.stalk.preyId);
+    }
+    expect(seen).toEqual(new Set([ENEMY_YE_ZHI, ENEMY_QIONG_QI]));
   });
 
   it("饱食不超上限", () => {
-    const feast = contentWithoutEvents({
-      tuning: { ...UNCLAMPED_CHANCE, huntBase: 1, huntFoodGain: 500 },
-    });
+    const feast = contentWithoutEvents({ tuning: { ...ALWAYS_POUNCE, huntFoodGain: 500 } });
     const life = createLife(3, FIXTURE_SEED_ID, feast);
-    const { state } = performAction(life, "hunt", feast);
-    expect(state.hunger).toBe(100 - 12);
+    const turn = stalkAct(enterStalk(life, ENEMY_YE_ZHI, {}, feast), "pounce", feast);
+    expect(turn.state.hunger).toBe(100 - 12);
   });
 });
 
@@ -194,19 +179,6 @@ describe("探索与休憩", () => {
     const life = createLife(5, FIXTURE_SEED_ID, healer);
     const { notices } = performAction(life, "rest", healer);
     expect(notices.join("")).not.toContain("旧创渐合");
-  });
-
-  it("猎物表有多个时会等权轮到不同猎物", () => {
-    const twoPrey = contentWithoutEvents({
-      tuning: { ...UNCLAMPED_CHANCE, huntBase: 1, huntPreyIds: [ENEMY_YE_ZHI, ENEMY_QIONG_QI] },
-    });
-    const seen = new Set<string>();
-    for (let seed = 0; seed < 40; seed += 1) {
-      const life = createLife(seed, FIXTURE_SEED_ID, twoPrey);
-      const { state } = performAction(life, "hunt", twoPrey);
-      seen.add(state.essence.meng > 0 ? "qiong-qi" : "ye-zhi");
-    }
-    expect(seen.size).toBe(2);
   });
 });
 

@@ -6,9 +6,11 @@ import {
   createLife,
   performAction,
   resolveChoice,
+  stalkAct,
   type TaleState,
 } from "../src/index.js";
 import {
+  ENEMY_QIONG_QI,
   ENEMY_YE_ZHI,
   EVENT_MANDATE,
   EVENT_THICKET,
@@ -18,8 +20,10 @@ import {
   ORGAN_JI_ZU,
   ORGAN_LIN_JIA,
   ORGAN_WU_MU,
+  NEVER_POUNCE,
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
+  enterStalk,
   makeContent,
   withOrgans,
 } from "./fixtures.js";
@@ -104,15 +108,10 @@ describe("死亡覆盖未结算的东西", () => {
   it("死亡撤掉本回合抽出的事件，且不写 firedOnceIds", () => {
     const content = makeContent({
       events: [FIXTURE_CONTENT.events.find((event) => event.id === EVENT_THICKET)!],
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        eventChanceBase: 1,
-        huntBase: 1,
-        hungerPerSeason: 200,
-        huntFoodGain: 0,
-      },
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, hungerPerSeason: 200 },
     });
     const life = createLife(1, FIXTURE_SEED_ID, content);
+    // 丛中窥影只在狩猎后入池；事件必抽 → 这一季不起追，照常走完五步后饿死
     const doomed: TaleState = { ...life, flags: [SYS_FLAG_STARVING] };
     const { state, pendingEvent } = performAction(doomed, "hunt", content);
     expect(state.alive).toBe(false);
@@ -120,23 +119,30 @@ describe("死亡覆盖未结算的东西", () => {
     expect(state.firedOnceIds).toEqual([]);
   });
 
-  it("死亡清空战斗（不会留下「已死却还在打」的状态）", () => {
+  /*
+   * M1-P1：追猎的死亡判定在**收束**那一步（`closeSeason`）。所以「饿到只剩一季还去打猎」
+   * 的一世现在会先把追猎打完 —— 扑中就活下来，扑空才饿死。这正是这套改动想要的：
+   * 「饿了就去猎」是唯一的正解，它不该自带一条「还没见到猎物就先饿死」的分支。
+   */
+  it("追猎收束时才判死，且死亡清空追猎与战斗", () => {
     const content = contentWithoutEvents({
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        huntBase: 0,
-        huntPerMeng: 0,
-        huntHunterTagBonus: 0,
-        huntFailCombatChance: 1,
-        hungerPerSeason: 200,
-      },
+      tuning: { ...NEVER_POUNCE, hungerPerSeason: 200 },
     });
     const life = createLife(1, FIXTURE_SEED_ID, content);
     const doomed: TaleState = { ...life, flags: [SYS_FLAG_STARVING] };
-    const { state } = performAction(doomed, "hunt", content);
-    expect(state.alive).toBe(false);
-    expect(state.ending).toBe("starve");
-    expect(state.combat).toBeNull();
+    const started = performAction(doomed, "hunt", content).state;
+    // 起追这一步不判死 —— 人还活着，追猎还在
+    expect(started.alive).toBe(true);
+    expect(started.stalk).not.toBeNull();
+
+    // 反扑的猎物 ＋ 必失手：这一扑既该转搏杀、又该在同一步饿死 —— 死亡必须盖掉战斗
+    const cornered = enterStalk(doomed, ENEMY_QIONG_QI, {}, content);
+    const turn = stalkAct(cornered, "pounce", content);
+    expect(turn.over).toBe("combat");
+    expect(turn.state.alive).toBe(false);
+    expect(turn.state.ending).toBe("starve");
+    expect(turn.state.combat).toBeNull();
+    expect(turn.state.stalk).toBeNull();
   });
 
   it("死后再行动直接抛错", () => {

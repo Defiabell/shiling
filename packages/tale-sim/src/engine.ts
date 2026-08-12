@@ -17,7 +17,7 @@
  */
 
 import { createCursor, weightedPick, weightedSample, type RngCursor } from "./rng.js";
-import { ENGINE_MESSAGES, render } from "./messages.js";
+import { ENGINE_MESSAGES, STALK_MESSAGES, render } from "./messages.js";
 import type {
   ActionId,
   ChronicleEntry,
@@ -32,10 +32,13 @@ import type {
   OrganDef,
   Season,
   SeedDef,
+  StalkAct,
+  StalkState,
   Stats,
   TaleEvent,
   TaleState,
   TaleTuning,
+  WindDir,
 } from "./types.js";
 
 // ===== 依赖注入 =====
@@ -91,6 +94,55 @@ export interface CombatTurn {
   state: TaleState;
   roundLog: string[];
   over: "win" | "fled" | "dead" | null;
+}
+
+/**
+ * [M1-P1 正本] 单个追猎动作的结果。
+ *
+ * `over` 非 null 时 `state.stalk` 已置 null，**且本季在这一刻才收束**（季推进＋死亡判定
+ * 都在这一步跑完，见 `closeSeason`）——「起追」那一次 `performAction` 只把猎物摆上来。
+ * `combat` ＝ 转入搏杀（`state.combat` 非 null）。
+ */
+export interface StalkTurn {
+  state: TaleState;
+  roundLog: string[];
+  over: "caught" | "escaped" | "exhausted" | "combat" | null;
+}
+
+/**
+ * [M1-P1 正本 ＋ 补全] 追猎屏的只读预览。纯函数、零副作用，同一 state 调多少次都一样。
+ *
+ * ## 为什么是超集
+ * 正本给的四个字段（`pounceChance`／`creepGain`／`alertVisible`／`windVisible`）**撑不起
+ * P1 交付线自己的要求**：「动作按钮要显示预期效果（潜行会拉近多少、**警觉涨多少**）」。
+ * 警觉增益要乘风向、贴近程度与静步 tag 三个系数 —— 让界面自己算等于把公式抄进
+ * tale-client（破「客户端零游戏逻辑」），让界面不显示则等于按钮又变回翻牌。
+ * 所以按正本的四个字段做**加法**：任何照正本写的消费方逐字可用，多出来的字段各自标了
+ * `[P1 补]`，并在此说明它们为什么非有不可。
+ */
+export interface StalkPreview {
+  /** [正本] 此刻扑击的命中率（已按 minChance／maxChance 夹紧） */
+  pounceChance: number;
+  /** [正本] 此刻潜行能拉近的步数（距离不足时就是剩下那点） */
+  creepGain: number;
+  /** [正本] 看得见**精确**警觉数值（否则界面只该给「未觉／有疑／欲遁」三档） */
+  alertVisible: boolean;
+  /** [正本] 看得清风向（否则界面只该给「风势难辨」） */
+  windVisible: boolean;
+  /** [P1 补] 潜行会涨多少警觉 —— 没有它，潜行按钮就是「点了才知道」 */
+  creepAlertGain: number;
+  /** [P1 补] 潜行之后再扑的命中率：让「再近一步值不值」是算得出来的，而不是赌的 */
+  pounceChanceAfterCreep: number;
+  /** [P1 补] 绕至上风的警觉代价 */
+  circleAlertGain: number;
+  /** [P1 补] 已在上风（此时绕行纯属白费一息；`windVisible` 为假时界面不该泄露它） */
+  alreadyUpwind: boolean;
+  /** [P1 补] 屏息一次能压下多少警觉（受 0 下限约束，已按当前警觉截断） */
+  waitAlertDrop: number;
+  /** [P1 补] 失手／受惊时猎物反扑而非逃走 —— 扑之前就该知道赌注有多大 */
+  retaliates: boolean;
+  /** [P1 补] 还剩几个动作（含这一次）；1 ＝ 此后再无力追 */
+  staminaLeft: number;
 }
 
 // ===== 保留 flag =====
@@ -187,6 +239,7 @@ function draftOf(state: TaleState): TaleState {
     flags: [...state.flags],
     firedOnceIds: [...state.firedOnceIds],
     combat: state.combat ? { ...state.combat, log: [...state.combat.log] } : null,
+    stalk: state.stalk ? { ...state.stalk, log: [...state.stalk.log] } : null,
     records: [...state.records],
   };
 }
@@ -306,6 +359,7 @@ export function createLife(seedNum: number, seedDefId: string, content: TaleCont
     flags: [],
     firedOnceIds: [],
     combat: null,
+    stalk: null,
     records: [
       {
         year: 0,
@@ -323,11 +377,11 @@ export function createLife(seedNum: number, seedDefId: string, content: TaleCont
 }
 
 /**
- * 当前可选行动。死亡或战斗未结束时返回空数组（界面据此禁用行动面板）。
+ * 当前可选行动。死亡、战斗未结束、**或追猎未收束**时返回空数组（界面据此禁用行动面板）。
  * 「蛰伏」仅在任一型精气 ≥ `tuning.moltThreshold` 时出现。
  */
 export function availableActions(state: TaleState, content: TaleContent): ActionId[] {
-  if (!state.alive || state.combat) return [];
+  if (!state.alive || state.combat || state.stalk) return [];
   const actions: ActionId[] = ["hunt", "explore", "rest"];
   if (ESSENCE_ORDER.some((type) => state.essence[type] >= content.tuning.moltThreshold)) {
     actions.push("dormant");
@@ -348,42 +402,356 @@ function beginCombat(draft: TaleState, enemy: EnemyDef): void {
   };
 }
 
-function huntSuccessRate(draft: TaleState, content: TaleContent): number {
-  const t = content.tuning;
-  let rate = t.huntBase + draft.stats.meng * t.huntPerMeng;
-  if (ownedTags(draft, content).has(t.huntHunterTag)) rate += t.huntHunterTagBonus;
-  return clamp(rate, t.minChance, t.maxChance);
+// ===== 追猎（M1-P1）=====
+//
+// 玩法正本：docs/plans/shiling/2026-08-12-liezhuan-m1-playable-plan.md 的「P1 追猎屏」。
+//
+// 这一段替掉了 M0 的 `resolveHunt`（一次掷骰定成败）。为什么整段换掉而不是加参数：
+// M0 的狩猎在**玩家点下去之前无法判断、也无法准备** —— 那不是决策，是翻牌。追猎把同一件
+// 事拆成「四个可见的量 × 四个动作」，于是玩家可以形成计划（绕到上风再逼近）、跨回合执行它、
+// 并因为判断失误（顺风硬冲）而失败。所有让人做判断的东西都必须看得见，这就是 `stalkPreview`
+// 存在的理由，也是 `night-eye`／`insight` 给的是**信息**而不是数值加成的理由。
+
+/** 追猎旁白抽变体。**恒定消耗一次抽取**（池为空时退回兜底池，消耗不变），确定性可推演。 */
+function pickFlavor(
+  cursor: RngCursor,
+  specific: readonly string[] | undefined,
+  fallback: readonly string[],
+): string {
+  const pool = specific && specific.length > 0 ? specific : fallback;
+  return pool[cursor.int(pool.length)] ?? "";
 }
 
-function resolveHunt(
+/** 猎物表查表。空表／悬空 id 是内容 bug，要吵不要静默（同 M0：狩猎失效＝每一世饿死）。 */
+function preyPool(content: TaleContent): EnemyDef[] {
+  const ids = content.tuning.huntPreyIds;
+  if (ids.length === 0) {
+    throw new Error("beginStalk: tuning.huntPreyIds 为空，狩猎无从起追（内容必须填猎物表）");
+  }
+  return ids.map((id) => {
+    const enemy = enemyById(content, id);
+    if (!enemy) throw new Error(`beginStalk: 猎物表里的未知敌人 ${id}`);
+    return enemy;
+  });
+}
+
+function stalkPrey(state: TaleState, content: TaleContent): EnemyDef {
+  const stalk = state.stalk;
+  if (!stalk) throw new Error("stalkPrey: 当前不在追猎中");
+  const prey = enemyById(content, stalk.preyId);
+  if (!prey) throw new Error(`stalkPrey: 未知猎物 ${stalk.preyId}`);
+  return prey;
+}
+
+/** 逆风减半／侧风照旧／顺风翻倍。内容写坏（缺项）时退回 1，不静默把风向变成免费。 */
+function windAlertMul(t: TaleTuning, wind: WindDir): number {
+  return t.stalkWindAlertMul[wind] ?? 1;
+}
+
+/**
+ * 贴近倍率：距离 ≥ `stalkNearDistance` 时为 1，贴身时为 `stalkNearAlertMul`，中间线性。
+ *
+ * 这是整套数值里最关键的一条曲线 —— 没有它，「潜行」就是匀速逼近，玩家算一次就够了；
+ * 有了它，**最后一步永远是最险的一步**，于是「什么时候停下来扑」才成为一个真的问题。
+ */
+function nearAlertMul(t: TaleTuning, distance: number): number {
+  if (t.stalkNearDistance <= 0) return 1;
+  const closeness = clamp((t.stalkNearDistance - distance) / t.stalkNearDistance, 0, 1);
+  return 1 + (t.stalkNearAlertMul - 1) * closeness;
+}
+
+/** 潜行能拉近的步数（疾足类 tag 加成；不会拉过头，最多到贴身）。 */
+function creepDistanceGain(state: TaleState, content: TaleContent, tags: Set<string>): number {
+  const t = content.tuning;
+  const stalk = state.stalk;
+  const step = t.stalkCreepDistance + (tags.has(t.stalkSwiftTag) ? t.stalkCreepSwiftBonus : 0);
+  return Math.max(0, Math.min(stalk?.distance ?? 0, step));
+}
+
+/**
+ * 潜行的警觉增益 = 基础 × 风向 × 贴近（按**移动后**的距离算）× 静步。
+ *
+ * 取整用 `Math.round`：界面显示的就是这个数，玩家按它做计划 —— 显示 4 实际扣 3.6 会让
+ * 「攒到多少就该扑」这类计划在第三步对不上账，那比数值不准更糟。
+ */
+function creepAlertGain(state: TaleState, content: TaleContent, tags: Set<string>): number {
+  const t = content.tuning;
+  const stalk = state.stalk;
+  if (!stalk) return 0;
+  const after = Math.max(0, stalk.distance - creepDistanceGain(state, content, tags));
+  const quiet = tags.has(t.huntHunterTag) ? t.stalkQuietAlertMul : 1;
+  return Math.round(t.stalkCreepAlert * windAlertMul(t, stalk.wind) * nearAlertMul(t, after) * quiet);
+}
+
+/** 扑击命中率（正本公式）。距离与警觉各自都能把它压死，猛只是微调。 */
+function pounceChanceAt(distance: number, alertness: number, meng: number, t: TaleTuning): number {
+  const raw =
+    t.stalkPounceBase -
+    distance * t.stalkPouncePerDistance -
+    alertness * t.stalkPouncePerAlert +
+    meng * t.stalkPouncePerMeng;
+  return clamp(raw, t.minChance, t.maxChance);
+}
+
+/**
+ * 起追：摆好一头具体的猎物与四个量。
+ *
+ * 抽取顺序固定（改动即打破所有既存种子的剧本）：猎物 → 距离抖动 → 警觉抖动 → 风向 → 开场旁白。
+ *
+ * 风向等权三选一：**没有 `stalkWindTags` 的玩家看不见它**，所以「先绕到上风再说」是那种
+ * build 的标准开局（花一点体力买确定性）；看得见风向的 build 则省下这一步 —— 信息本身
+ * 就是器官奖励，这条是它最直白的兑现。
+ */
+function beginStalk(
   draft: TaleState,
   cursor: RngCursor,
   content: TaleContent,
   notices: string[],
 ): void {
   const t = content.tuning;
-  // 猎物表配错是内容 bug，要吵不要静默：空表或悬空 id 都会让狩猎永久失效、每一世饿死，
-  // 而「山野寂寂」那种氛围旁白会把它伪装成正常玩法。
-  if (t.huntPreyIds.length === 0) {
-    throw new Error("resolveHunt: tuning.huntPreyIds 为空，狩猎无从掷骰（B2 必须填猎物表）");
-  }
-  const pool = t.huntPreyIds.map((id) => {
-    const enemy = enemyById(content, id);
-    if (!enemy) throw new Error(`resolveHunt: 猎物表里的未知敌人 ${id}`);
-    return enemy;
-  });
+  const pool = preyPool(content);
   const prey = pool[cursor.int(pool.length)];
-  if (!prey) throw new Error("resolveHunt: 猎物表抽取失败");
-  if (cursor.next() < huntSuccessRate(draft, content)) {
-    draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
-    draft.essence = addEssence(draft.essence, prey.essence);
-    notices.push(render(ENGINE_MESSAGES.huntSuccess, { enemy: prey.name }));
-    return;
+  if (!prey) throw new Error("beginStalk: 猎物表抽取失败");
+
+  const baseDistance = prey.startDistance ?? t.stalkStartDistance;
+  const distanceJitter = t.stalkStartDistanceJitter;
+  const distance = Math.max(
+    1,
+    Math.round(baseDistance + (distanceJitter > 0 ? cursor.int(distanceJitter * 2 + 1) - distanceJitter : 0)),
+  );
+  const baseAlert = prey.wariness ?? t.stalkStartAlert;
+  const alertJitter = t.stalkStartAlertJitter;
+  const alertness = clamp(
+    Math.round(baseAlert + (alertJitter > 0 ? cursor.int(alertJitter * 2 + 1) - alertJitter : 0)),
+    0,
+    t.stalkAlertMax,
+  );
+  const winds: readonly WindDir[] = ["into", "cross", "with"];
+  const wind = winds[cursor.int(winds.length)] ?? "cross";
+  const opening = render(pickFlavor(cursor, prey.stalkFlavor?.begin, STALK_MESSAGES.begin), {
+    enemy: prey.name,
+  });
+
+  draft.stalk = {
+    preyId: prey.id,
+    distance,
+    alertness,
+    stamina: t.stalkStamina,
+    wind,
+    // 起手不确知风向：有 stalkWindTags 器官的读得出来（见 stalkPreview），没有的只能绕一圈买确定
+    windKnown: false,
+    round: 0,
+    log: [opening],
+  };
+  notices.push(opening);
+}
+
+/**
+ * 追猎屏要显示的全部只读数（纯函数）。
+ *
+ * @throws 不在追猎中时抛错 —— 界面只该在 `state.stalk` 非 null 时问它
+ */
+export function stalkPreview(state: TaleState, content: TaleContent): StalkPreview {
+  const stalk = state.stalk;
+  if (!stalk) throw new Error("stalkPreview: 当前不在追猎中");
+  const t = content.tuning;
+  const prey = stalkPrey(state, content);
+  const tags = ownedTags(state, content);
+
+  const creepGain = creepDistanceGain(state, content, tags);
+  const alertGain = creepAlertGain(state, content, tags);
+  const meng = state.stats.meng;
+
+  return {
+    pounceChance: pounceChanceAt(stalk.distance, stalk.alertness, meng, t),
+    creepGain,
+    alertVisible: t.stalkAlertTags.some((tag) => tags.has(tag)),
+    // 器官读得出，或者自己刚绕过一圈 —— 两条都算「确知」
+    windVisible: stalk.windKnown || t.stalkWindTags.some((tag) => tags.has(tag)),
+    creepAlertGain: alertGain,
+    pounceChanceAfterCreep: pounceChanceAt(
+      stalk.distance - creepGain,
+      Math.min(t.stalkAlertMax, stalk.alertness + alertGain),
+      meng,
+      t,
+    ),
+    circleAlertGain: t.stalkCircleAlert,
+    alreadyUpwind: stalk.wind === "into",
+    waitAlertDrop: Math.min(stalk.alertness, t.stalkWaitAlertDrop),
+    retaliates: prey.retaliates === true,
+    staminaLeft: stalk.stamina,
+  };
+}
+
+/**
+ * 打一个追猎动作。
+ *
+ * - `creep` 潜行：距离 −（疾足加成），警觉 +（顺风翻倍／逆风减半，且越近涨得越凶）。
+ * - `circle` 绕至上风：风向重置为逆风，警觉 +小。**看不见风向的 build 用它买确定性。**
+ * - `wait` 屏息：警觉 −，有概率猎物自行挪位（可能走远到跟丢）。
+ * - `pounce` 扑击：按 `stalkPreview().pounceChance` 掷一次，成败即收束。
+ *
+ * 每个动作（**含扑击**）扣 1 点体力；扣到 0 而还没扑成 ＝ `exhausted`，空手而归。
+ *
+ * 收束时（`over` 非 null）这一步才跑季推进与死亡判定（`closeSeason`）—— 「起追」那一次
+ * `performAction` 刻意没跑：否则饿到只剩一季的玩家会在**猎物到嘴之前**先饿死，而
+ * 「饿了就去猎」正是这游戏唯一的正解，不能自带一条必死分支。
+ *
+ * @throws 已死亡、不在追猎中、或猎物 id 失效时抛错
+ */
+export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent): StalkTurn {
+  if (!state.alive) throw new Error("stalkAct: 已死亡");
+  const current = state.stalk;
+  if (!current) throw new Error("stalkAct: 当前不在追猎中");
+  const prey = stalkPrey(state, content);
+
+  const t = content.tuning;
+  const cursor = createCursor(state.rngState);
+  const draft = draftOf(state);
+  const roundLog: string[] = [];
+  const records: LifeRecord[] = [];
+  const tags = ownedTags(state, content);
+  const flavor = prey.stalkFlavor;
+  const say = (specific: readonly string[] | undefined, fallback: readonly string[], vars: Record<string, string | number> = {}): void => {
+    roundLog.push(render(pickFlavor(cursor, specific, fallback), { enemy: prey.name, ...vars }));
+  };
+
+  let distance = current.distance;
+  let alertness = current.alertness;
+  let over: StalkTurn["over"] = null;
+  let caught = false;
+
+  switch (act) {
+    case "creep": {
+      const gain = creepDistanceGain(state, content, tags);
+      const alertGain = creepAlertGain(state, content, tags);
+      distance = Math.max(0, distance - gain);
+      alertness = clamp(alertness + alertGain, 0, t.stalkAlertMax);
+      say(flavor?.creep, STALK_MESSAGES.creep, { steps: gain });
+      break;
+    }
+    case "circle": {
+      alertness = clamp(alertness + t.stalkCircleAlert, 0, t.stalkAlertMax);
+      say(flavor?.circle, STALK_MESSAGES.circle);
+      break;
+    }
+    case "wait": {
+      alertness = clamp(alertness - t.stalkWaitAlertDrop, 0, t.stalkAlertMax);
+      // 抽取顺序固定：先掷「动不动」，动了再掷「往哪动、动多远」，最后才抽旁白。
+      const stirs = cursor.next() < t.stalkWaitMoveChance;
+      if (stirs) {
+        const span = Math.max(0, t.stalkWaitMoveMax - t.stalkWaitMoveMin);
+        const steps = t.stalkWaitMoveMin + cursor.int(span + 1);
+        const away = cursor.next() < t.stalkWaitMoveAwayChance;
+        distance = Math.max(0, distance + (away ? steps : -steps));
+        say(flavor?.stir, STALK_MESSAGES.stir, { steps });
+      } else {
+        say(flavor?.wait, STALK_MESSAGES.wait);
+      }
+      break;
+    }
+    case "pounce": {
+      const chance = pounceChanceAt(distance, alertness, draft.stats.meng, t);
+      if (cursor.next() < chance) {
+        caught = true;
+        over = "caught";
+        say(flavor?.catch, STALK_MESSAGES.catch);
+      } else {
+        say(flavor?.miss, STALK_MESSAGES.miss);
+        over = prey.retaliates === true ? "combat" : "escaped";
+      }
+      break;
+    }
   }
-  notices.push(ENGINE_MESSAGES.huntFail);
-  if (cursor.next() < t.huntFailCombatChance) {
-    notices.push(render(ENGINE_MESSAGES.huntEncounter, { enemy: prey.name }));
-    beginCombat(draft, prey);
+
+  // 风向重置放在动作之后：`circle` 的警觉代价按**旧**风向的世界观付，收益从下一步起兑现。
+  const wind: WindDir = act === "circle" ? "into" : current.wind;
+  // 亲手绕过一圈之后风向就是确知的（此后 stalkPreview 会如实告诉玩家「已在上风」，
+  // 否则读不出风向的 build 会一圈接一圈地绕，把体力全耗在同一件已经做成的事上）
+  const windKnown = current.windKnown || act === "circle";
+  const stamina = current.stamina - 1;
+
+  if (over === null) {
+    if (alertness >= t.stalkAlertMax) {
+      // 「警觉满」与「扑空」是同一条分支（正本）：小猎物遁走，大猎物回头。
+      over = prey.retaliates === true ? "combat" : "escaped";
+    } else if (distance > t.stalkLoseDistance) {
+      over = "escaped";
+    } else if (stamina <= 0) {
+      over = "exhausted";
+    }
+  }
+
+  if (over === "escaped") say(flavor?.escape, STALK_MESSAGES.escape);
+  if (over === "exhausted") say(undefined, STALK_MESSAGES.exhausted);
+
+  if (over === null) {
+    draft.stalk = {
+      preyId: current.preyId,
+      distance,
+      alertness,
+      stamina,
+      wind,
+      windKnown,
+      round: current.round + 1,
+      log: [...current.log, ...roundLog],
+    };
+  } else {
+    draft.stalk = null;
+    if (caught) {
+      draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
+      draft.essence = addEssence(draft.essence, prey.essence);
+      say(undefined, STALK_MESSAGES.feed);
+    }
+    if (over === "combat") {
+      say(flavor?.retaliate, STALK_MESSAGES.retaliate);
+      beginCombat(draft, prey);
+      // 附毒：扑空那一下把毒蹭了进去，敌人带伤入场。M0 的 CombatState 没有「持续中毒」
+      // 的字段（那是 P2 战斗重做要加的 blind／slow 那一族），所以 P1 落成起手血量折扣 ——
+      // 是真效果、可测，且不用先斩 P2 的接口。
+      if (tags.has(t.stalkVenomTag) && draft.combat) {
+        draft.combat.enemyHp = Math.max(1, Math.round(draft.combat.enemyHp * t.stalkVenomHpMul));
+        say(undefined, STALK_MESSAGES.venom);
+      }
+    }
+    // 本季到此才收束（起追那一次刻意没推进）
+    closeSeason(draft, content, records);
+  }
+
+  draft.records = [...state.records, ...records];
+  draft.rngState = cursor.state;
+  refreshAscendFlag(draft, content);
+  return { state: draft, roundLog, over };
+}
+
+/**
+ * 季推进 ＋ 死亡判定，即回合结算顺序的第 3、4 步。
+ *
+ * 抽成函数是因为追猎把一个「回合」拆成了两段：`performAction("hunt")` 只把猎物摆上来
+ * （刻意不推进季节，否则起追本身就白耗一季），真正的收束发生在 `stalkAct` 判出 `over`
+ * 的那一步。两处必须走同一份季推进与死亡判定，否则「追猎中饿死」这类边界会两套行为。
+ *
+ * `records` 就地追加死亡记录（调用方负责最后并进 `draft.records`）。
+ */
+function closeSeason(draft: TaleState, content: TaleContent, records: LifeRecord[]): void {
+  const t = content.tuning;
+  const cost = t.hungerPerSeason + (draft.season === WINTER ? t.winterHungerExtra : 0);
+  draft.hunger = clamp(draft.hunger - cost, 0, t.hungerMax);
+  const nextSeason = ((draft.season + 1) % 4) as Season;
+  if (nextSeason === 0) draft.year += 1;
+  draft.season = nextSeason;
+
+  if (draft.hunger <= 0) {
+    if (draft.flags.includes(SYS_FLAG_STARVING)) {
+      records.push(die(draft, "starve", ENGINE_MESSAGES.deathStarve));
+    } else {
+      draft.flags = withFlags(draft.flags, [SYS_FLAG_STARVING]);
+    }
+  } else {
+    draft.flags = withoutFlags(draft.flags, [SYS_FLAG_STARVING]);
+  }
+  if (draft.alive && draft.year > draft.lifespanMax) {
+    records.push(die(draft, "oldage", ENGINE_MESSAGES.deathOldage));
   }
 }
 
@@ -506,6 +874,8 @@ function die(draft: TaleState, ending: EndingType, text: string, refId?: string)
   draft.alive = false;
   draft.ending = ending;
   draft.combat = null;
+  // 追猎同战斗：死亡覆盖一切未收束的子系统，界面不会拿到「已死却还在追」的状态
+  draft.stalk = null;
   return { year: draft.year, season: draft.season, kind: "death", text, refId };
 }
 
@@ -513,21 +883,28 @@ function die(draft: TaleState, ending: EndingType, text: string, refId?: string)
  * 执行一个行动，走完固定的五步结算。
  *
  * 结算顺序（计划「回合结算顺序」节，固定不可变更）：
- * 1. 行动本体（狩猎掷骰／探索／休憩／蛰伏开奖）
+ * 1. 行动本体（探索／休憩／蛰伏开奖；**狩猎见 1'**）
  * 2. 事件抽取（步骤 1 已开战则跳过 —— 打起来了就没心思看别的）
+ * 1'. 狩猎且本季没抽到事件 → `beginStalk` 起追，并**就此早退**（见下）
  * 3. 季推进：扣饱食（冬季加扣）→ 季 +1 → 跨年
  * 4. 死亡判定：饱食 ≤0 连续两季 → starve；year > lifespanMax → oldage
  * 5. records 追加（步骤 1-4 攒下的记录一次性并入，各条按产生时的岁/季打戳）
  *
  * 步骤 4 判定出死亡时会撤掉本回合抽出的事件（`pendingEvent` 返回 null）并清空 `combat`
- * —— 死亡覆盖一切未结算的东西，界面不会拿到「已死却还要选抉择」的状态。
+ * 与 `stalk` —— 死亡覆盖一切未结算的东西，界面不会拿到「已死却还要选抉择」的状态。
+ *
+ * ## M1-P1 改动：一个狩猎回合被拆成两段
+ * 狩猎不再当场结算食物。它要么撞上一桩狩猎事件（12 条 `actions:["hunt"]` 的内容仍旧入池），
+ * 要么起追 —— 后者返回时 `state.stalk` 非空、`pendingEvent` 为 null，**且这一季尚未推进**
+ * （步骤 3〜5 全部推迟到 `stalkAct` 判出 `over` 的那一步，两处共用 `closeSeason`）。
+ * 客户端据 `state.stalk` 切到追猎屏；`availableActions` 在追猎未收束时返回空数组。
  *
  * ⚠️ **调用方纪律**：拿到非 null 的 `pendingEvent` 后必须先 `resolveChoice` 再进下一个
  * 回合。`TaleState` 没有承载未决事件的字段，引擎无从强制；直接再调 performAction 不会
  * 报错，事件会被静默丢掉。`once` 事件的 id 记在 `resolveChoice` 而不是抽取时，所以丢掉
  * 的稀有事件只是下一季可能重抽，不会本世永久消失。
  *
- * @throws 已死亡、战斗未结束、或该行动当前不可用时抛错
+ * @throws 已死亡、战斗未结束、追猎未收束、或该行动当前不可用时抛错
  */
 export function performAction(
   state: TaleState,
@@ -536,6 +913,7 @@ export function performAction(
 ): TurnResult {
   if (!state.alive) throw new Error("performAction: 已死亡，不能行动");
   if (state.combat) throw new Error("performAction: 战斗未结束，先调 combatAct");
+  if (state.stalk) throw new Error("performAction: 追猎未收束，先调 stalkAct");
   if (!availableActions(state, content).includes(action)) {
     throw new Error(`performAction: 当前不可执行行动 ${action}`);
   }
@@ -547,10 +925,9 @@ export function performAction(
   const records: LifeRecord[] = [];
   let moltResult: MoltResult | null = null;
 
-  // 1. 行动本体
+  // 1. 行动本体（`hunt` 例外：起追要等事件抽取之后，见步骤 2 之后的「1'」）
   switch (action) {
     case "hunt":
-      resolveHunt(draft, cursor, content, notices);
       break;
     case "explore":
       notices.push(ENGINE_MESSAGES.explore);
@@ -567,26 +944,27 @@ export function performAction(
   refreshAscendFlag(draft, content);
   const drawn = draft.combat ? null : drawEvent(draft, cursor, content, action);
 
-  // 3. 季推进
-  const cost = t.hungerPerSeason + (draft.season === WINTER ? t.winterHungerExtra : 0);
-  draft.hunger = clamp(draft.hunger - cost, 0, t.hungerMax);
-  const nextSeason = ((draft.season + 1) % 4) as Season;
-  if (nextSeason === 0) draft.year += 1;
-  draft.season = nextSeason;
+  /*
+   * 1'. 狩猎：**本季没撞上事，才起追。**
+   *
+   * 为什么把它排在事件抽取之后（而不是当作步骤 1 的行动本体）：内容库里有 12 条
+   * `actions: ["hunt"]` 的狩猎事件（「丛中窥影」那一类），若狩猎一律直接起追，这 12 条
+   * 就再也没有入池的机会 —— 一个玩法改动静默弄死四分之一的内容池，而且不会有任何测试变红。
+   * 事件卡与追猎屏又占用同一块中央舞台，不能并存。于是这一季**要么撞上一桩事，要么起追**：
+   * 前者是「狩猎路上遇见了别的东西」，后者是「盯上了一头具体的猎物」，两条都算狩猎。
+   */
+  if (action === "hunt" && !drawn) beginStalk(draft, cursor, content, notices);
 
-  // 4. 死亡判定
-  if (draft.hunger <= 0) {
-    if (draft.flags.includes(SYS_FLAG_STARVING)) {
-      records.push(die(draft, "starve", ENGINE_MESSAGES.deathStarve));
-    } else {
-      draft.flags = withFlags(draft.flags, [SYS_FLAG_STARVING]);
-    }
-  } else {
-    draft.flags = withoutFlags(draft.flags, [SYS_FLAG_STARVING]);
+  // 1.5 起追早退：`beginStalk` 只把猎物摆上来，这一季**刻意不推进**（否则光是起追就白耗
+  // 一季），也不抽事件（玩家此刻该盯着追猎屏，不该被别的事件插队）。季推进与死亡判定推迟到
+  // `stalkAct` 判出 `over` 的那一步，由同一个 `closeSeason` 收束。
+  if (draft.stalk) {
+    draft.records = [...state.records, ...records];
+    draft.rngState = cursor.state;
+    return { state: draft, pendingEvent: null, notices, moltResult: null };
   }
-  if (draft.alive && draft.year > draft.lifespanMax) {
-    records.push(die(draft, "oldage", ENGINE_MESSAGES.deathOldage));
-  }
+
+  closeSeason(draft, content, records);
 
   // 5. records 追加
   draft.records = [...state.records, ...records];

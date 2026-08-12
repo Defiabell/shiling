@@ -16,6 +16,7 @@ import {
   ownedTags,
   performAction,
   resolveChoice,
+  stalkAct,
   type TaleEvent,
   type TaleState,
 } from "../src/index.js";
@@ -143,7 +144,10 @@ describe("返回值不别名 content（消费方改返回值不能污染内容�
     let state = createLife(20260811, FIXTURE_SEED_ID, content);
     for (let i = 0; i < 30 && state.alive; i += 1) {
       if (state.combat) break;
-      state = performAction(state, "hunt", content).state;
+      // 追猎未收束时不能再 performAction —— 一路潜行把它推到收束（这里只关心引擎有没有写 content）
+      state = state.stalk
+        ? stalkAct(state, "creep", content).state
+        : performAction(state, "hunt", content).state;
     }
     expect(content).toEqual(before);
   });

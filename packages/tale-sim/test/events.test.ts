@@ -281,7 +281,7 @@ describe("trigger 匹配", () => {
   function soloContent(event: TaleEvent) {
     return makeContent({
       events: [event],
-      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1, huntPreyIds: [] },
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntPreyIds: [] },
     });
   }
 

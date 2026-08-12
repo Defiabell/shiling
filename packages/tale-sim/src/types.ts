@@ -15,6 +15,16 @@ export type EssenceType = "zu" | "lin" | "xue" | "meng";
 export type RegionId = "qingqiu";
 /** [正本] 每季可选行动。 */
 export type ActionId = "hunt" | "explore" | "rest" | "dormant";
+
+/**
+ * [M1-P1 正本] 风向，对玩家由有利到不利：逆（气味吹向自己）／侧／顺（气味送到猎物鼻子里）。
+ *
+ * 顺序不是装饰：`tuning.stalkWindAlertMul` 按它索引潜行的警觉倍率（0.5／1／2）。
+ */
+export type WindDir = "into" | "cross" | "with";
+
+/** [M1-P1 正本] 追猎的四个动作：潜行／绕至上风／屏息等待／扑击。 */
+export type StalkAct = "creep" | "circle" | "wait" | "pounce";
 /** [正本] 季节：0 春 1 夏 2 秋 3 冬。 */
 export type Season = 0 | 1 | 2 | 3;
 /** [正本] 一世的四种收束方式。 */
@@ -58,6 +68,38 @@ export interface SeedDef {
   desc: string;
 }
 
+/**
+ * [M1-P1 补] 一头猎物在追猎屏里的专属旁白变体。
+ *
+ * 为什么挂在 `EnemyDef` 而不是别处：`TaleContent` 的字段在接口正本里是封闭的
+ * （events/organs/seeds/enemies/tuning/chronicleTemplates），没有 strings 槽位；而 P1
+ * 交付线要求「猎物不同措辞不同」，那就只能跟着猎物本身走。缺省（或某一槽缺省）时引擎
+ * 退回 `ENGINE_MESSAGES` 的通用变体 —— 内容漏写只是少了个性，不会变成空字符串。
+ *
+ * 每槽 **2〜3 条**：M0 实测「探索空手时中央卡重复同一句」被 owner 直接感知为廉价，
+ * 而追猎一场就要潜行三四次，一句到底会比探索更刺眼。
+ */
+export interface StalkFlavor {
+  /** 起追开场（一场追猎里最先读到的一句）。占位：`{{enemy}}` */
+  begin?: string[];
+  /** 潜行拉近一步。占位：`{{enemy}}` `{{steps}}` */
+  creep?: string[];
+  /** 绕至上风。占位：`{{enemy}}` */
+  circle?: string[];
+  /** 屏息等待（猎物没动）。占位：`{{enemy}}` */
+  wait?: string[];
+  /** 等待时猎物自行挪动。占位：`{{enemy}}` `{{steps}}` */
+  stir?: string[];
+  /** 扑击得手。占位：`{{enemy}}` */
+  catch?: string[];
+  /** 扑击落空。占位：`{{enemy}}` */
+  miss?: string[];
+  /** 猎物受惊遁走。占位：`{{enemy}}` */
+  escape?: string[];
+  /** 受惊／失手后反扑（仅 `retaliates` 的猎物用得上）。占位：`{{enemy}}` */
+  retaliate?: string[];
+}
+
 /** [正本] 敌人定义。 */
 export interface EnemyDef {
   id: string;
@@ -71,6 +113,17 @@ export interface EnemyDef {
   /** 逃跑难度修正 -20〜+20 */
   fleeBias: number;
   desc: string;
+
+  // — [M1-P1 正本] 追猎参数（可选，缺省吃 tuning 的通用值）—
+
+  /** 起手警觉，缺省 `tuning.stalkStartAlert` */
+  wariness?: number;
+  /** 追猎失手／受惊时反扑（转入搏杀）而不是逃走，缺省 false */
+  retaliates?: boolean;
+  /** 起手距离（步），缺省 `tuning.stalkStartDistance` */
+  startDistance?: number;
+  /** [M1-P1 补] 追猎旁白变体，缺省退回引擎通用变体 */
+  stalkFlavor?: StalkFlavor;
 }
 
 /** [正本] 事件触发条件。 */
@@ -185,6 +238,42 @@ export interface Bloodline {
   chronicle: ChronicleEntry[];
 }
 
+/**
+ * [M1-P1 正本] 追猎中状态。追猎收束（caught/escaped/exhausted/combat）后 `TaleState.stalk` 置 null。
+ *
+ * 四个量就是玩家面前的全部决策变量，所以它们必须**全部可见**（精度按器官 tag 分档，
+ * 见 `stalkPreview`）：看不见的变量等于不存在，玩家只会退回「点了再说」。
+ *
+ * `stamina` 是**动作预算**（含最后那一扑），不是血条：扣到 0 而还没扑，就是空手而归。
+ */
+export interface StalkState {
+  /** EnemyDef.id */
+  preyId: string;
+  /** 步。0 ＝ 贴身 */
+  distance: number;
+  /** 0-100。满则受惊（逃走或反扑） */
+  alertness: number;
+  /** 还能做几个动作（含扑击） */
+  stamina: number;
+  wind: WindDir;
+  /**
+   * [M1-P1 补] 玩家**确知**当前风向。
+   *
+   * 起追时为 false（没有 `stalkWindTags` 器官的话就是「风势难辨」），一旦亲手「绕至上风」
+   * 就恒为 true —— **自己刚做过的事自己知道**。
+   *
+   * 为什么这一位必须在 `TaleState` 里、而不是记在客户端：不记的话，读不出风向的 build 会
+   * 反复绕圈（每次都不敢确定自己已在上风），把 6 点体力全花在绕风上 —— 实验台实测这条
+   * 让基础 build 的得手率从 53% 掉到 18%，而且**玩家无从察觉自己在浪费回合**。
+   * 而放在客户端会击穿「TaleState 完整自描述」这条纪律（determinism 测试正盯着它）：
+   * 界面能显示什么，必须能从 state 重建出来。
+   */
+  windKnown: boolean;
+  /** 已结算动作数；起追时为 0，每次 stalkAct 后 +1 */
+  round: number;
+  log: string[];
+}
+
 /** [正本] 战斗中状态。战斗结束（win/fled/dead）后 TaleState.combat 置 null。 */
 export interface CombatState {
   enemyId: string;
@@ -220,6 +309,11 @@ export interface TaleState {
   flags: string[];
   firedOnceIds: string[];
   combat: CombatState | null;
+  /**
+   * [M1-P1] 追猎中状态；非 null 时本季的行动**尚未收束** —— 界面须切到追猎屏并调
+   * `stalkAct`，`performAction` 会拒绝。季推进与死亡判定推迟到追猎的终局那一步。
+   */
+  stalk: StalkState | null;
   records: LifeRecord[];
   alive: boolean;
   ending: EndingType | null;
@@ -255,18 +349,15 @@ export interface TaleTuning {
   moltCandidateCount: number;
 
   // — 行动 —
-  /** 狩猎成功率 = huntBase + meng×huntPerMeng (+ huntHunterTagBonus if 有 huntHunterTag) */
-  huntBase: number;
-  huntPerMeng: number;
-  huntHunterTagBonus: number;
-  /** [补全] 给狩猎加成的器官 tag 名 */
+  /**
+   * [M1-P1 改] 「潜行更轻」的器官 tag 名（原「狩猎成功率加成」的 tag，语义随追猎屏改写）。
+   * 持有它时潜行的警觉增益 ×`stalkQuietAlertMul`。
+   */
   huntHunterTag: string;
-  /** [补全] 猎物表：EnemyDef.id 列表，等权抽一；成功吞其 essence */
+  /** [补全] 猎物表：EnemyDef.id 列表，等权抽一；追猎得手即吞其 essence */
   huntPreyIds: string[];
-  /** [补全] 狩猎成功回饱食 */
+  /** [补全] 追猎得手回饱食 */
   huntFoodGain: number;
-  /** [补全] 狩猎失败转为遭遇战的概率 */
-  huntFailCombatChance: number;
   /** [补全] 休憩回饱食 */
   restHungerGain: number;
   /** [补全] 休憩清除的伤病 flag（计划「小回血」的落地形式：本模型无常驻 HP） */
@@ -275,6 +366,70 @@ export interface TaleTuning {
   eventChanceBase: number;
   /** 探索行动对抽中概率的倍率 */
   exploreEventBonus: number;
+
+  // — 追猎（M1-P1）—
+  //
+  // 这一段的每个数都直接决定「一场追猎里玩家是不是在做判断」，所以逐项写清它在博弈里
+  // 扮演什么角色。基线值的实测依据见 tale-content/src/tuning.ts 的追猎小节。
+
+  /** 起手距离缺省值（步）；`EnemyDef.startDistance` 优先 */
+  stalkStartDistance: number;
+  /** 起手距离的抖动幅度：实际 = 基准 ±[0, jitter]，让同一头猎物每次的步数计划都要重算 */
+  stalkStartDistanceJitter: number;
+  /** 起手警觉缺省值；`EnemyDef.wariness` 优先 */
+  stalkStartAlert: number;
+  stalkStartAlertJitter: number;
+  /** 一场追猎的动作预算（**含**最后那一扑）；扣到 0 仍未扑 ＝ 空手而归 */
+  stalkStamina: number;
+  /** 距离超过它 ＝ 彻底跟丢（等待时猎物走远的死线） */
+  stalkLoseDistance: number;
+  /** 警觉达到它 ＝ 受惊：逃走，或 `EnemyDef.retaliates` 的反扑 */
+  stalkAlertMax: number;
+
+  /** 潜行拉近的步数 */
+  stalkCreepDistance: number;
+  /** 持 `stalkSwiftTag` 时潜行额外拉近的步数（快一步 ＝ 少一个回合的警觉） */
+  stalkCreepSwiftBonus: number;
+  /** 疾足类 tag 名 */
+  stalkSwiftTag: string;
+  /** 潜行的基础警觉增益（再乘风向倍率与贴近倍率与静步倍率） */
+  stalkCreepAlert: number;
+  /** 距离 ≤ 它时警觉增益开始线性放大 —— 最后一步永远是最险的一步 */
+  stalkNearDistance: number;
+  /** 贴身（距离 0）时的警觉增益倍率 */
+  stalkNearAlertMul: number;
+  /** 持 `huntHunterTag` 时潜行的警觉增益倍率（<1 ＝ 更轻） */
+  stalkQuietAlertMul: number;
+  /** 风向对潜行警觉增益的倍率：逆风减半、侧风照旧、顺风翻倍 */
+  stalkWindAlertMul: Record<WindDir, number>;
+  /** 绕至上风的警觉代价（换来此后每一步都只涨一半） */
+  stalkCircleAlert: number;
+  /** 屏息一次压下的警觉 */
+  stalkWaitAlertDrop: number;
+  /** 屏息时猎物自行挪动的概率 */
+  stalkWaitMoveChance: number;
+  /** 挪动时**远离**（而非靠近）的概率 —— 屏息不是免费的 */
+  stalkWaitMoveAwayChance: number;
+  stalkWaitMoveMin: number;
+  stalkWaitMoveMax: number;
+
+  /**
+   * 扑击命中率 = `stalkPounceBase − 距离×stalkPouncePerDistance − 警觉×stalkPouncePerAlert
+   * + 猛×stalkPouncePerMeng`，再按 `minChance`／`maxChance` 夹紧。
+   */
+  stalkPounceBase: number;
+  stalkPouncePerDistance: number;
+  stalkPouncePerAlert: number;
+  stalkPouncePerMeng: number;
+
+  /** 持任一即看得见**精确警觉**（否则只有「未觉／有疑／欲遁」三档） */
+  stalkAlertTags: string[];
+  /** 持任一即看得清**风向**（否则风势难辨，只能靠绕行来确保上风） */
+  stalkWindTags: string[];
+  /** 附毒 tag：扑空转搏杀时敌人已带伤入场 */
+  stalkVenomTag: string;
+  /** 附毒时敌人起手血量倍率 */
+  stalkVenomHpMul: number;
 
   // — 战斗 —
   /** 伤害 = combatDamageBase + floor(meng / combatDamageMengDivisor) ± combatDamageJitter */

@@ -19,6 +19,7 @@ import {
   createLife,
   performAction,
   resolveChoice,
+  stalkAct,
   type ActionId,
   type ChronicleEntry,
   type TaleEvent,
@@ -35,6 +36,7 @@ import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
 import { buildEventCardVm } from "./model/eventVm.js";
 import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type LogTone } from "./model/logVm.js";
 import { buildSeedScreenVm } from "./model/seedVm.js";
+import { buildStalkVm, type StalkActId } from "./model/stalkVm.js";
 import { buildStatusVm } from "./model/statusVm.js";
 import { createFloaterHost, spawnFloaters } from "./fx/floaters.js";
 import { playCinematic } from "./fx/cinematic.js";
@@ -68,6 +70,14 @@ export interface AppOptions {
   /** 固定随机种子（`?seed=` 传入），用于可复现的手测与 E2E */
   seed?: number;
   storage?: StorageLike | null;
+  /**
+   * **仅 dev**：出生时额外塞进去的器官 id（`?organs=ye-tong` 传入，见 main.ts）。
+   *
+   * 只借 tag，不叠 `statMods` —— 与 tale-sim 测试的 `withOrgans` 同体例。存在的理由是
+   * P1 的验收标准之一是「带 night-eye 与不带时的体验差异是否明显」，而器官靠真玩要攒好几年，
+   * 没有它就只能拿引擎数字讲，拿不到同一场追猎的两张对照截图。
+   */
+  grantOrganIds?: readonly string[];
 }
 
 export class TaleApp {
@@ -78,6 +88,7 @@ export class TaleApp {
   private readonly particles: ParticleLayer;
   private readonly storage: StorageLike | null;
   private readonly baseSeed: number;
+  private readonly grantOrganIds: readonly string[];
 
   private screen: ScreenId = "title";
   private titleHandle: ScreenHandle | null = null;
@@ -95,6 +106,7 @@ export class TaleApp {
     this.root = root;
     this.storage = options.storage === undefined ? browserStorage() : options.storage;
     this.baseSeed = options.seed ?? (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    this.grantOrganIds = options.grantOrganIds ?? [];
     this.bloodline = loadBloodline(this.storage, CONTENT);
     this.lifeIndex = this.bloodline.chronicle.length;
 
@@ -171,7 +183,12 @@ export class TaleApp {
     // 同一 baseSeed 下每一世换个数：既可复现，又不会世世雷同。
     const seedNum = (this.baseSeed + this.lifeIndex * 0x9e3779b1) >>> 0;
     this.lifeIndex += 1;
-    const state = createLife(seedNum, seedId, CONTENT);
+    const born = createLife(seedNum, seedId, CONTENT);
+    // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
+    const state =
+      this.grantOrganIds.length > 0
+        ? { ...born, organIds: [...born.organIds, ...this.grantOrganIds] }
+        : born;
     this.state = state;
     this.pendingEvent = null;
     this.log = emptyLog();
@@ -238,6 +255,14 @@ export class TaleApp {
         key: `event:${result.pendingEvent.id}:${next.rngState}`,
         card: buildEventCardVm(next, result.pendingEvent, CONTENT),
       };
+    } else if (next.stalk) {
+      // 起追：这一季**尚未收束**（引擎把季推进推迟到追猎的终局），所以这里不放 continue 按钮，
+      // 也不能再走 doAction —— 屏幕切到追猎全屏，下一步只能是 doStalk。
+      this.center = {
+        kind: "stalk",
+        key: `stalk:${next.stalk.preyId}:${next.rngState}`,
+        stalk: buildStalkVm(next, next.stalk, CONTENT),
+      };
     } else if (next.combat) {
       this.center = { kind: "combat", key: `combat:${next.combat.enemyId}`, combat: buildCombatVm(next, next.combat, CONTENT) };
     } else {
@@ -252,7 +277,8 @@ export class TaleApp {
     }
 
     this.renderPlayScreen();
-    this.showDelta(prev, next, seasonHungerCost(prev));
+    // 起追那一步季还没推进，没有季耗可忽略（追猎的季耗记在收束那一步的 doStalk 里）
+    this.showDelta(prev, next, next.stalk ? 0 : seasonHungerCost(prev));
 
     if (result.moltResult) await playMoltReveal(this.overlayHost, result.moltResult, CONTENT);
 
@@ -290,6 +316,51 @@ export class TaleApp {
     this.busy = false;
     this.renderPlayScreen();
     this.showDelta(prev, next, 0);
+  }
+
+  /**
+   * 追猎的一步。
+   *
+   * 与 `doCombat` 的形状一样（读 roundLog、按 `over` 决定下一屏），但多一件事：**这一步
+   * 可能是整个季的收束**（引擎把季推进与死亡判定压在追猎的终局那一步）。所以只有 `over`
+   * 非 null 时才把季耗算进「该忽略的饱食下降」，否则那 −12 会在追猎中途飘出来一次
+   * —— 玩家会以为潜行本身在消耗饱食。
+   */
+  async doStalk(act: StalkActId): Promise<void> {
+    const prev = this.state;
+    if (!prev || !prev.stalk || this.busy || !prev.alive) return;
+    this.busy = true;
+
+    const turn = stalkAct(prev, act, CONTENT);
+    const next = turn.state;
+    this.state = next;
+    const dying = this.deathLines(next);
+    this.appendLog(prev.year, prev.season, [
+      ...turn.roundLog.map((text) => ({ text, tone: stalkTone(act, turn.over) })),
+      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
+    ]);
+
+    if (turn.over === null && next.stalk) {
+      this.center = {
+        kind: "stalk",
+        key: `stalk:${next.stalk.preyId}:${next.rngState}`,
+        stalk: buildStalkVm(next, next.stalk, CONTENT),
+      };
+    } else {
+      const title = STALK_END_TITLES[turn.over ?? "escaped"];
+      this.center = {
+        kind: "narration",
+        key: `stalk-end:${turn.over}:${next.rngState}`,
+        title,
+        lines: [...turn.roundLog, ...dying],
+        media: null,
+        continueLabel: !next.alive ? this.closeLabel() : next.combat ? "迎　敌" : null,
+      };
+    }
+
+    this.busy = false;
+    this.renderPlayScreen();
+    this.showDelta(prev, next, turn.over === null ? 0 : seasonHungerCost(prev));
   }
 
   async doCombat(act: CombatActId): Promise<void> {
@@ -422,6 +493,7 @@ export class TaleApp {
         onAction: (id) => void this.safely(() => this.doAction(id)),
         onChoice: (idx) => void this.safely(() => this.doChoice(idx)),
         onCombat: (act) => void this.safely(() => this.doCombat(act)),
+        onStalk: (act) => void this.safely(() => this.doStalk(act)),
         onContinue: () => void this.safely(() => this.onContinue()),
       }),
     );
@@ -504,9 +576,11 @@ export class TaleApp {
       const selector =
         this.center.kind === "combat"
           ? `[data-combat]`
-          : this.center.kind === "event"
-            ? `[data-choice]`
-            : `[data-action]`;
+          : this.center.kind === "stalk"
+            ? `[data-stalk]`
+            : this.center.kind === "event"
+              ? `[data-choice]`
+              : `[data-action]`;
       const buttons = this.screenHost.querySelectorAll<HTMLButtonElement>(selector);
       const button = buttons[digit - 1];
       if (button && !button.disabled) {
@@ -559,6 +633,27 @@ function noticeTone(text: string, molted: boolean): LogTone {
   if (text.includes("猎得") || text.includes("饱食")) return "gain";
   if (text.includes("当道") || text.includes("盯上")) return "combat";
   return "plain";
+}
+
+/** 追猎收束四态的门楣题字。 */
+const STALK_END_TITLES: Record<"caught" | "escaped" | "exhausted" | "combat", string> = {
+  caught: "得　手",
+  escaped: "失　之",
+  exhausted: "力　尽",
+  combat: "反　噬",
+};
+
+/**
+ * 追猎旁白的色调。
+ *
+ * 按**动作与结局**判，不按文本判 —— 追猎的旁白是内容侧可换的变体（每头猎物各写一套），
+ * 靠关键词匹配（`noticeTone` 那种）会在内容改一个字的时候悄悄失效。
+ */
+function stalkTone(act: StalkActId, over: "caught" | "escaped" | "exhausted" | "combat" | null): LogTone {
+  if (over === "caught") return "gain";
+  if (over === "combat") return "combat";
+  if (over === "escaped" || over === "exhausted") return "loss";
+  return act === "pounce" ? "combat" : "plain";
 }
 
 function outcomeTone(result: { delta: { die?: unknown; startCombat?: unknown; addOrganId?: unknown } }): LogTone {

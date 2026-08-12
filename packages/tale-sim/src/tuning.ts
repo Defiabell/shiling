@@ -27,18 +27,56 @@ export const BASELINE_TUNING: TaleTuning = {
   moltThreshold: 60,
   moltCandidateCount: 3,
 
-  // 行动：狩猎成功率 0.45 + meng×0.004 + "hunter" 0.15
-  huntBase: 0.45,
-  huntPerMeng: 0.004,
-  huntHunterTagBonus: 0.15,
+  // 行动
   huntHunterTag: "hunter",
   huntPreyIds: [],
   huntFoodGain: 26,
-  huntFailCombatChance: 0.2,
   restHungerGain: 10,
   restHealFlags: [],
   eventChanceBase: 0.35,
   exploreEventBonus: 2,
+
+  /*
+   * 追猎（M1-P1）。这组数被三条**手感**约束钉住，不是随手写的（推演见
+   * tale-content/src/tuning.ts 的追猎小节，那里有逐步的算式与 200 世实测）：
+   *
+   * 1. 逆风稳扎稳打（绕风 → 潜行到贴身 → 扑）落在 **0.72〜0.80**：会赢，但赢得来自计划。
+   * 2. 顺风硬冲（不绕风、连潜到底）落在 **0.40〜0.45**：一半以上要失手，且警觉逼近惊走线。
+   * 3. 屏息一次值 **+0.10 命中率**（12 点警觉 × 0.008），代价是 1 点体力与三成概率猎物挪位
+   *    —— 「等」必须是能算得清收益的一步棋，不是浪费回合。
+   */
+  stalkStartDistance: 30,
+  stalkStartDistanceJitter: 4,
+  stalkStartAlert: 15,
+  stalkStartAlertJitter: 3,
+  stalkStamina: 6,
+  stalkLoseDistance: 46,
+  stalkAlertMax: 100,
+
+  stalkCreepDistance: 12,
+  stalkCreepSwiftBonus: 5,
+  stalkSwiftTag: "swift",
+  stalkCreepAlert: 8,
+  stalkNearDistance: 16,
+  stalkNearAlertMul: 2,
+  stalkQuietAlertMul: 0.6,
+  stalkWindAlertMul: { into: 0.5, cross: 1, with: 2 },
+  stalkCircleAlert: 3,
+  stalkWaitAlertDrop: 12,
+  stalkWaitMoveChance: 0.3,
+  stalkWaitMoveAwayChance: 0.55,
+  stalkWaitMoveMin: 4,
+  stalkWaitMoveMax: 10,
+
+  stalkPounceBase: 0.95,
+  stalkPouncePerDistance: 0.035,
+  stalkPouncePerAlert: 0.008,
+  stalkPouncePerMeng: 0.004,
+
+  stalkAlertTags: ["night-eye", "insight"],
+  stalkWindTags: ["night-eye", "insight", "far-sight"],
+  stalkVenomTag: "venom",
+  stalkVenomHpMul: 0.7,
 
   // 战斗：伤害 3 + floor(meng/8) ±1
   combatDamageBase: 3,

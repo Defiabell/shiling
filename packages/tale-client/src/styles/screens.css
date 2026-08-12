@@ -1704,6 +1704,353 @@
  * 在 768 高的屏上玩家得先滚过整张画才看得见抉择。封顶后用 `contain` 整幅居中显示
  * （宁可左右留墨底，也不回到「切掉上下三分之一」那条老路）。
  */
+/* ==========================================================================
+   追猎屏（M1-P1）
+   ==========================================================================
+
+   全屏模式：追猎时右栏「近事」与底部行动面板都收掉（引擎此刻 availableActions 是空的，
+   留一排全灰按钮只会分散注意），整块横向空间给追猎卡。状态栏留着 —— 饱食与精气正是
+   「这一场追不追得起」的前提。
+*/
+
+.play--stalk {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "status"
+    "stage";
+}
+
+.card--stalk {
+  max-width: 940px;
+  padding-bottom: 4px;
+}
+
+.stalk__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px 4px;
+}
+
+.foe--stalk .foe__img {
+  /* 追猎时猎物还在远处：头像比战斗小一档，且压暗 —— 「还没看清」也是信息 */
+  width: 92px;
+  height: 92px;
+  filter: saturate(0.8) contrast(1.02) brightness(0.88);
+}
+
+.stalk__intro {
+  min-width: 0;
+}
+
+.stalk__kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--txt-3);
+}
+
+.stalk__kicker em {
+  font-style: normal;
+  color: var(--txt-2);
+}
+
+.stalk__wind {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(127, 212, 232, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.3);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+
+.stalk__wind i {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+  opacity: 0.8;
+}
+
+/* 顺风＝气味直送过去，潜行动静翻倍：这是玩家最该一眼看到的坏消息 */
+.stalk__wind.is-bad {
+  background: rgba(194, 59, 34, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.42);
+  color: var(--cinnabar-lt);
+}
+
+/* 读不出风向（无 far-sight／night-eye／insight）：虚线边框表示「这是猜的」 */
+.stalk__wind.is-vague {
+  background: transparent;
+  box-shadow: none;
+  border: 1px dashed var(--hair-2);
+  color: var(--txt-3);
+}
+
+.stalk__nameline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* 「会反扑」：朱砂小牌，与名号并排，一直在 */
+.stalk__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(194, 59, 34, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.4);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--cinnabar-lt);
+}
+
+.stalk__name {
+  margin: 4px 0 3px;
+  font-family: var(--kai);
+  font-size: 25px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--txt);
+}
+
+.stalk__desc {
+  margin: 0;
+  font-family: var(--kai);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--txt-2);
+}
+
+/* — 距离轨：左端是我，右端原点是猎物起处，菱形是它现在的位置 — */
+
+.strack {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 26px 4px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--txt-3);
+}
+
+.strack__line {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(232, 180, 95, 0.4), rgba(232, 236, 242, 0.08));
+}
+
+.strack__gap {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(232, 236, 242, 0.22) 0 3px,
+    transparent 3px 7px
+  );
+  transition: width var(--t) var(--ease);
+}
+
+.strack__prey {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  color: var(--gold);
+  transition: left var(--t) var(--ease);
+  text-shadow: 0 0 10px rgba(232, 180, 95, 0.55);
+}
+
+.strack__num {
+  font-family: var(--mono);
+  color: var(--txt-2);
+}
+
+/* — 三个量表 — */
+
+.stalk__meters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 10px 26px 6px;
+}
+
+.smeter__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.smeter__zi {
+  font-family: var(--kai);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  color: var(--txt-2);
+}
+
+.smeter__read {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.smeter__num {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-style: normal;
+  color: var(--txt);
+}
+
+.smeter__band {
+  font-family: var(--kai);
+  font-style: normal;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--txt-3);
+}
+
+/* 只有档位没有数字（缺 night-eye／insight）：档位排到主位，且虚线底提示「读不准」 */
+.smeter.is-vague .smeter__band {
+  font-size: 14px;
+  color: var(--txt-2);
+}
+
+.smeter.is-vague .smeter__track {
+  opacity: 0.55;
+}
+
+.smeter__track {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(232, 236, 242, 0.07);
+  overflow: hidden;
+}
+
+.smeter__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(127, 212, 232, 0.55), var(--cyan));
+  transition: width var(--t) var(--ease);
+}
+
+.smeter.is-hot .smeter__fill {
+  background: linear-gradient(90deg, rgba(226, 105, 76, 0.6), var(--cinnabar-lt));
+}
+
+.smeter.is-hot .smeter__num,
+.smeter.is-hot .smeter__band {
+  color: var(--cinnabar-lt);
+}
+
+.stalk__log {
+  margin: 8px 26px 0;
+}
+
+/* — 四个动作：每颗按钮都必须把「按下去会发生什么」写在脸上 — */
+
+.stalk__acts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 26px 22px;
+}
+
+.sact {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px 12px;
+  text-align: left;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.sact:hover:not([disabled]) {
+  background: rgba(38, 46, 60, 0.7);
+  box-shadow: inset 0 0 0 1px var(--hair-3);
+  transform: translateY(-2px);
+}
+
+.sact__seal {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: rgba(232, 180, 95, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.24);
+  font-family: var(--kai);
+  font-size: 16px;
+  color: var(--gold-soft);
+}
+
+.sact__text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sact__text b {
+  font-family: var(--kai);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--txt);
+}
+
+.sact__effect {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--gold-soft);
+}
+
+.sact__warn {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--cinnabar-lt);
+}
+
+.sact.is-hot {
+  background: rgba(232, 180, 95, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4);
+}
+
+.sact.is-hot .sact__seal {
+  background: rgba(232, 180, 95, 0.2);
+  color: var(--gold);
+}
+
+.sact.is-locked {
+  opacity: 0.45;
+}
+
 @media (max-width: 1099px) {
   .card__art {
     max-height: 42vh;
@@ -1715,6 +2062,11 @@
 }
 
 @media (max-width: 1080px) {
+  /* 窄屏：四个动作两两一行（三列量表还挤得下，动作按钮带两行说明字挤不下） */
+  .stalk__acts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .play {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
@@ -1750,7 +2102,8 @@
 
 @media (max-width: 720px) {
   .actions,
-  .combat__acts {
+  .combat__acts,
+  .stalk__acts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

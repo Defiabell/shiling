@@ -15,6 +15,7 @@ import type { ActionButtonVm } from "../model/actionVm.js";
 import type { CombatActId, CombatVm } from "../model/combatVm.js";
 import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
 import type { LogLineVm } from "../model/logVm.js";
+import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { StatusVm } from "../model/statusVm.js";
 import type { ActionId } from "@shiling/tale-sim";
 
@@ -28,7 +29,8 @@ export type CenterVm =
       continueLabel: string | null;
     }
   | { kind: "event"; key: string; card: EventCardVm }
-  | { kind: "combat"; key: string; combat: CombatVm };
+  | { kind: "combat"; key: string; combat: CombatVm }
+  | { kind: "stalk"; key: string; stalk: StalkVm };
 
 export interface PlayProps {
   status: StatusVm;
@@ -41,6 +43,7 @@ export interface PlayProps {
   onAction(id: ActionId): void;
   onChoice(idx: number): void;
   onCombat(act: CombatActId): void;
+  onStalk(act: StalkActId): void;
   onContinue(): void;
 }
 
@@ -345,6 +348,145 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
   );
 }
 
+/**
+ * 追猎屏的一个量表：汉字标签 ＋ 读数 ＋ 横条。
+ *
+ * **精确值与档位是互斥显示的**（`exact`）—— 没有夜瞳／灵犀时读数位只写「有疑」，
+ * 那正是「信息本身就是器官奖励」在屏幕上的样子。若两个都显示，器官就白给了。
+ */
+function stalkMeter(meter: StalkMeterVm): HTMLElement {
+  return el(
+    "div",
+    {
+      class: `smeter${meter.hot ? " is-hot" : ""}${meter.exact ? "" : " is-vague"}`,
+      title: meter.hint,
+    },
+    [
+      el("div", { class: "smeter__head" }, [
+        el("b", { class: "smeter__zi", text: meter.label }),
+        el("span", { class: "smeter__read" }, [
+          meter.exact ? el("i", { class: "smeter__num", text: String(meter.value) }) : null,
+          el("em", { class: "smeter__band", text: meter.band }),
+        ]),
+      ]),
+      el("div", { class: "smeter__track" }, [
+        el("i", { class: "smeter__fill", style: `width:${meter.percent}%` }),
+      ]),
+    ],
+  );
+}
+
+/**
+ * 距离轨：左端是自己，右端是猎物，中间那条按 `closeness` 收拢。
+ *
+ * 一条横轨比一个数字更快读懂「我还差多远」，而追猎屏最怕的就是玩家要在四个数字之间
+ * 换算。数字仍在量表里给（要算账时看得到），轨道负责一眼的空间感。
+ */
+function stalkTrack(stalk: StalkVm): HTMLElement {
+  return el("div", { class: "strack" }, [
+    el("span", { class: "strack__self", text: "我" }),
+    el("div", { class: "strack__line" }, [
+      el("i", { class: "strack__gap", style: `width:${100 - stalk.closeness}%` }),
+      el("b", {
+        class: "strack__prey",
+        style: `left:${stalk.closeness}%`,
+        text: stalk.distance.value <= 0 ? "◆" : "◇",
+      }),
+    ]),
+    el("span", { class: "strack__num", text: `${stalk.distance.value} 步` }),
+  ]);
+}
+
+function stalkCard(stalk: StalkVm, key: string, props: PlayProps): HTMLElement {
+  return el("section", { class: "card card--stalk", attrs: { "data-key": key } }, [
+    el("div", { class: "stalk__head" }, [
+      el("figure", { class: "foe foe--stalk" }, [
+        el("img", {
+          class: "foe__img",
+          attrs: {
+            src:
+              stalk.preyPortrait?.src ??
+              inkArt("event", `prey:${stalk.preyName}`, { width: 768, height: 768 }),
+            alt: "",
+            "data-prey": "1",
+          },
+        }),
+      ]),
+      el("div", { class: "stalk__intro" }, [
+        el("div", { class: "stalk__kicker" }, [
+          el("span", { text: "追猎" }),
+          el("em", { text: stalk.roundLabel }),
+          el(
+            "b",
+            {
+              class: `stalk__wind${stalk.windAgainst ? " is-bad" : ""}${stalk.windVisible ? "" : " is-vague"}`,
+              title: stalk.windHint,
+            },
+            [
+              el("span", { text: stalk.windLabel }),
+              stalk.windMulLabel ? el("i", { text: stalk.windMulLabel }) : null,
+            ],
+          ),
+        ]),
+        el("div", { class: "stalk__nameline" }, [
+          el("h2", { class: "stalk__name", text: stalk.preyName }),
+          // 「会反扑」一直挂在名号旁边：它决定要不要在这头身上花五个回合
+          stalk.preyBadge
+            ? el("b", {
+                class: "stalk__badge",
+                text: stalk.preyBadge,
+                title: "追猎失手或它受惊时，它不会逃 —— 会转成一场搏杀。",
+              })
+            : null,
+        ]),
+        el("p", { class: "stalk__desc", text: stalk.preyDesc }),
+      ]),
+    ]),
+
+    stalkTrack(stalk),
+    el("div", { class: "stalk__meters" }, [
+      stalkMeter(stalk.distance),
+      stalkMeter(stalk.alert),
+      stalkMeter(stalk.stamina),
+    ]),
+
+    el(
+      "ol",
+      { class: "combat__log stalk__log" },
+      stalk.log.slice(-6).map((line) => el("li", { text: line })),
+    ),
+
+    el(
+      "div",
+      { class: "stalk__acts" },
+      stalk.actions.map((action) =>
+        el(
+          "button",
+          {
+            class: `sact${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}`,
+            attrs: {
+              type: "button",
+              disabled: !action.enabled || props.busy,
+              "data-stalk": action.id,
+            },
+            title: action.disabledReason ?? action.warning ?? action.effect,
+            on: { click: () => props.onStalk(action.id) },
+          },
+          [
+            el("span", { class: "sact__seal", text: action.glyph }),
+            el("span", { class: "sact__text" }, [
+              el("b", { text: action.label }),
+              // 预期效果**恒在**：没有预览的按钮就是翻牌，这一行是整个追猎屏的意义所在
+              el("em", { class: "sact__effect", text: action.effect }),
+              action.warning ? el("i", { class: "sact__warn", text: action.warning }) : null,
+            ]),
+          ],
+        ),
+      ),
+    ),
+  ]);
+}
+
 function actionBar(props: PlayProps): HTMLElement {
   return el(
     "footer",
@@ -429,17 +571,26 @@ function centerNode(props: PlayProps): HTMLElement {
       return eventCard(props.center.card, props.center.key, props);
     case "combat":
       return combatCard(props.center.combat, props);
+    case "stalk":
+      return stalkCard(props.center.stalk, props.center.key, props);
     default:
       return narrationCard(props.center, props);
   }
 }
 
-/** 整屏重建，返回新的根节点（调用方负责替换）。 */
+/**
+ * 整屏重建，返回新的根节点（调用方负责替换）。
+ *
+ * 追猎时进**全屏模式**（`play--stalk`）：收掉右栏「近事」、收掉底部四行动（引擎此刻
+ * `availableActions` 本来就是空的，留着一排全灰的按钮只会分散注意），把整块横向空间让给
+ * 追猎卡。状态栏留着 —— 饱食与精气正是「这一场追不追得起」的前提，藏了反而要玩家凭记忆。
+ */
 export function renderPlay(props: PlayProps): HTMLElement {
-  return el("div", { class: "screen screen--play play" }, [
+  const stalking = props.center.kind === "stalk";
+  return el("div", { class: `screen screen--play play${stalking ? " play--stalk" : ""}` }, [
     statusBar(props.status),
     el("main", { class: "stage" }, [centerNode(props)]),
-    logRail(props),
-    actionBar(props),
+    stalking ? null : logRail(props),
+    stalking ? null : actionBar(props),
   ]);
 }

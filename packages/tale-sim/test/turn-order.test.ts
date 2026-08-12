@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createLife, performAction, resolveChoice, type TaleState } from "../src/index.js";
 import {
-  ENEMY_YE_ZHI,
+  createLife,
+  performAction,
+  resolveChoice,
+  stalkAct,
+  type TaleState,
+} from "../src/index.js";
+import {
   EVENT_SPROUT,
   FIXTURE_SEED_ID,
   ORGAN_WU_MU,
@@ -53,6 +58,33 @@ describe("回合结算顺序：季推进", () => {
     const { state } = performAction(life, "explore", content);
     expect(state.hunger).toBe(0);
   });
+
+  /*
+   * M1-P1：追猎把一个回合拆成「起追」与「收束」两段，季推进（步骤 3）只在**收束**那一步
+   * 跑一次。这条同时钉住两个方向的错：起追就推进（追一头猎物白耗一季），或者收束时漏了推进
+   * （一世永远停在同一个春天，且饥饿再也扣不动 —— 这类 bug 在界面上表现为「游戏变简单了」）。
+   */
+  it("追猎的季推进只在收束那一步跑，且只跑一次", () => {
+    const quiet = contentWithoutEvents();
+    const life = createLife(13, FIXTURE_SEED_ID, quiet);
+    const started = performAction(life, "hunt", quiet).state;
+    expect(started.stalk).not.toBeNull();
+    expect(started.season).toBe(life.season);
+    expect(started.hunger).toBe(life.hunger);
+
+    // 一路潜行到收束（体力预算决定它必然收）
+    let state = started;
+    let guard = 0;
+    while (state.stalk && guard < 20) {
+      state = stalkAct(state, "creep", quiet).state;
+      guard += 1;
+    }
+    expect(state.stalk).toBeNull();
+    expect(state.season).toBe(1);
+    expect(state.year).toBe(life.year);
+    // 全程只扣了一季的饱食（收益另算：这一路只潜行没扑，必然空手）
+    expect(state.hunger).toBe(life.hunger - 12);
+  });
 });
 
 describe("回合结算顺序：事件抽取", () => {
@@ -83,31 +115,27 @@ describe("回合结算顺序：事件抽取", () => {
     expect(exploreHits / runs).toBeLessThan(0.48);
   });
 
-  it("步骤 1 就开战的回合不再抽事件", () => {
-    const ambush = makeContent({
-      tuning: {
-        ...UNCLAMPED_CHANCE,
-        eventChanceBase: 1,
-        huntBase: 0,
-        huntPerMeng: 0,
-        huntHunterTagBonus: 0,
-        huntFailCombatChance: 1,
-      },
-    });
-    const { state, pendingEvent } = performAction(
-      createLife(13, FIXTURE_SEED_ID, ambush),
-      "hunt",
-      ambush,
-    );
-    expect(state.combat?.enemyId).toBe(ENEMY_YE_ZHI);
-    expect(pendingEvent).toBeNull();
+  /*
+   * M1-P1：狩猎这一季**要么抽到事件、要么起追**，两者不并存（同一块中央舞台）。
+   * 起追的那一季刻意不抽事件 —— 玩家此刻该盯着追猎屏，不该被别的事件插队。
+   */
+  it("起追的那一季不抽事件（事件与追猎二选一）", () => {
+    const quiet = contentWithoutEvents();
+    const started = performAction(createLife(13, FIXTURE_SEED_ID, quiet), "hunt", quiet);
+    expect(started.state.stalk).not.toBeNull();
+    expect(started.pendingEvent).toBeNull();
+
+    const busy = makeContent({ tuning: { eventChanceBase: 1 } });
+    const drawn = performAction(createLife(13, FIXTURE_SEED_ID, busy), "hunt", busy);
+    expect(drawn.pendingEvent).not.toBeNull();
+    expect(drawn.state.stalk).toBeNull();
   });
 
   it("once 事件在**结算后**才进 firedOnceIds，之后不再入池", () => {
     // 只留 once 的丛中窥影，狩猎行动触发
     const content = makeContent({
       events: [makeContent().events.find((event) => event.trigger.once === true)!],
-      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1 },
     });
     // 带雾目才能选不开战的那个抉择（抉择 0 会 startCombat，之后不能再 performAction）
     const life = withOrgans(createLife(21, FIXTURE_SEED_ID, content), ORGAN_WU_MU);
@@ -124,7 +152,7 @@ describe("回合结算顺序：事件抽取", () => {
   it("未结算就进下一回合的 once 事件不会本世永久消失（还能重抽）", () => {
     const content = makeContent({
       events: [makeContent().events.find((event) => event.trigger.once === true)!],
-      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1 },
     });
     const life = createLife(21, FIXTURE_SEED_ID, content);
     const dropped = performAction(life, "hunt", content);
@@ -137,7 +165,7 @@ describe("回合结算顺序：事件抽取", () => {
   it("结算同一 once 事件两次不会写重复 id", () => {
     const content = makeContent({
       events: [makeContent().events.find((event) => event.trigger.once === true)!],
-      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntBase: 1 },
+      tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1 },
     });
     const event = content.events[0]!;
     const life = withOrgans(createLife(21, FIXTURE_SEED_ID, content), ORGAN_WU_MU);

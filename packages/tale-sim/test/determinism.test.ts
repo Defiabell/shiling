@@ -10,11 +10,15 @@ import {
   eligibleChoiceIdxs,
   performAction,
   resolveChoice,
+  stalkAct,
+  stalkPreview,
   type ActionId,
+  type StalkAct,
   type TaleContent,
   type TaleState,
 } from "../src/index.js";
 import {
+  ENEMY_YE_ZHI,
   FIXTURE_CONTENT,
   FIXTURE_SEED_ID,
   contentWithoutEvents,
@@ -25,6 +29,32 @@ import {
 const BUSY = makeContent({ tuning: { eventChanceBase: 0.6 } });
 
 const COMBAT_SCRIPT = ["fight", "feint", "fight", "flee"] as const;
+
+/**
+ * 追猎的**固定剧本**（不看状态，只按步数轮转）——「乱来的猎手」。
+ *
+ * 与 `huntOnly` 用的 `decideStalk`（明理猎手）分工：这一套刻意会在远处扑空、会顺风硬冲，
+ * 好让确定性回归覆盖到 escaped／combat／exhausted 三条收束分支；那一套负责让猎物真的到嘴，
+ * golden 才盖得到蜕变与击杀。
+ */
+const STALK_SCRIPT: readonly StalkAct[] = ["circle", "creep", "creep", "pounce"];
+
+/**
+ * 明理但不作弊的猎手：只读 `stalkPreview`（界面上玩家看得见的那些数），不碰引擎内部。
+ *
+ * 它同时是一份**可执行的手感说明**：一个懂规则的人会先绕到上风，再一步步逼近，
+ * 到七成命中率就出手，贴身而警觉过高时宁可屏息一次 —— 若这套打法的成功率不好看，
+ * 那就是数值该调，而不是玩家该更聪明。
+ */
+function decideStalk(state: TaleState, content: TaleContent): StalkAct {
+  const preview = stalkPreview(state, content);
+  if (preview.staminaLeft <= 1) return "pounce";
+  if (preview.pounceChance >= 0.7) return "pounce";
+  if (!preview.alreadyUpwind && preview.staminaLeft >= 3) return "circle";
+  if (preview.creepGain > 0 && preview.pounceChanceAfterCreep > preview.pounceChance) return "creep";
+  if (preview.waitAlertDrop > 0) return "wait";
+  return "pounce";
+}
 
 /**
  * 用**完全确定的策略**打完一世（不掷骰选行动，只按步数轮转），
@@ -38,6 +68,13 @@ function playLife(
   let state = createLife(seed, FIXTURE_SEED_ID, content);
   const log: string[] = [];
   let step = 0;
+  /*
+   * 行动轮转用**独立**计数器（只在真正选了行动时 +1），战斗／追猎的脚本仍按 `step` 走。
+   * 理由：M1-P1 后一次狩猎会花掉 2〜6 个 `step`，若行动仍按 `step % actions.length` 轮转，
+   * 「猎→探→休」会被追猎的步数打乱成几乎全是狩猎 —— 机器玩家从此不休憩、两三岁就饿死，
+   * golden 覆盖的一世从十来年缩到两年。这是**测试策略**被子系统步数污染，不是数值问题。
+   */
+  let turn = 0;
   while (state.alive && step < maxSteps) {
     if (state.combat) {
       const act = COMBAT_SCRIPT[step % COMBAT_SCRIPT.length] ?? "fight";
@@ -47,23 +84,32 @@ function playLife(
       step += 1;
       continue;
     }
+    if (state.stalk) {
+      const act = STALK_SCRIPT[step % STALK_SCRIPT.length] ?? "creep";
+      const turn = stalkAct(state, act, content);
+      state = turn.state;
+      log.push(...turn.roundLog);
+      step += 1;
+      continue;
+    }
     const actions = availableActions(state, content);
     const action: ActionId = actions.includes("dormant")
       ? "dormant"
-      : (actions[step % actions.length] ?? "rest");
-    const turn = performAction(state, action, content);
-    state = turn.state;
-    log.push(...turn.notices);
-    if (turn.moltResult) log.push(`molt:${turn.moltResult.chosen.id}`);
-    if (turn.pendingEvent && state.alive) {
-      const idxs = eligibleChoiceIdxs(state, turn.pendingEvent, content);
-      const pick = idxs[step % idxs.length];
+      : (actions[turn % actions.length] ?? "rest");
+    const result = performAction(state, action, content);
+    state = result.state;
+    log.push(...result.notices);
+    if (result.moltResult) log.push(`molt:${result.moltResult.chosen.id}`);
+    if (result.pendingEvent && state.alive) {
+      const idxs = eligibleChoiceIdxs(state, result.pendingEvent, content);
+      const pick = idxs[turn % idxs.length];
       if (pick !== undefined) {
-        const result = resolveChoice(state, turn.pendingEvent, pick, content);
-        state = result.state;
-        log.push(result.outcomeText);
+        const chosen = resolveChoice(state, result.pendingEvent, pick, content);
+        state = chosen.state;
+        log.push(chosen.outcomeText);
       }
     }
+    turn += 1;
     step += 1;
   }
   return { state, log, steps: step };
@@ -77,13 +123,19 @@ function playLife(
 function huntOnly(
   seed: number,
   content: TaleContent,
-  maxSteps = 120,
+  // M1-P1：一次狩猎现在要花 2〜6 步把追猎打完，同样的年数需要三四倍的步数
+  maxSteps = 400,
 ): { state: TaleState; steps: number } {
   let state = createLife(seed, FIXTURE_SEED_ID, content);
   let step = 0;
   while (state.alive && step < maxSteps) {
     if (state.combat) {
       state = combatAct(state, "fight", content).state;
+      step += 1;
+      continue;
+    }
+    if (state.stalk) {
+      state = stalkAct(state, decideStalk(state, content), content).state;
       step += 1;
       continue;
     }
@@ -107,16 +159,22 @@ describe("确定性回归", () => {
     }
   });
 
-  // ⚠️ 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
+  /*
+   * ⚠️ 下面两条 golden 的数值在 **M1-P1（追猎屏）** 整批重掷过一次，因为狩猎从「一次掷骰」
+   * 换成了状态机：抽取序列（猎物 → 距离抖动 → 警觉抖动 → 风向 → 旁白变体 → 每个动作各自的掷骰）
+   * 与 M0 完全不同。这是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
+   * ① 同种子同操作仍恒等（上一条测试）② 换种子仍有分岔 ③ 30 世仍全部收束得出列传。
+   */
+  // 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
   // 它们钉的是抽取顺序本身：把 resolveHunt 里两次 cursor.next() 调换、或把 drawEvent
   // 的概率掷骰挪进/挪出分支，行为分布可能一模一样，但每个已存种子的剧本都被重掷 ——
   // 只有字面量能抓到这种漂移。**改动引擎的随机消耗顺序时这两条必红，届时要么改回去，
   // 要么确认是有意的破坏性变更再更新期望值。**
   it("golden：轮转策略下 3 个种子的终态逐字锁定", () => {
     const golden = [
-      { seed: 20260811, steps: 32, rngState: 892708669, year: 7, ending: "starve", organs: 1 },
-      { seed: 1, steps: 59, rngState: 3264331845, year: 12, ending: "starve", organs: 1 },
-      { seed: 4242, steps: 18, rngState: 120310336, year: 4, ending: "starve", organs: 1 },
+      { seed: 20260811, steps: 9, rngState: 1596061836, year: 2, ending: "starve", organs: 1 },
+      { seed: 1, steps: 17, rngState: 1447918632, year: 2, ending: "starve", organs: 1 },
+      { seed: 4242, steps: 21, rngState: 688204809, year: 4, ending: "starve", organs: 1 },
     ] as const;
     for (const expected of golden) {
       const { state, steps } = playLife(expected.seed, BUSY);
@@ -132,25 +190,34 @@ describe("确定性回归", () => {
   });
 
   it("golden：狩猎流策略锁定蜕变与击杀路径", () => {
-    const quiet = contentWithoutEvents();
+    /*
+     * 让野雉反扑：追猎失手即转搏杀 —— 否则这条 golden 覆盖不到击杀路径。
+     * （M0 是 `huntFailCombatChance` 掷骰进战斗；M1-P1 改成由 `EnemyDef.retaliates` 决定，
+     * 而 fixture 的野雉不反扑。这一改让「追猎失手 → 打赢 → 吞精气」整条链重新落在 golden 里。）
+     */
+    const quiet = contentWithoutEvents({
+      enemies: FIXTURE_CONTENT.enemies.map((enemy) =>
+        enemy.id === ENEMY_YE_ZHI ? { ...enemy, retaliates: true } : enemy,
+      ),
+    });
     const golden = [
       {
         seed: 20260811,
-        steps: 37,
-        rngState: 260872999,
-        year: 7,
-        organIds: ["organ-ling-yun", "ji-zu", "lin-jia", "gou-chi"],
+        steps: 102,
+        rngState: 2837004276,
+        year: 6,
+        organIds: ["organ-ling-yun", "lin-jia", "gou-chi", "wu-mu"],
         molts: 3,
         kills: 3,
       },
       {
         seed: 7,
-        steps: 35,
-        rngState: 2576131284,
-        year: 8,
-        organIds: ["organ-ling-yun", "wu-mu", "gou-chi", "lin-jia"],
+        steps: 107,
+        rngState: 289400792,
+        year: 6,
+        organIds: ["organ-ling-yun", "lin-jia", "wu-mu", "gou-chi"],
         molts: 3,
-        kills: 0,
+        kills: 3,
       },
     ] as const;
     for (const expected of golden) {
@@ -179,7 +246,10 @@ describe("确定性回归", () => {
   it("state 是完整自描述的：JSON 往返后续跑结果一致", () => {
     const mid = playLife(31337, BUSY, 20).state;
     const revived = JSON.parse(JSON.stringify(mid)) as TaleState;
-    if (mid.combat) {
+    if (mid.stalk) {
+      // 追猎中的 state 也必须是自描述的：四个量＋log 全在 TaleState 里，没有藏在闭包里的东西
+      expect(stalkAct(revived, "creep", BUSY).state).toEqual(stalkAct(mid, "creep", BUSY).state);
+    } else if (mid.combat) {
       expect(combatAct(revived, "fight", BUSY).state).toEqual(combatAct(mid, "fight", BUSY).state);
     } else if (mid.alive) {
       const action = availableActions(mid, BUSY)[0] ?? "rest";
