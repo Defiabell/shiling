@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""《食灵·列传》S2「探索方向」实机验收。
+
+同 `skills.py`／`combat.py`／`stalk.py` 的办法与理由：断言打在**屏幕上真实显示的字**上，
+不是引擎内部值。它回答 S2 交付线的四问：
+
+  1. 探索是否真的变成了「往哪走」的决定？（贴出目的地选择屏 ＋ 据什么做的选择）
+  2. 器官／组合解锁一处新去处时，那处读起来是否真的是新世界？
+     （抓该地 3 条事件全文，与兽径的对比）
+  3. 每个目的地按钮是否都摊开了后果与门槛？（全程逐屏审计，违规计数）
+  4. 未开启的去处是否让人想去凑那个条件？（缺什么写成器官名、门槛全列、位置恒定）
+
+运行前先自己起 dev server（**别 pkill 已有的**）：
+    packages/tale-client $ ../../node_modules/.bin/vite --port 5174 --strictPort
+
+用法：
+    python packages/tale-client/e2e/places.py [输出目录] [起始种子]
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from playwright.sync_api import Page, sync_playwright
+
+BASE = "http://localhost:5174/"
+VIEWPORT = {"width": 1440, "height": 900}
+OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "screenshots/s2").resolve()
+SEED0 = int(sys.argv[2] if len(sys.argv) > 2 else 20260814)
+
+# 各处的门槛（`?organs=` 是 dev 专用：只借 id 与 tag，不叠 statMods）
+GATES = {
+    "dest-xian-feng": ["ji-zu"],
+    "dest-gu-ci": ["ling-xi"],
+    "dest-you-tan": ["lin-jia", "fu-biao"],
+    "dest-mi-ku": ["wu-mu", "ye-tong"],
+    "dest-jiao-yuan": ["tie-zong"],
+}
+
+
+def snap(page: Page) -> dict:
+    return page.evaluate("() => JSON.parse(JSON.stringify(window.__tale.snapshot()))")
+
+
+def dest_screen(page: Page) -> dict:
+    """把行动面板上玩家真的看得见的字抄下来（三颗行动 ＋ 一排去处）。"""
+    return page.evaluate(
+        """() => {
+          const q = (sel) => document.querySelector(sel);
+          const dests = [...document.querySelectorAll('[data-dest]')].map((n) => ({
+            id: n.getAttribute('data-dest'),
+            name: n.querySelector('.dest__head b')?.textContent ?? '',
+            key: n.querySelector('.dest__head kbd')?.textContent ?? '',
+            seal: n.querySelector('.dest__seal')?.textContent ?? null,
+            mark: n.querySelector('.dest__mark')?.textContent ?? null,
+            desc: n.querySelector('.dest__desc')?.textContent ?? '',
+            facts: [...n.querySelectorAll('.dest__facts i')].map((f) => f.textContent),
+            foe: n.querySelector('.dest__foe')?.textContent ?? null,
+            lock: n.querySelector('.dest__lock')?.textContent ?? null,
+            peril: [...n.classList].find((c) => c.startsWith('dest--')) ?? '',
+            disabled: n.disabled,
+          }));
+          return {
+            caption: q('.dests__title')?.textContent ?? null,
+            actions: [...document.querySelectorAll('[data-action]')].map((n) => ({
+              id: n.getAttribute('data-action'),
+              label: n.querySelector('b span')?.textContent ?? '',
+              hint: n.querySelector('.act__text em')?.textContent ?? '',
+              disabled: n.disabled,
+            })),
+            dests,
+          };
+        }"""
+    )
+
+
+def event_card(page: Page) -> dict | None:
+    """事件卡上的全文（标题／正文／每颗抉择的字）。"""
+    return page.evaluate(
+        """() => {
+          const card = document.querySelector('.card--event');
+          if (!card) return null;
+          return {
+            title: card.querySelector('.card__title')?.textContent ?? '',
+            body: [...card.querySelectorAll('.card__prose p')].map((p) => p.textContent).join(''),
+            choices: [...card.querySelectorAll('.choice')].map((n) => ({
+              label: n.querySelector('.choice__label')?.textContent ?? '',
+              disabled: n.disabled,
+            })),
+          };
+        }"""
+    )
+
+
+def treasure_overlay(page: Page) -> dict | None:
+    """秘藏揭示演出上的字（没在播则 None）。"""
+    return page.evaluate(
+        """() => {
+          const card = document.querySelector('.treasure__card');
+          if (!card) return null;
+          return {
+            kicker: card.querySelector('.treasure__kicker')?.textContent ?? '',
+            place: card.querySelector('.treasure__placeName')?.textContent ?? '',
+            placeDesc: card.querySelector('.treasure__placeDesc')?.textContent ?? '',
+            reveal: card.querySelector('.treasure__reveal')?.textContent ?? '',
+            name: card.querySelector('.treasure__name')?.textContent ?? '',
+            desc: card.querySelector('.treasure__desc')?.textContent ?? '',
+            foot: card.querySelector('.treasure__foot')?.textContent ?? '',
+          };
+        }"""
+    )
+
+
+def places_codex(page: Page) -> dict:
+    """转世屏上的「山川」那一段。"""
+    return page.evaluate(
+        """() => ({
+          caption: document.querySelector('[data-place-count]')?.textContent ?? null,
+          rows: [...document.querySelectorAll('[data-place]')].map((n) => ({
+            id: n.getAttribute('data-place'),
+            name: n.querySelector('.codex__name')?.textContent ?? '',
+            gate: n.querySelector('.codex__recipe')?.textContent ?? '',
+            been: n.querySelector('.place__been')?.textContent ?? null,
+            treasureKnown: n.querySelector('.place__treasure')?.getAttribute('data-treasure') === 'known',
+            treasure: n.querySelector('.place__treasure')?.textContent ?? '',
+          })),
+          html: document.querySelector('.screen--seed')?.innerHTML ?? '',
+        })"""
+    )
+
+
+def click_first(page: Page, selectors: list[str], wait: int = 300) -> bool:
+    """点第一个能点的按钮（容忍整屏重建导致的句柄失效，同 skills.py）。"""
+    for selector in selectors:
+        for _ in range(3):
+            button = page.query_selector(selector)
+            if button is None:
+                break
+            try:
+                button.click(timeout=4000)
+            except Exception:
+                page.wait_for_timeout(160)
+                continue
+            page.wait_for_timeout(wait)
+            return True
+    return False
+
+
+def start_life(page: Page, seed: int, *, organs: list[str] | None = None, reset: bool = True) -> None:
+    grant = f"&organs={','.join(organs)}" if organs else ""
+    page.goto(f"{BASE}?seed={seed}{'&reset=1' if reset else ''}{grant}", wait_until="networkidle")
+    page.wait_for_timeout(300)
+    page.click("[data-start]")
+    page.wait_for_timeout(320)
+    page.click("[data-seed]:not([disabled])")
+    page.wait_for_timeout(600)
+
+
+def audit_dests(view: dict, violations: list[dict]) -> None:
+    """
+    验收第③问：每颗去处按钮是否都摊开了后果与门槛。
+
+    五条判据（与 S1 技能池那一套同形）：
+      ① 有地貌；② 写了遇事概率；③ 写了风险档；④ 写了这一季的饱食账；
+      ⑤ 置灰的必须说明**缺哪几件器官**（不是「不可行」这种废话）。
+    并且置灰时**后果照写** —— 原因不许顶掉后果。
+    """
+    for dest in view["dests"]:
+        facts = "".join(dest["facts"])
+        if not dest["desc"].strip():
+            violations.append({"id": dest["id"], "why": "没有地貌那一行"})
+        if "遇事" not in facts:
+            violations.append({"id": dest["id"], "why": f"没写遇事概率：{facts}"})
+        if not any(word in facts for word in ("常路", "险地", "绝境")):
+            violations.append({"id": dest["id"], "why": f"没写风险档：{facts}"})
+        if "耗饱食" not in facts:
+            violations.append({"id": dest["id"], "why": f"没写这一季的饱食账：{facts}"})
+        if dest["disabled"] and not dest["lock"]:
+            violations.append({"id": dest["id"], "why": "置灰却没说为什么"})
+        if dest["lock"] and "需 " not in dest["lock"] and "先了此事" not in dest["lock"]:
+            violations.append({"id": dest["id"], "why": f"置灰的理由没写清缺什么：{dest['lock']}"})
+
+
+def step_forward(page: Page, violations: list[dict]) -> str:
+    """把界面往前推一格（每回到行动面板就审一次去处按钮）。"""
+    if treasure_overlay(page) is not None:
+        click_first(page, [".treasure__confirm"], 400)
+        return "treasure"
+    if page.query_selector(".synergy__card") is not None:
+        click_first(page, [".synergy__confirm"], 400)
+        return "synergy"
+    if click_first(page, [".molt__confirm"], 500):
+        return "molt"
+    if page.query_selector(".card--combat") is not None:
+        if click_first(page, [".cact.is-hot:not([disabled])", '[data-combat="bite:throat"]:not([disabled])']):
+            return "combat"
+    if page.query_selector(".card--stalk") is not None:
+        if click_first(page, [".sact.is-hot:not([disabled])", '[data-stalk="pounce"]:not([disabled])']):
+            return "stalk"
+    if page.query_selector(".card--event") is not None:
+        buttons = page.query_selector_all(".choice:not([disabled])")
+        if buttons:
+            buttons[0].click()
+            page.wait_for_timeout(300)
+            return "event"
+    if page.query_selector("[data-dest]") is not None:
+        audit_dests(dest_screen(page), violations)
+    if click_first(page, ["[data-continue]:not([disabled])"], 900):
+        return "continue"
+    return "idle"
+
+
+def explore_at(page: Page, dest_id: str, violations: list[dict]) -> bool:
+    """去某一处探一季（若那颗按钮此刻点不了就返回 False）。"""
+    if page.query_selector("[data-dest]") is None:
+        return False
+    audit_dests(dest_screen(page), violations)
+    return click_first(page, [f'[data-dest="{dest_id}"]:not([disabled])'], 360)
+
+
+# ===== 问一：探索是不是「往哪走」的决定 =====
+
+
+def probe_choice_screen(page: Page, seed: int, out: Path, shots: list[str],
+                        violations: list[dict]) -> dict:
+    """裸 build（只有神种）与全开 build 两张对照 —— 「可去几处」是这道题的题面。"""
+    start_life(page, seed)
+    bare = dest_screen(page)
+    audit_dests(bare, violations)
+    page.screenshot(path=str(out / "choose-bare.png"))
+    shots.append("choose-bare.png")
+
+    everything = sorted({organ for organs in GATES.values() for organ in organs})
+    start_life(page, seed, organs=everything)
+    full = dest_screen(page)
+    audit_dests(full, violations)
+    page.screenshot(path=str(out / "choose-open.png"))
+    shots.append("choose-open.png")
+    return {"bare": bare, "full": full}
+
+
+# ===== 问二：那一处读起来是不是新世界 =====
+
+
+def collect_events(page: Page, seed: int, dest_id: str, organs: list[str], want: int,
+                   violations: list[dict], max_turns: int = 260) -> list[dict]:
+    """
+    在某一处反复探索，把撞上的事件卡全文抄下来。
+
+    只探这一处（不猎不休）：这一问要的是「那一处的池子长什么样」，混进别处的事件就说不清了。
+    饿死就换个种子重开，继续在同一处收集。
+    """
+    seen: dict[str, dict] = {}
+    for attempt in range(6):
+        start_life(page, seed + attempt * 101, organs=organs)
+        for _ in range(max_turns):
+            if len(seen) >= want:
+                return list(seen.values())
+            card = event_card(page)
+            if card is not None:
+                snapshot = snap(page)
+                event_id = snapshot.get("pendingEventId")
+                if event_id and event_id not in seen:
+                    seen[event_id] = {"id": event_id, **card}
+            if page.query_selector("[data-dest]") is not None and explore_at(page, dest_id, violations):
+                continue
+            if step_forward(page, violations) == "idle":
+                break
+    return list(seen.values())
+
+
+# ===== 问四：未开启的那几处 =====
+
+
+def probe_locked(page: Page, seed: int, out: Path, shots: list[str],
+                 violations: list[dict]) -> dict:
+    """凑齐门槛的一半 —— 「还差哪一件」才是这道题真正的题面。"""
+    start_life(page, seed, organs=["lin-jia"])  # 幽潭要鳞甲＋浮鳔，这里只给一半
+    view = dest_screen(page)
+    audit_dests(view, violations)
+    page.screenshot(path=str(out / "locked-half.png"))
+    shots.append("locked-half.png")
+    return view
+
+
+def main() -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    shots: list[str] = []
+    violations: list[dict] = []
+    errors: list[str] = []
+    report: dict = {"seed": SEED0}
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport=VIEWPORT)
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.on("pageerror", lambda err: errors.append(str(err)))
+
+        report["q1_choice"] = probe_choice_screen(page, SEED0, OUT, shots, violations)
+        report["q4_locked"] = probe_locked(page, SEED0, OUT, shots, violations)
+
+        # 问二：兽径（无门槛）与幽潭（鳞甲＋浮鳔）各收三条事件全文
+        report["q2_shoujing"] = collect_events(
+            page, SEED0, "dest-shou-jing", [], 4, violations
+        )
+        report["q2_youtan"] = collect_events(
+            page, SEED0, "dest-you-tan", GATES["dest-you-tan"], 4, violations
+        )
+        report["q2_miku"] = collect_events(
+            page, SEED0, "dest-mi-ku", GATES["dest-mi-ku"], 3, violations
+        )
+
+        # 秘藏演出：在兽径上一直探，撞上「旧径重踏」（minYear 4）
+        treasure: dict | None = None
+        for attempt in range(8):
+            start_life(page, SEED0 + attempt * 313, organs=[])
+            for _ in range(300):
+                found = treasure_overlay(page)
+                if found is not None:
+                    page.wait_for_timeout(800)
+                    page.screenshot(path=str(OUT / "treasure-reveal.png"))
+                    shots.append("treasure-reveal.png")
+                    treasure = found
+                    break
+                if page.query_selector("[data-dest]") is not None:
+                    if explore_at(page, "dest-shou-jing", violations):
+                        continue
+                if step_forward(page, violations) == "idle":
+                    break
+            if treasure:
+                break
+        report["treasure"] = treasure
+
+        # 山川图鉴：跑到转世屏
+        for _ in range(400):
+            if page.query_selector(".screen--seed") is not None:
+                break
+            step_forward(page, violations)
+        if page.query_selector(".screen--seed") is not None:
+            codex = places_codex(page)
+            page.screenshot(path=str(OUT / "codex-places.png"), full_page=True)
+            shots.append("codex-places.png")
+            html = codex.pop("html", "")
+            leaked = [
+                name
+                for name in ("熟径", "云根", "祝简", "渊心珠", "地心髓", "雷髓")
+                if name in html and not any(
+                    row["treasureKnown"] and name in row["treasure"] for row in codex["rows"]
+                )
+            ]
+            codex["leakedTreasureNames"] = leaked
+            report["codex"] = codex
+
+        browser.close()
+
+    report["violations"] = violations
+    report["consoleErrors"] = errors
+    report["screenshots"] = shots
+    (OUT / "places-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"按钮审计违规 {len(violations)} 条 · 控制台报错 {len(errors)} 条 · 截图 {len(shots)} 张")
+    print(f"报告：{OUT / 'places-report.json'}")
+    for violation in violations[:10]:
+        print("  ✗", violation)
+
+
+if __name__ == "__main__":
+    main()

@@ -222,7 +222,35 @@ export const EXPLORE_BASE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-yinglong",
-    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_JIAO_YUAN], minYear: 3, once: true, weight: 44, tags: [EV_WONDER] },
+    /*
+     * [S2] **两处都归**（全库唯一一条多归属的事件），而且这是平衡逼出来的，不是偷懒：
+     *
+     * 「尝过神兽」是登神的第三道门槛，而这一条是它在整个内容库里的**唯一**来源
+     * （另一条路是打赢穷奇幼崽，那也只在焦原）。第一版把它独归焦原之后，500 世 wayseek
+     * 实测 `divine` 门槛达成率从 **40% 掉到 9.6%**，登神成道率 2.8% → 0.2% ——
+     * **一条成道之路被一处地的器官门槛静默关掉了**。
+     *
+     * 由此得出一条通则（写进 `destinations.ts` 的头注）：**一条道的唯一门槛来源，
+     * 不许只挂在带器官门槛的去处上** —— 蜕变是随机的，玩家没法「决定去长一件铁鬃」。
+     * 兽径是那条恒可去的路，谷底就在它经过的地方；焦原是这条龙烧出来的那片地。
+     * 两处读起来都成立，而机制上它必须至少有一处是无门槛的。
+     */
+    trigger: {
+      region: "qingqiu",
+      actions: ["explore"],
+      destinations: [DEST_SHOU_JING, DEST_JIAO_YUAN],
+      minYear: 3,
+      once: true,
+      /*
+       * [S2] 权重 44 → 22：这不是「觉得它该稀有一点」，是**池子变小了**。
+       * 它当年的 44 是在一个 20 条、总权重约 520 的探索池里定的（占比 ≈8.5%）；
+       * S2 把池子按地点拆开之后，兽径只有十条、总权重约 250 —— 同一个 44 会让它的占比
+       * 翻一倍，实测 cautious 与 reckless 两个画像的成道率双双越过 15% 的上界。
+       * 22 把占比拉回 8〜10%，与拆池之前同量级。
+       */
+      weight: 14,
+      tags: [EV_WONDER],
+    },
     title: "垂死应龙",
     body: "谷底横着一条身长数丈的巨物，背上残翼半张，鳞色青金而黯。它还活着，每一次呼吸都把地上的碎石一粒粒吹开。它的眼睛正对着你，从你进谷起就一直对着你。",
     illustration: "events/qiu-explore-yinglong.webp",

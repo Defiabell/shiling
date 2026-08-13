@@ -323,12 +323,40 @@ function decideAction(
  * 实测那正是第一版登神成道率掉到 **0.2%** 的原因之一（另一半是焦原的门槛，
  * 见 `tale-content/src/destinations.ts` 焦原那一段）。
  */
-function decideDestination(state: TaleState, profile: Profile, roll: () => number): string {
+function decideDestination(
+  state: TaleState,
+  profile: Profile,
+  roll: () => number,
+  /** [S2] 这一世奔的那条道 —— 它改变的是**去哪儿**，不只是抉择 */
+  way: WayId | null,
+): string {
   const open = exploreDestinations(state, CONTENT).filter((entry) => entry.unlocked);
   const first = open[0];
   if (first === undefined) throw new Error("平衡：一处去处都开不了（内容库缺无门槛的那一处）");
   if (profile === "cautious") return first.def.id;
   if (profile === "reckless") return (open[open.length - 1] ?? first).def.id;
+  /*
+   * **奔登神的人往有神兽的地方去。**
+   *
+   * 这一条是实测逼出来的，而它修的是**机器玩家**不是数值（P1 那条教训：先怀疑机器玩家）。
+   * 登神的第三道门槛是「尝过神兽」，S2 之前它的唯一来源（「垂死应龙」）是一条随处可撞的
+   * 探索事件 —— 500 世 wayseek 实测 `divine` 门槛达成率 **40%**。S2 把它归到焦原之后，
+   * 一个**等概率乱挑去处**的机器玩家只有 9.6%，于是登神成道率从 2.8% 掉到 0.2%。
+   *
+   * 但真人不会那样打：他知道焦原有穷奇、有应龙，奔登神就往那儿去。所以这里让它照做 ——
+   * 判据从内容里**推**（此地的兽里有没有带 `wayDivineTag` 的），不写死去处 id：
+   * 写死会让「内容改了而实验台还在量旧世界」变成一个静默的谎。
+   */
+  if (way === "shen") {
+    const divine = CONTENT.tuning.wayDivineTag;
+    const divineIds = new Set(
+      CONTENT.enemies.filter((enemy) => enemy.tags.includes(divine)).map((enemy) => enemy.id),
+    );
+    const lair = open.find((entry) =>
+      entry.def.denizens.some((denizen) => divineIds.has(denizen.enemyId)),
+    );
+    if (lair) return lair.def.id;
+  }
   return (open[Math.floor(roll() * open.length)] ?? first).def.id;
 }
 
@@ -601,7 +629,9 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
       state,
       action,
       CONTENT,
-      action === "explore" ? { destinationId: decideDestination(state, profile, roll) } : undefined,
+      action === "explore"
+        ? { destinationId: decideDestination(state, profile, roll, waySought) }
+        : undefined,
     );
     chars.prose += turn.notices.join("").length;
     state = turn.state;
