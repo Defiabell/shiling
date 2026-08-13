@@ -14,6 +14,7 @@ import {
   contentWithoutEvents,
   makeContent,
   withOrgans,
+  NEAR,
 } from "./fixtures.js";
 
 /** 不扣饱食的 content：测季推进/记录时不想被饿死打断。 */
@@ -37,7 +38,7 @@ describe("回合结算顺序：季推进", () => {
 
   it("非冬季只扣 hungerPerSeason", () => {
     const life = createLife(1, FIXTURE_SEED_ID, contentWithoutEvents());
-    const { state } = performAction(life, "explore", contentWithoutEvents());
+    const { state } = performAction(life, "explore", contentWithoutEvents(), NEAR);
     expect(state.hunger).toBe(60 - 12);
   });
 
@@ -45,7 +46,7 @@ describe("回合结算顺序：季推进", () => {
     const content = contentWithoutEvents();
     const life = createLife(1, FIXTURE_SEED_ID, content);
     const winter: TaleState = { ...life, season: 3 };
-    const { state } = performAction(winter, "explore", content);
+    const { state } = performAction(winter, "explore", content, NEAR);
     expect(state.hunger).toBe(60 - 12 - 6);
     // 结算完已跨到下一年的春天，但扣的是冬季的账
     expect(state.season).toBe(0);
@@ -55,7 +56,7 @@ describe("回合结算顺序：季推进", () => {
   it("饱食不会被扣成负数", () => {
     const content = contentWithoutEvents({ tuning: { hungerPerSeason: 500 } });
     const life = createLife(1, FIXTURE_SEED_ID, content);
-    const { state } = performAction(life, "explore", content);
+    const { state } = performAction(life, "explore", content, NEAR);
     expect(state.hunger).toBe(0);
   });
 
@@ -107,7 +108,7 @@ describe("回合结算顺序：事件抽取", () => {
     for (let seed = 0; seed < runs; seed += 1) {
       const life = createLife(seed * 977 + 1, FIXTURE_SEED_ID, content);
       if (performAction(life, "rest", content).pendingEvent) restHits += 1;
-      if (performAction(life, "explore", content).pendingEvent) exploreHits += 1;
+      if (performAction(life, "explore", content, NEAR).pendingEvent) exploreHits += 1;
     }
     expect(restHits / runs).toBeGreaterThan(0.14);
     expect(restHits / runs).toBeLessThan(0.27);
@@ -210,7 +211,7 @@ describe("回合结算顺序：records 与打戳", () => {
     const content = contentWithoutEvents({ tuning: { hungerPerSeason: 100 } });
     const life = createLife(1, FIXTURE_SEED_ID, content);
     const starving: TaleState = { ...life, flags: ["sys:starving"], season: 3, year: 2 };
-    const { state } = performAction(starving, "explore", content);
+    const { state } = performAction(starving, "explore", content, NEAR);
     const last = state.records[state.records.length - 1];
     expect(last?.kind).toBe("death");
     expect(last?.year).toBe(3);

@@ -45,6 +45,7 @@ import {
   contentWithoutEvents,
   enterCombat,
   makeContent,
+  NEAR,
 } from "./fixtures.js";
 
 const PLAIN = contentWithoutEvents();
@@ -145,9 +146,9 @@ describe("lifeTuning：调参覆写真的落在结算上", () => {
   it("`hungerPerSeason` 覆写改变真实季耗（不只是屏幕上那一行）", () => {
     const dry = withSky({ tuningDelta: { hungerPerSeason: 3 } });
     const before = createLife(1, FIXTURE_SEED_ID, dry);
-    const after = performAction({ ...before, hunger: 90 }, "explore", dry).state;
+    const after = performAction({ ...before, hunger: 90 }, "explore", dry, NEAR).state;
     const plainBefore = createLife(1, FIXTURE_SEED_ID, PLAIN);
-    const plainAfter = performAction({ ...plainBefore, hunger: 90 }, "explore", PLAIN).state;
+    const plainAfter = performAction({ ...plainBefore, hunger: 90 }, "explore", PLAIN, NEAR).state;
     expect(plainAfter.hunger - after.hunger).toBe(3);
   });
 

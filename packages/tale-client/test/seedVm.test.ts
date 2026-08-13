@@ -52,6 +52,8 @@ function bloodline(patch: Partial<Bloodline> = {}): Bloodline {
     knownSynergyIds: [],
     knownOrganIds: [],
     boonOrganId: null,
+    knownDestinationIds: [],
+    foundTreasureIds: [],
     ...patch,
   };
 }

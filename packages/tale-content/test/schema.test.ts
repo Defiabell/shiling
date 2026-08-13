@@ -27,12 +27,15 @@ import {
   ALL_TAGS,
   CHRONICLE_TEMPLATES,
   ENEMIES,
+  DESTINATIONS,
   EVENTS,
+  EXPLORE_BASE_EVENTS,
   EXPLORE_EVENTS,
   GENERIC_EVENTS,
   HUNT_EVENTS,
   ORGANS,
   ORIGINS,
+  PLACE_EVENTS,
   PREMISE_EVENTS,
   PREY_IDS,
   REST_EVENTS,
@@ -214,10 +217,13 @@ describe("引用完整性", () => {
 // ===== 2. 数量与分布（计划 B2 节的硬性清单） =====
 
 describe("数量与分布", () => {
-  it("51 事件，按 12／20／4／10／5 分池", () => {
-    expect(EVENTS.length).toBe(51);
+  it("70 事件，按 12／39／4／10／5 分池", () => {
+    expect(EVENTS.length).toBe(70);
     expect(HUNT_EVENTS.length).toBe(12);
-    expect(EXPLORE_EVENTS.length).toBe(20);
+    // [S2] 探索池 20 → 39：既有 20 条按地点重新归属，`places.ts` 按处补了 19 条
+    expect(EXPLORE_EVENTS.length).toBe(39);
+    expect(EXPLORE_BASE_EVENTS.length).toBe(20);
+    expect(PLACE_EVENTS.length).toBe(19);
     expect(REST_EVENTS.length).toBe(4);
     // [2026-08-13] 通用池 8 → 10：多了妖王与化灵两个成道出口（登神那个「天命」原本就在）
     expect(GENERIC_EVENTS.length).toBe(10);
@@ -612,6 +618,26 @@ describe("视觉 token", () => {
     "qiu-lone-winter",
     "qiu-twin-call",
     "qiu-twin-fall",
+    // [S2] 去处专属的 19 条（`events/places.ts`）—— 美术管线要单独跑一轮
+    "qiu-path-worn",
+    "qiu-tan-sunken",
+    "qiu-tan-scale-drift",
+    "qiu-tan-no-bottom",
+    "qiu-tan-heart-pearl",
+    "qiu-feng-eyrie",
+    "qiu-feng-gap",
+    "qiu-feng-cloud-root",
+    "qiu-ci-incense",
+    "qiu-ci-clay-figure",
+    "qiu-ci-slips",
+    "qiu-ku-blind-fish",
+    "qiu-ku-stone-teat",
+    "qiu-ku-old-mark",
+    "qiu-ku-earth-marrow",
+    "qiu-yuan-ash-egg",
+    "qiu-yuan-unburnt",
+    "qiu-yuan-great-bones",
+    "qiu-yuan-thunder-marrow",
   ]);
 
   it("每个事件的 illustration 都是 events/<id>.webp（B4 产出的命名约定）", () => {

@@ -26,6 +26,16 @@ export type WindDir = "into" | "cross" | "with";
 /** [M1-P1 正本] 追猎的四个动作：潜行／绕至上风／屏息等待／扑击。 */
 export type StalkAct = "creep" | "circle" | "wait" | "pounce";
 
+/**
+ * [S2] 一处探索去处的风险档：常路／险地／绝境。
+ *
+ * 三档不是形容词，是**三组数**（遇袭概率／远行的饱食代价／事件概率乘子），表在
+ * `TaleTuning.explorePeril`。之所以做成枚举而不是让每处自己写三个数：那样六处就有
+ * 十八个可以各自漂移的旋钮，而「去处之间的风险差」是这一批的主设计量 —— 它该在
+ * 一张表里一眼比得出来，调平衡也只调那一张表。
+ */
+export type PerilTier = "calm" | "wary" | "grim";
+
 // ===== 搏杀（M1-P2）=====
 
 /**
@@ -203,6 +213,75 @@ export interface SynergyDef {
    */
   reveal: string;
   desc: string;
+}
+
+// ===== 探索去处（S2）=====
+
+/**
+ * [S2] 一处去处的**专属秘藏** —— 那地方藏着的、只有到过才知道的东西。
+ *
+ * 与「组合（异变）」是同一条设计的两半：异变的**配方**隐藏、去处的**门槛**公开，
+ * 而秘藏反过来 —— 你早就知道幽潭要鳞甲＋浮鳔（那是欲望展示位，写着才会去凑），
+ * 但潭底有什么，不下去就不知道。「意料之外」在探索这一侧由它承担，
+ * 「情理之中」由 `reveal` 那一句承担（同 `SynergyDef.reveal`：因果排在名号之前）。
+ *
+ * 发现记录进 `Bloodline.foundTreasureIds`（跨世保留）。S3 的「图录」会消费它 ——
+ * 本批**只记不卖**。
+ */
+export interface TreasureDef {
+  id: string;
+  /** 秘藏名号：「渊心之珠」「雷髓」 */
+  name: string;
+  /** 揭示演出上那一句**因果**：为什么这地方会有这个东西 */
+  reveal: string;
+  /** 它是什么、给了什么（演出与图鉴共用一句） */
+  desc: string;
+}
+
+/**
+ * [S2] 一处探索去处 —— 「探索」那一次点击的真正对象。
+ *
+ * ## 为什么它不是一个 tag，而是一张表
+ * S2 之前「探索」是单按钮、单事件池、单风险：玩家点它的时候不做任何决定。这张表把
+ * 「往哪走」变成一道题，而题面必须**可读**（同 M1 追猎屏的铁律：没有预览的按钮＝翻牌）：
+ * 每一处的事件池、猎物表、风险档、秘藏都在这里声明，界面据 `destinationPreview` 把它们
+ * 全部摊在按钮上。
+ *
+ * ## 门槛是**公开**信息（与组合表刚好相反）
+ * `requiresOrganIds` 是「全部持有才进得去」。未开启的去处照样渲染、照样写明缺哪几件 ——
+ * 那是**欲望展示位**（同 M1 的置灰抉择、S1 的置灰技能）：玩家看得见幽潭要鳞甲＋浮鳔，
+ * 才会为了它去攒。把门槛也藏起来只会得到一排看不懂的灰按钮。
+ */
+export interface DestinationDef {
+  id: string;
+  /** 去处名号：「兽径」「幽潭」 */
+  name: string;
+  /** 一句地貌 —— 按钮上的常驻说明，也是 AI 生成事件的景物锚 */
+  desc: string;
+  /**
+   * 进得去的门槛：**全部**持有才开启（顺序无关）。空数组 ＝ 始终可去（兽径）。
+   *
+   * 两件以上即「由组合而非单件器官开启」（计划正本原话）—— 幽潭要鳞甲＋浮鳔，
+   * 秘窟要雾目＋夜瞳（与「夜猎之眼」同一副配方：同一对器官既开一手技，也开一处地）。
+   */
+  requiresOrganIds: readonly string[];
+  /** 风险档（数在 `TaleTuning.explorePeril`） */
+  peril: PerilTier;
+  /**
+   * 此地的兽 —— 遇袭时从这张表里加权摇一头。空表 ＝ 此地无袭（只有兽径够太平）。
+   *
+   * 「独立猎物表」的落点就是它：同一个「遇袭」在兽径是草狐，在秘窟是玄蟒。
+   */
+  denizens: readonly { enemyId: string; weight: number }[];
+  /** 专属秘藏（每处恰好一件；由此地某条 `once` 事件的 `findTreasureId` 兑现） */
+  treasure: TreasureDef;
+  /**
+   * 此地的景物词 —— **AI 生成事件的正文必须命中其一**（`tale-ai` 的第七道闸门）。
+   *
+   * 同 `PREMISE_KEYWORDS` 的办法：「写出该地的具体景物」若只写在 prompt 里，拿回来的
+   * 会是「你在林中走着」这种放在哪一处都成立的句子 —— 而那正是这一批要消灭的东西。
+   */
+  scenery: readonly string[];
 }
 
 /**
@@ -509,6 +588,18 @@ export interface EventTrigger {
   region: RegionId | "any";
   /** 缺省=任意行动后都可能触发 */
   actions?: ActionId[];
+  /**
+   * [S2] 这条事件属于哪几处去处（`DestinationDef.id`）。
+   *
+   * 语义：**声明了就只在那几处入池**；缺省 ＝ 与去处无关（哪一处探索之后都可能撞上）。
+   *
+   * 纪律（`tale-content` 的 schema 测试钉着）：`actions` 里显式含 `"explore"` 的事件
+   * **必须**声明它，且非空 —— 「独立事件池」是这一批的判据，一条忘了归属的探索事件
+   * 会在六处全部出现，那就是换皮而不是新世界，且不会有任何测试变红。
+   * 反过来，不声明 `actions` 的事件（季候本身的事）刻意**不许**声明它：那类事写的是
+   * 天气与时令，不是地方。
+   */
+  destinations?: readonly string[];
   minYear?: number;
   maxYear?: number;
   seasons?: Season[];
@@ -564,6 +655,15 @@ export interface EffectDelta {
    * 因缘只有内容知道，所以留这一个钩子。
    */
   devourDivine?: boolean;
+  /**
+   * [S2] 这个分支让玩家**得到了某处的秘藏**（`TreasureDef.id`），累进
+   * `TaleState.foundTreasureIds`，由客户端记进 `Bloodline.foundTreasureIds` 跨世保留。
+   *
+   * 引擎只记不判：秘藏本身的收益（精气／器官／寿元）照常写在同一个 `EffectDelta` 里，
+   * 这一位纯粹是「这一桩算不算发现」的钩子 —— 同 `takesLife`／`devourDivine` 的体例。
+   * 已经得过的秘藏不重复记（图鉴是集合，不是流水）。
+   */
+  findTreasureId?: string;
   /**
    * 与 `die: "ascend"` 配套：这一世是**由哪条道**成的。
    *
@@ -670,6 +770,21 @@ export interface Bloodline {
    * 一次性消费：`createLife` 用掉它之后由客户端清空（钱在买的那一刻就付了）。
    */
   boonOrganId: string | null;
+  /**
+   * [S2] 历代**到过**的去处（`DestinationDef.id`）—— 图鉴的「已至之地 N/M」。
+   *
+   * 与 `knownSynergyIds` 的分工：那一份记的是「凑出过什么」，这一份记的是「去过哪儿」。
+   * 两份都只增不减，都由客户端在发生的那一刻写档（不是死亡时才结算 —— 一世打到一半
+   * 刷新页面，去过的地方不该白去）。
+   */
+  knownDestinationIds: string[];
+  /**
+   * [S2] 历代**得过**的秘藏（`TreasureDef.id`）—— 图鉴的「秘藏 N/M」，未得的一格恒为「？」。
+   *
+   * S3 的「图录」会拿它当货架（花血统点让下一世直通某处秘境）。**本批只记不卖**：
+   * 消费项的价钱体系要与「血脉」「神种」一起排，混在这一批里排会排出第三份价目表。
+   */
+  foundTreasureIds: string[];
 }
 
 /**
@@ -819,6 +934,16 @@ export interface TaleState {
    * 同时是两条道的判据：妖王要它够多，化灵要它恒为 0 —— 一条轴的两端，一个计数器。
    */
   livesTaken: number;
+  /**
+   * [S2] 本世到过的去处（`DestinationDef.id`，按第一次去的先后）。
+   *
+   * 在 `TaleState` 而不是只在客户端：界面上「此地已至」那一笔必须能从 state 重建
+   * （同 `StalkState.windKnown` 那条教训 —— determinism 测试盯着「界面显示得出的东西
+   * 必须在状态里」）。跨世那一份由客户端抄进 `Bloodline.knownDestinationIds`。
+   */
+  visitedDestinationIds: string[];
+  /** [S2] 本世得到的秘藏（`TreasureDef.id`）。跨世那一份同上。 */
+  foundTreasureIds: string[];
   alive: boolean;
   ending: EndingType | null;
   /**
@@ -877,6 +1002,19 @@ export interface TaleTuning {
   eventChanceBase: number;
   /** 探索行动对抽中概率的倍率 */
   exploreEventBonus: number;
+  /**
+   * [S2] 三档风险各是什么数 —— 「去处之间的差别」的全部数值来源。
+   *
+   * - `ambushChance`：**本季没撞上事件时**才掷的遇袭概率（同狩猎「要么撞上事，要么起追」
+   *   的形状：两者占同一块中央舞台，不能并存）。摇到即从该处的 `denizens` 里挑一头开战。
+   * - `travelCost`：这一季额外扣的饱食（远行的路费）。它是「深处的东西凭什么更值钱」的
+   *   那一半 —— 没有它，越险的地方就只是白送。
+   * - `eventMul`：在 `exploreEventBonus` 之上再乘一道。险地事更密（去都去了）。
+   *
+   * ⚠️ 三档必须**单调**（越险越贵、事越密、越容易遇袭），schema 测试钉着这一条：
+   * 一处「更险但收益不变」的去处不是取舍，是陷阱。
+   */
+  explorePeril: Record<PerilTier, { ambushChance: number; travelCost: number; eventMul: number }>;
 
   // — 追猎（M1-P1）—
   //

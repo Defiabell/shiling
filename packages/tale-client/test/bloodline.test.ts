@@ -113,7 +113,7 @@ describe("parseBloodline", () => {
 describe("save／load 往返", () => {
   it("写进去再读出来是同一份", () => {
     const storage = new MemoryStorage();
-    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
+    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
     expect(saveBloodline(storage, bloodline)).toBe(true);
     expect(storage.getItem(BLOODLINE_KEY)).toBe(serializeBloodline(bloodline));
     expect(loadBloodline(storage, FIXTURE_CONTENT)).toEqual(bloodline);
@@ -159,7 +159,7 @@ describe("recordLife", () => {
 
 describe("unlockSeed", () => {
   it("点数够 → 扣点并加入已解锁", () => {
-    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
+    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
     const after = unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID);
     expect(after?.points).toBe(1);
     expect(after?.unlockedSeedIds).toContain(PAID_SEED.id);
@@ -167,12 +167,12 @@ describe("unlockSeed", () => {
   });
 
   it("点数不足 → null（调用方据此不扣点、不改状态）", () => {
-    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
+    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
     expect(unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
   });
 
   it("未知 id、免费种、已解锁都返回 null", () => {
-    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
+    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
     expect(unlockSeed(rich, "seed-nope", CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, FIXTURE_SEED_ID, CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();

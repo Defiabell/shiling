@@ -30,6 +30,7 @@ import type {
   CombatSkillCost,
   CombatSkillDef,
   CombatSkillEffect,
+  DestinationDef,
   EffectDelta,
   EnemyDef,
   EnemyIntent,
@@ -51,6 +52,7 @@ import type {
   Stats,
   SynergyDef,
   TaleEvent,
+  TreasureDef,
   TaleState,
   TaleTuning,
   WayGate,
@@ -81,6 +83,13 @@ export interface TaleContent {
    * 空的天时池会让 `createLife` 抛错，而空的组合表只是让图鉴显示「已知 0/0」。
    */
   synergies: SynergyDef[];
+  /**
+   * [S2] 探索去处表。**不得为空，且至少有一处无门槛**（`createLife` 不管，
+   * `exploreDestinations` 也不管 —— 但 `performAction("explore")` 会因为无处可去而
+   * 永远抛错）。内容侧的 schema 测试守着这两条：一个「探索按钮全灰」的版本
+   * 不会有任何引擎测试变红。
+   */
+  destinations: DestinationDef[];
   tuning: TaleTuning;
   /** 结构见 types.ts 的 ChronicleTemplates，composeChronicle 消费 */
   chronicleTemplates: ChronicleTemplates;
@@ -102,6 +111,25 @@ export interface TurnResult {
    * 引擎不认识 `Bloodline`，第二世重新凑齐同一条组合时它照样报，客户端据图鉴决定演出规格。
    */
   newSynergies: SynergyDef[];
+  /**
+   * [S2] 这一步**新得到**的秘藏（`TreasureDef`，按 `content.destinations` 顺序）。
+   *
+   * 语义与 `newSynergies` 严格同形（差集、引擎算、演出规格由客户端按图鉴定）——
+   * 两者是同一条设计的两半，形状不同只会让客户端写两套接线。
+   */
+  newTreasures: TreasureDef[];
+}
+
+/** [S2] `performAction` 的行动参数。今天只有探索需要它。 */
+export interface ActionOptions {
+  /**
+   * 去哪一处（`DestinationDef.id`）。
+   *
+   * **`explore` 必填**（缺省／不认识／门槛未达一律抛错），别的行动**必须不填**
+   * （填了也抛错）。刻意不做「不填就去兽径」的兜底：那会留下两套语义 ——
+   * 一个忘了传目的地的调用点会静默退回旧行为，而那正是这一批要消灭的东西。
+   */
+  destinationId?: string;
 }
 
 /**
@@ -129,6 +157,13 @@ export interface ChoiceResult {
   delta: EffectDelta;
   /** [S1] 这一次抉择（`addOrganId`）**新凑齐**的组合；语义同 `TurnResult.newSynergies` */
   newSynergies: SynergyDef[];
+  /**
+   * [S2] 这一次抉择（`findTreasureId`）**新得到**的秘藏；语义同 `TurnResult.newTreasures`。
+   *
+   * 秘藏事实上**只从这条路来**（秘藏挂在事件的某个结果分支上），`TurnResult` 那一份是
+   * 为了两条路形状一致 —— 客户端一处接线接住两边。
+   */
+  newTreasures: TreasureDef[];
 }
 
 /**
@@ -492,6 +527,9 @@ function draftOf(state: TaleState): TaleState {
     organIds: [...state.organIds],
     flags: [...state.flags],
     firedOnceIds: [...state.firedOnceIds],
+    // [S2] 两个新的可变容器 —— 漏拷会让「不改动入参」那条测试变红（同 M1-P2 的 intent）
+    visitedDestinationIds: [...state.visitedDestinationIds],
+    foundTreasureIds: [...state.foundTreasureIds],
     combat: state.combat
       ? {
           ...state.combat,
@@ -558,6 +596,120 @@ export function ownedSynergies(state: TaleState, content: TaleContent): SynergyD
 
 /** [S1] 组合技的 `skillId` 前缀 —— 器官 id 不许以它开头（内容 schema 测试盯着这条）。 */
 export const SYNERGY_SKILL_PREFIX = "syn:";
+
+// ===== 探索去处（S2）=====
+
+/**
+ * [S2] 一处去处摊开给玩家看的**全部**东西 —— 按钮上那几行字的唯一来源。
+ *
+ * 沿用 M1 追猎屏的铁律：没有预览的按钮＝翻牌。所以这里既有「去得了吗、缺什么」，
+ * 也有「去了大概会怎样」（遇事概率／遇袭概率／此地有什么／路费）。界面不许自己算
+ * 任何一项 —— 那会让屏幕上的数与引擎的数在下一次调参时分家。
+ */
+export interface DestinationPreview {
+  def: DestinationDef;
+  /** 门槛已达（或本就无门槛） */
+  unlocked: boolean;
+  /** 还缺哪几件器官（已开启则空数组）—— 界面按 `organIndex` 翻成名字 */
+  missingOrganIds: string[];
+  /** 这一季在此地撞上一桩事的概率（已含天时／出身的调参与该处的 `eventMul`） */
+  eventChance: number;
+  /**
+   * **没撞上事**时遇袭的概率（条件概率，不是每季的绝对值）。
+   *
+   * 界面必须照这个语义写字（「无事则约三成遇袭」），不能把它当成每季遇袭率 ——
+   * 那是界面替引擎许一个它不保证的诺（legibility 批次那条 Critical 的形状）。
+   */
+  ambushChance: number;
+  /** 此地的兽（按 `denizens` 权重降序）—— 「大概会遇到什么」 */
+  ambushEnemies: EnemyDef[];
+  /** 这一季净扣的饱食 ＝ 季耗（冬季加扣）＋ 此地路费 */
+  hungerCost: number;
+  /** 本世已到过此地 */
+  visited: boolean;
+  /** 本世已得此地秘藏（跨世那一份在 `Bloodline`，引擎不认识） */
+  treasureFound: boolean;
+}
+
+/** 去处查表（id → def）。 */
+export function destinationById(content: TaleContent, id: string): DestinationDef | null {
+  return content.destinations.find((destination) => destination.id === id) ?? null;
+}
+
+/** [S2] 门槛已达？无门槛（兽径）恒为真。 */
+function destinationUnlocked(state: TaleState, destination: DestinationDef): boolean {
+  const owned = new Set(state.organIds);
+  return destination.requiresOrganIds.every((id) => owned.has(id));
+}
+
+/**
+ * [S2] 全部去处的预览，**含未开启的**（按 `content.destinations` 顺序，恒定不重排）。
+ *
+ * 未开启的照样返回：它们是**欲望展示位**（同 M1 的置灰抉择、S1 的置灰技能）。
+ * 顺序恒按内容表，不因开启与否重排 —— 位置固定，玩家才记得住「第四格还差一件浮鳔」。
+ */
+export function exploreDestinations(state: TaleState, content: TaleContent): DestinationPreview[] {
+  return content.destinations.map((destination) => destinationPreview(state, content, destination));
+}
+
+/**
+ * [S2] 单处预览。
+ *
+ * @throws 传了不认识的 id（内容与界面对不上是 bug，不是可降级的输入）
+ */
+export function destinationPreview(
+  state: TaleState,
+  content: TaleContent,
+  destination: DestinationDef | string,
+): DestinationPreview {
+  const def =
+    typeof destination === "string" ? destinationById(content, destination) : destination;
+  if (!def) throw new Error(`destinationPreview: 未知去处 ${String(destination)}`);
+  const t = lifeTuning(state, content);
+  const peril = t.explorePeril[def.peril];
+  const owned = new Set(state.organIds);
+  const seasonCost = t.hungerPerSeason + (state.season === WINTER ? t.winterHungerExtra : 0);
+  const byWeight = [...def.denizens].sort((a, b) => b.weight - a.weight);
+  const ambushEnemies: EnemyDef[] = [];
+  for (const denizen of byWeight) {
+    const enemy = enemyById(content, denizen.enemyId);
+    if (enemy) ambushEnemies.push(enemy);
+  }
+  return {
+    def,
+    unlocked: destinationUnlocked(state, def),
+    missingOrganIds: def.requiresOrganIds.filter((id) => !owned.has(id)),
+    eventChance: exploreEventChance(t, def),
+    ambushChance: ambushEnemies.length === 0 ? 0 : peril.ambushChance,
+    ambushEnemies,
+    hungerCost: seasonCost + peril.travelCost,
+    visited: state.visitedDestinationIds.includes(def.id),
+    treasureFound: state.foundTreasureIds.includes(def.treasure.id),
+  };
+}
+
+/** 在某处探索时撞上事件的概率（预览与真跑共用一份算式 —— 预览不许自己再算一遍）。 */
+function exploreEventChance(t: TaleTuning, def: DestinationDef): number {
+  return clamp(t.eventChanceBase * t.exploreEventBonus * t.explorePeril[def.peril].eventMul, 0, 1);
+}
+
+/** [S2] 秘藏查表：全部去处的秘藏（按 `content.destinations` 顺序）。 */
+export function allTreasures(content: TaleContent): TreasureDef[] {
+  return content.destinations.map((destination) => destination.treasure);
+}
+
+/** [S2] 这一步**新得到**了哪些秘藏（差集，按 `content.destinations` 顺序）。 */
+function newTreasuresBetween(
+  before: TaleState,
+  after: TaleState,
+  content: TaleContent,
+): TreasureDef[] {
+  if (before.foundTreasureIds.length === after.foundTreasureIds.length) return [];
+  const had = new Set(before.foundTreasureIds);
+  return allTreasures(content).filter(
+    (treasure) => after.foundTreasureIds.includes(treasure.id) && !had.has(treasure.id),
+  );
+}
 
 /**
  * [S1] 这一步**新凑齐**了哪些组合（差集，按 `content.synergies` 顺序）。
@@ -915,6 +1067,10 @@ export function createLife(
       },
     ],
     livesTaken: 0,
+    // [S2] 每一世从零开始「去过哪儿／得过什么」—— 跨世那一份在 `Bloodline`（图鉴是记录，
+    // 不是解锁开关：上一世下过幽潭，不等于这一世的鳞甲长回来了）
+    visitedDestinationIds: [],
+    foundTreasureIds: [],
     alive: true,
     ending: null,
     wayAchieved: null,
@@ -1461,16 +1617,24 @@ function resolveMolt(
 
 // ===== 回合：事件抽取 =====
 
+/**
+ * @param destinationId 本回合探索去的是哪一处；非探索行动恒为 null。
+ *   带 `trigger.destinations` 的事件只在它列出的那几处入池 —— 那就是「独立事件池」。
+ */
 function matchesTrigger(
   state: TaleState,
   event: TaleEvent,
   action: ActionId,
   tags: Set<string>,
+  destinationId: string | null,
 ): boolean {
   const trigger = event.trigger;
   if (trigger.once && state.firedOnceIds.includes(event.id)) return false;
   if (trigger.region !== "any" && trigger.region !== state.region) return false;
   if (trigger.actions && !trigger.actions.includes(action)) return false;
+  if (trigger.destinations && (destinationId === null || !trigger.destinations.includes(destinationId))) {
+    return false;
+  }
   if (trigger.minYear !== undefined && state.year < trigger.minYear) return false;
   if (trigger.maxYear !== undefined && state.year > trigger.maxYear) return false;
   if (trigger.seasons && !trigger.seasons.includes(state.season)) return false;
@@ -1508,6 +1672,13 @@ function eventWeightMul(event: TaleEvent, premise: LifePremise): number {
   return mul;
 }
 
+/**
+ * 抽一桩事。
+ *
+ * [S2] 探索的概率与池子都按**去处**分叉：概率走 `exploreEventChance`（含该处的 `eventMul`），
+ * 池子走 `trigger.destinations`。两处共用一份算式与一份判据，`destinationPreview` 报给
+ * 玩家的就是这里真跑的数 —— 界面上的「遇事 七成」不是另算的。
+ */
 function drawEvent(
   draft: TaleState,
   cursor: RngCursor,
@@ -1515,15 +1686,17 @@ function drawEvent(
   t: TaleTuning,
   premise: LifePremise,
   action: ActionId,
+  destination: DestinationDef | null,
 ): TaleEvent | null {
-  const chance = clamp(
-    t.eventChanceBase * (action === "explore" ? t.exploreEventBonus : 1),
-    0,
-    1,
-  );
+  const chance = destination
+    ? exploreEventChance(t, destination)
+    : clamp(t.eventChanceBase, 0, 1);
   if (cursor.next() >= chance) return null;
   const tags = ownedTags(draft, content);
-  const pool = content.events.filter((event) => matchesTrigger(draft, event, action, tags));
+  const destinationId = destination?.id ?? null;
+  const pool = content.events.filter((event) =>
+    matchesTrigger(draft, event, action, tags, destinationId),
+  );
   return weightedPick(cursor, pool, (event) => event.trigger.weight * eventWeightMul(event, premise));
 }
 
@@ -1570,17 +1743,25 @@ function die(
  * （步骤 3〜5 全部推迟到 `stalkAct` 判出 `over` 的那一步，两处共用 `closeSeason`）。
  * 客户端据 `state.stalk` 切到追猎屏；`availableActions` 在追猎未收束时返回空数组。
  *
+ * ## S2 改动：探索必须说清「往哪走」
+ * `performAction(state, "explore", content, { destinationId })` —— 去处**必填**。
+ * 一个探索回合于是变成：落路费（`explorePeril.travelCost`）→ 记「到过此地」→ 抽此地的事
+ * → **没撞上事才掷遇袭**（同狩猎「要么撞上事，要么起追」的形状：事件卡与搏杀屏
+ * 占同一块中央舞台，不能并存）。遇袭从该处的 `denizens` 里加权摇一头。
+ *
  * ⚠️ **调用方纪律**：拿到非 null 的 `pendingEvent` 后必须先 `resolveChoice` 再进下一个
  * 回合。`TaleState` 没有承载未决事件的字段，引擎无从强制；直接再调 performAction 不会
  * 报错，事件会被静默丢掉。`once` 事件的 id 记在 `resolveChoice` 而不是抽取时，所以丢掉
  * 的稀有事件只是下一季可能重抽，不会本世永久消失。
  *
- * @throws 已死亡、战斗未结束、追猎未收束、或该行动当前不可用时抛错
+ * @throws 已死亡、战斗未结束、追猎未收束、该行动当前不可用、
+ *   或去处参数不合规（探索没给／给了不认识的／门槛未达／非探索行动给了）时抛错
  */
 export function performAction(
   state: TaleState,
   action: ActionId,
   content: TaleContent,
+  options: ActionOptions = {},
 ): TurnResult {
   if (!state.alive) throw new Error("performAction: 已死亡，不能行动");
   if (state.combat) throw new Error("performAction: 战斗未结束，先调 combatAct");
@@ -1588,6 +1769,7 @@ export function performAction(
   if (!availableActions(state, content).includes(action)) {
     throw new Error(`performAction: 当前不可执行行动 ${action}`);
   }
+  const destination = resolveDestinationArg(state, content, action, options.destinationId);
 
   const premise = premiseOf(state, content);
   const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
@@ -1602,7 +1784,7 @@ export function performAction(
     case "hunt":
       break;
     case "explore":
-      notices.push(ENGINE_MESSAGES.explore);
+      resolveTravel(draft, t, destination as DestinationDef, notices);
       break;
     case "rest":
       resolveRest(draft, t, notices);
@@ -1614,7 +1796,18 @@ export function performAction(
 
   // 2. 事件抽取（先刷新四道资格 flag，让本回合刚够格的成道事件当场入池，不白等一季）
   refreshWayFlags(draft, content);
-  const drawn = draft.combat ? null : drawEvent(draft, cursor, content, t, premise, action);
+  const drawn = draft.combat ? null : drawEvent(draft, cursor, content, t, premise, action, destination);
+
+  /*
+   * 2'. 探索：**本季没撞上事，才掷遇袭。**
+   *
+   * 排在事件抽取之后的理由与狩猎那一条同形（见下方 1'）：事件卡与搏杀屏占同一块中央
+   * 舞台。若遇袭掷在前面，险地那三成会先把此地的事件池挡掉三成 —— 而「深处的东西」
+   * 恰恰只在事件里，等于越险越看不到好东西。
+   */
+  if (action === "explore" && !drawn && destination) {
+    rollAmbush(draft, cursor, content, t, destination, notices);
+  }
 
   /*
    * 1'. 狩猎：**本季没撞上事，才起追。**
@@ -1633,8 +1826,15 @@ export function performAction(
   if (draft.stalk) {
     draft.records = [...state.records, ...records];
     draft.rngState = cursor.state;
-    // 起追这一步不可能获得器官，所以组合差集恒为空（省一次全表扫描）
-    return { state: draft, pendingEvent: null, notices, moltResult: null, newSynergies: [] };
+    // 起追这一步不可能获得器官或秘藏，所以两个差集恒为空（省两次全表扫描）
+    return {
+      state: draft,
+      pendingEvent: null,
+      notices,
+      moltResult: null,
+      newSynergies: [],
+      newTreasures: [],
+    };
   }
 
   closeSeason(draft, content, t, records);
@@ -1650,7 +1850,84 @@ export function performAction(
     notices,
     moltResult,
     newSynergies: newSynergiesBetween(state, draft, content),
+    // 秘藏只从事件的结果分支来，这一步恒为空 —— 留着是为了两条路形状一致（见字段注释）
+    newTreasures: newTreasuresBetween(state, draft, content),
   };
+}
+
+/**
+ * [S2] 校验并解析「去哪一处」这个参数。
+ *
+ * 四条全部抛错而不是兜底，理由是同一条：**兜底会留下第二套语义**。
+ * 尤其是「不填就去兽径」—— 一个漏改的调用点会静默退回 S2 之前的行为，
+ * 而那种退化不会有任何测试变红（`performAction` 照样返回一个合法的回合）。
+ */
+function resolveDestinationArg(
+  state: TaleState,
+  content: TaleContent,
+  action: ActionId,
+  destinationId: string | undefined,
+): DestinationDef | null {
+  if (action !== "explore") {
+    if (destinationId !== undefined) {
+      throw new Error(`performAction: ${action} 不接受去处参数（去处只属于探索）`);
+    }
+    return null;
+  }
+  if (destinationId === undefined) {
+    throw new Error("performAction: explore 必须指定去处（destinationId）");
+  }
+  const destination = destinationById(content, destinationId);
+  if (!destination) throw new Error(`performAction: 未知去处 ${destinationId}`);
+  if (!destinationUnlocked(state, destination)) {
+    throw new Error(`performAction: 去处 ${destinationId} 尚未开启`);
+  }
+  return destination;
+}
+
+/**
+ * [S2] 动身：落路费、记「到过此地」、给一句此地的旁白。
+ *
+ * **不掷任何骰** —— 路费与记档都是确定的，掷骰只发生在事件抽取与遇袭那两处。
+ * 「到过此地」记在第一次去的那一刻而不是收束时：一世走到一半刷新页面，去过的地方
+ * 不该白去（跨世那一份由客户端从这里抄进 `Bloodline`）。
+ */
+function resolveTravel(
+  draft: TaleState,
+  t: TaleTuning,
+  destination: DestinationDef,
+  notices: string[],
+): void {
+  const cost = t.explorePeril[destination.peril].travelCost;
+  if (cost > 0) draft.hunger = clamp(draft.hunger - cost, 0, t.hungerMax);
+  if (!draft.visitedDestinationIds.includes(destination.id)) {
+    draft.visitedDestinationIds = [...draft.visitedDestinationIds, destination.id];
+  }
+  notices.push(render(ENGINE_MESSAGES.explore, { place: destination.name }));
+}
+
+/**
+ * [S2] 遇袭：从此地的 `denizens` 加权摇一头开战。
+ *
+ * **恒定消耗一次抽取**（概率掷骰），命中才多消耗一次（加权挑兽）—— 与 `drawEvent`
+ * 同一种形状。空 `denizens`（兽径之外没有第二处这样）直接连概率骰都不掷：一处摇不出
+ * 敌人的地方掷一次骰再丢掉，只会让「抽取次数随内容变化」多一个隐形来源。
+ */
+function rollAmbush(
+  draft: TaleState,
+  cursor: RngCursor,
+  content: TaleContent,
+  t: TaleTuning,
+  destination: DestinationDef,
+  notices: string[],
+): void {
+  if (destination.denizens.length === 0) return;
+  if (cursor.next() >= t.explorePeril[destination.peril].ambushChance) return;
+  const picked = weightedPick(cursor, destination.denizens, (denizen) => denizen.weight);
+  const enemy = picked ? enemyById(content, picked.enemyId) : null;
+  if (!enemy) return;
+  notices.push(render(ENGINE_MESSAGES.exploreAmbush, { place: destination.name, enemy: enemy.name }));
+  beginCombat(draft, enemy, cursor, t);
 }
 
 // ===== 事件抉择 =====
@@ -1755,6 +2032,26 @@ function applyEffects(
   if (effects.devourDivine === true) {
     draft.flags = withFlags(draft.flags, [SYS_FLAG_DIVINE_EATEN]);
   }
+  /*
+   * [S2] 秘藏：只记「发现」这一位，收益照常写在同一个 EffectDelta 的别的字段里。
+   *
+   * 未知 id **抛错**（与 `addOrganId`／`startCombat` 同待遇）：一条写错了秘藏 id 的
+   * 内容会让图鉴上那一格永远是「？」，而玩家明明已经把它拿到手了 —— 那种失效是静默的。
+   */
+  if (effects.findTreasureId !== undefined) {
+    const treasure = allTreasures(content).find((item) => item.id === effects.findTreasureId);
+    if (!treasure) throw new Error(`applyEffects: 未知秘藏 ${effects.findTreasureId}`);
+    if (!draft.foundTreasureIds.includes(treasure.id)) {
+      draft.foundTreasureIds = [...draft.foundTreasureIds, treasure.id];
+      records.push({
+        year: draft.year,
+        season: draft.season,
+        kind: "event",
+        text: render(ENGINE_MESSAGES.treasureFound, { treasure: treasure.name }),
+        refId: treasure.id,
+      });
+    }
+  }
   if (effects.die !== undefined) {
     /*
      * 成道由哪条道兑现：内容显式写的 `way` 优先；没写就取「已够格且最接近的那条」。
@@ -1841,6 +2138,7 @@ export function resolveChoice(
     outcomeText: outcome.text,
     delta: cloneDelta(outcome.effects),
     newSynergies: newSynergiesBetween(state, draft, content),
+    newTreasures: newTreasuresBetween(state, draft, content),
   };
 }
 

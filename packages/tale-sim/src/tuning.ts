@@ -37,6 +37,26 @@ export const BASELINE_TUNING: TaleTuning = {
   exploreEventBonus: 2,
 
   /*
+   * 探索去处的三档风险（S2）。三列各自单调，且**每一列的差都要玩家读得出来**
+   * （按钮上写的就是这三个数换算成的话），所以刻意拉开而不是微调：
+   *
+   * | 档 | 遇袭（无事时） | 路费（饱食） | 事件乘子 | 读起来是 |
+   * |---|---|---|---|---|
+   * | calm 常路 | 0.06 | 0 | 1.0 | 兽径：走惯了，出不了大事也没什么好东西 |
+   * | wary 险地 | 0.18 | 6 | 1.15 | 幽潭／险峰／古祠：值得跑一趟 |
+   * | grim 绝境 | 0.32 | 12 | 1.3 | 秘窟／焦原：三次里有一次要打一架 |
+   *
+   * 遇袭那一档看着高，但它是**条件概率**（先要没抽中事件）—— 绝境的 `eventMul` 又把
+   * 「没抽中」压低，实际每季遇袭率约 0.32 × (1 − 0.35×2×1.3) ≈ 0.03〜0.1（受天时影响）。
+   * 复算工具：`pnpm -C packages/gen balance -- --lives 500`。
+   */
+  explorePeril: {
+    calm: { ambushChance: 0.06, travelCost: 0, eventMul: 1 },
+    wary: { ambushChance: 0.18, travelCost: 6, eventMul: 1.15 },
+    grim: { ambushChance: 0.32, travelCost: 12, eventMul: 1.3 },
+  },
+
+  /*
    * 追猎（M1-P1）。这组数被三条**手感**约束钉住，不是随手写的。**复算工具**：
    * `pnpm -C packages/gen balance -- --lab --lives 400`（追猎实验台：按打法×风向×build 拆表，
    * 末尾五条判据就是下面这三条的可执行版；括号里的数是它 400 场/格的实测值）：

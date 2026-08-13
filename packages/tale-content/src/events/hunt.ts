@@ -166,7 +166,7 @@ export const HUNT_EVENTS: readonly TaleEvent[] = [
     title: "绳套",
     body: "兽径当中横着一根麻绳，绳头系在弯下的树梢上，绳圈里搁着半块熏肉。你从没见过这样规整的东西——它太直了，直得不像山里长出来的。可肉香是真的。",
     illustration: "events/qiu-hunt-snare.webp",
-    illustrationBrief: `近景${VT.shengTao}横在窄兽径中央，绳索绷得笔直；${VT.self}在三步外压低身子嗅探。林间斜光打亮熏肉，其余处偏暗。`,
+    illustrationBrief: `近景${VT.shengTao}横在一条窄小径中央，绳索绷得笔直；${VT.self}在三步外压低身子嗅探。林间斜光打亮熏肉，其余处偏暗。`,
     choices: [
       {
         label: "取肉而食",

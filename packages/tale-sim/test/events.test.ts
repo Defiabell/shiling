@@ -25,6 +25,7 @@ import {
   contentWithoutEvents,
   makeContent,
   withOrgans,
+  NEAR,
 } from "./fixtures.js";
 
 const CONTENT = contentWithoutEvents();
@@ -289,7 +290,7 @@ describe("trigger 匹配", () => {
   it("actions 限定了触发行动", () => {
     const content = soloContent({ ...SPROUT, trigger: { region: "any", actions: ["rest"], weight: 1 } });
     expect(performAction(life(), "rest", content).pendingEvent).not.toBeNull();
-    expect(performAction(life(), "explore", content).pendingEvent).toBeNull();
+    expect(performAction(life(), "explore", content, NEAR).pendingEvent).toBeNull();
   });
 
   it("minYear / maxYear 限定岁数区间", () => {

@@ -35,6 +35,9 @@ export function emptyBloodline(content: TaleContent): Bloodline {
     knownSynergyIds: [],
     knownOrganIds: [],
     boonOrganId: null,
+    // [S2] 图鉴的另外两格：去过哪儿、得过什么秘藏。同样从零开始
+    knownDestinationIds: [],
+    foundTreasureIds: [],
   };
 }
 
@@ -100,7 +103,27 @@ export function parseBloodline(raw: string | null, content: TaleContent): Bloodl
   const boonOrganId =
     typeof boon === "string" && knownOrganIds.includes(boon) ? boon : null;
 
-  return { points, unlockedSeedIds, chronicle, knownSynergyIds, knownOrganIds, boonOrganId };
+  // [S2] 去处与秘藏同样与内容对账：悬空 id 会让图鉴「已至之地 4/6」虚高，而那四格里有一格
+  // 点开什么都没有。旧存档（S2 之前）没有这两个键 → 退回空，等于「这个玩家还没去过任何地方」
+  const knownDestinationIds = idList(
+    record.knownDestinationIds,
+    new Set(content.destinations.map((item) => item.id)),
+  );
+  const foundTreasureIds = idList(
+    record.foundTreasureIds,
+    new Set(content.destinations.map((item) => item.treasure.id)),
+  );
+
+  return {
+    points,
+    unlockedSeedIds,
+    chronicle,
+    knownSynergyIds,
+    knownOrganIds,
+    boonOrganId,
+    knownDestinationIds,
+    foundTreasureIds,
+  };
 }
 
 /** 存档里一串 id：只留内容库里还认得、且不重复的那些。 */
@@ -121,6 +144,8 @@ export function serializeBloodline(bloodline: Bloodline): string {
     knownSynergyIds: bloodline.knownSynergyIds,
     knownOrganIds: bloodline.knownOrganIds,
     boonOrganId: bloodline.boonOrganId,
+    knownDestinationIds: bloodline.knownDestinationIds,
+    foundTreasureIds: bloodline.foundTreasureIds,
   });
 }
 
@@ -186,6 +211,31 @@ export function noteSynergies(bloodline: Bloodline, synergyIds: readonly string[
   const fresh = synergyIds.filter((id) => !bloodline.knownSynergyIds.includes(id));
   if (fresh.length === 0) return bloodline;
   return { ...bloodline, knownSynergyIds: [...bloodline.knownSynergyIds, ...fresh] };
+}
+
+/**
+ * [S2] 记下这一世**到过的去处与得到的秘藏**（纯，幂等）。
+ *
+ * 语义与 `noteSynergies` 同形：集合、只增、没有新东西就返回同一个引用（调用方据此决定
+ * 要不要写存档）。两样一起收是因为它们来自同一个地方（`TaleState` 的两个数组）——
+ * 分成两个函数会让客户端在**每一次行动之后**都要记得调两次，而漏调一次的后果是
+ * 图鉴与实际玩过的不一致，且不会有任何测试变红。
+ *
+ * ⚠️ 调用时机是**每一步之后**（不是死亡结算时）：一世打到一半刷新页面，去过的地方不该白去。
+ */
+export function noteExploration(
+  bloodline: Bloodline,
+  destinationIds: readonly string[],
+  treasureIds: readonly string[],
+): Bloodline {
+  const freshPlaces = destinationIds.filter((id) => !bloodline.knownDestinationIds.includes(id));
+  const freshTreasures = treasureIds.filter((id) => !bloodline.foundTreasureIds.includes(id));
+  if (freshPlaces.length === 0 && freshTreasures.length === 0) return bloodline;
+  return {
+    ...bloodline,
+    knownDestinationIds: [...bloodline.knownDestinationIds, ...freshPlaces],
+    foundTreasureIds: [...bloodline.foundTreasureIds, ...freshTreasures],
+  };
 }
 
 /**

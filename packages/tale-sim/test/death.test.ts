@@ -28,6 +28,7 @@ import {
   enterStalk,
   makeContent,
   withOrgans,
+  NEAR,
 } from "./fixtures.js";
 
 describe("饿死：必须连续两季", () => {
@@ -35,7 +36,7 @@ describe("饿死：必须连续两季", () => {
 
   it("第一季饱食归零只挂 starving，人还活着", () => {
     const life = createLife(1, FIXTURE_SEED_ID, HARSH);
-    const { state } = performAction(life, "explore", HARSH);
+    const { state } = performAction(life, "explore", HARSH, NEAR);
     expect(state.hunger).toBe(0);
     expect(state.alive).toBe(true);
     expect(state.flags).toContain(SYS_FLAG_STARVING);
@@ -43,8 +44,8 @@ describe("饿死：必须连续两季", () => {
 
   it("连续第二季仍归零才饿死", () => {
     const life = createLife(1, FIXTURE_SEED_ID, HARSH);
-    const first = performAction(life, "explore", HARSH).state;
-    const second = performAction(first, "explore", HARSH).state;
+    const first = performAction(life, "explore", HARSH, NEAR).state;
+    const second = performAction(first, "explore", HARSH, NEAR).state;
     expect(second.alive).toBe(false);
     expect(second.ending).toBe("starve");
     const last = second.records[second.records.length - 1];
@@ -57,14 +58,14 @@ describe("饿死：必须连续两季", () => {
       tuning: { hungerPerSeason: 60, winterHungerExtra: 0, restHungerGain: 70 },
     });
     const life = createLife(1, FIXTURE_SEED_ID, forgiving);
-    const starving = performAction(life, "explore", forgiving).state;
+    const starving = performAction(life, "explore", forgiving, NEAR).state;
     expect(starving.flags).toContain(SYS_FLAG_STARVING);
 
     const recovered = performAction(starving, "rest", forgiving).state;
     expect(recovered.hunger).toBeGreaterThan(0);
     expect(recovered.flags).not.toContain(SYS_FLAG_STARVING);
 
-    const starvingAgain = performAction(recovered, "explore", forgiving).state;
+    const starvingAgain = performAction(recovered, "explore", forgiving, NEAR).state;
     expect(starvingAgain.alive).toBe(true);
     expect(starvingAgain.flags).toContain(SYS_FLAG_STARVING);
   });
@@ -73,7 +74,7 @@ describe("饿死：必须连续两季", () => {
     const exact = contentWithoutEvents({ tuning: { hungerPerSeason: 60 } });
     const life = createLife(1, FIXTURE_SEED_ID, exact);
     const state: TaleState = { ...life, hunger: 60, flags: [SYS_FLAG_STARVING] };
-    expect(performAction(state, "explore", exact).state.ending).toBe("starve");
+    expect(performAction(state, "explore", exact, NEAR).state.ending).toBe("starve");
   });
 });
 
@@ -84,7 +85,7 @@ describe("寿终（oldage）", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CALM);
     expect(life.lifespanMax).toBe(18);
     const old: TaleState = { ...life, year: 18, season: 3 };
-    const { state } = performAction(old, "explore", CALM);
+    const { state } = performAction(old, "explore", CALM, NEAR);
     expect(state.year).toBe(19);
     expect(state.alive).toBe(false);
     expect(state.ending).toBe("oldage");
@@ -99,7 +100,7 @@ describe("寿终（oldage）", () => {
   it("year 恰等于 lifespanMax 还活着", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CALM);
     const old: TaleState = { ...life, year: 17, season: 3 };
-    const { state } = performAction(old, "explore", CALM);
+    const { state } = performAction(old, "explore", CALM, NEAR);
     expect(state.year).toBe(18);
     expect(state.alive).toBe(true);
   });
@@ -107,7 +108,7 @@ describe("寿终（oldage）", () => {
   it("lifespan effects 延寿后不再寿终", () => {
     const life = createLife(1, FIXTURE_SEED_ID, CALM);
     const old: TaleState = { ...life, year: 18, season: 3, lifespanMax: 20 };
-    expect(performAction(old, "explore", CALM).state.alive).toBe(true);
+    expect(performAction(old, "explore", CALM, NEAR).state.alive).toBe(true);
   });
 });
 
@@ -159,8 +160,9 @@ describe("死亡覆盖未结算的东西", () => {
       { ...life, flags: [SYS_FLAG_STARVING] },
       "explore",
       content,
+      NEAR,
     ).state;
-    expect(() => performAction(dead, "explore", content)).toThrow(/已死亡/);
+    expect(() => performAction(dead, "explore", content, NEAR)).toThrow(/已死亡/);
   });
 });
 
@@ -179,17 +181,17 @@ describe("登神（ascend）", () => {
       stats: { meng: 10, ling: CONTENT.tuning.wayShenLing, ti: 20, de: CONTENT.tuning.wayShenDe },
     };
     // 灵德都够，但没尝过神兽
-    expect(performAction(nearly, "explore", CONTENT).state.flags).not.toContain(
+    expect(performAction(nearly, "explore", CONTENT, NEAR).state.flags).not.toContain(
       SYS_FLAG_ASCEND_READY,
     );
     const ready: TaleState = { ...nearly, flags: [...nearly.flags, SYS_FLAG_DIVINE_EATEN] };
-    expect(performAction(ready, "explore", CONTENT).state.flags).toContain(SYS_FLAG_ASCEND_READY);
+    expect(performAction(ready, "explore", CONTENT, NEAR).state.flags).toContain(SYS_FLAG_ASCEND_READY);
     // 德差一点就不够 —— 德是这条道实测的瓶颈
     const shortOfDe: TaleState = {
       ...ready,
       stats: { ...ready.stats, de: CONTENT.tuning.wayShenDe - 1 },
     };
-    expect(performAction(shortOfDe, "explore", CONTENT).state.flags).not.toContain(
+    expect(performAction(shortOfDe, "explore", CONTENT, NEAR).state.flags).not.toContain(
       SYS_FLAG_ASCEND_READY,
     );
   });

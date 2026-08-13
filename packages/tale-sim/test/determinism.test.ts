@@ -9,6 +9,7 @@ import {
   composeChronicle,
   createLife,
   eligibleChoiceIdxs,
+  exploreDestinations,
   performAction,
   resolveChoice,
   stalkAct,
@@ -100,6 +101,26 @@ function decideStalk(state: TaleState, content: TaleContent): StalkAct {
 }
 
 /**
+ * [S2] 「往哪走」的**完全确定**策略：在开得了的去处里按回合数轮转。
+ *
+ * 轮转而不是「恒去第一处」：确定性回归的价值在于**覆盖分支**，而恒去兽径会让路费、
+ * 遇袭、以及带门槛去处的整条路径一次都走不到（那正是这一批新加的东西）。
+ * 非探索行动一律返回 `undefined` —— 引擎对「非探索却给了去处」抛错，这里顺带钉住那条契约。
+ */
+function scriptedDestination(
+  state: TaleState,
+  content: TaleContent,
+  action: ActionId,
+  turn: number,
+): { destinationId: string } | undefined {
+  if (action !== "explore") return undefined;
+  const open = exploreDestinations(state, content).filter((entry) => entry.unlocked);
+  const picked = open[turn % Math.max(1, open.length)] ?? open[0];
+  if (picked === undefined) throw new Error("确定性回归：一处去处都开不了");
+  return { destinationId: picked.def.id };
+}
+
+/**
  * 用**完全确定的策略**打完一世（不掷骰选行动，只按步数轮转），
  * 于是唯一的随机来源就是 state.rngState —— 正好可以拿来做确定性回归。
  */
@@ -138,7 +159,7 @@ function playLife(
     const action: ActionId = actions.includes("dormant")
       ? "dormant"
       : (actions[turn % actions.length] ?? "rest");
-    const result = performAction(state, action, content);
+    const result = performAction(state, action, content, scriptedDestination(state, content, action, turn));
     state = result.state;
     log.push(...result.notices);
     if (result.moltResult) log.push(`molt:${result.moltResult.chosen.id}`);
@@ -184,7 +205,7 @@ function huntOnly(
     const action: ActionId = availableActions(state, content).includes("dormant")
       ? "dormant"
       : "hunt";
-    state = performAction(state, action, content).state;
+    state = performAction(state, action, content, scriptedDestination(state, content, action, step)).state;
     step += 1;
   }
   return { state, steps: step };
@@ -376,6 +397,7 @@ describe("禁用 API 纪律（源码扫描）", () => {
   it("fixture 与真内容形状一致（B2 交接的形状契约）", () => {
     expect(Object.keys(FIXTURE_CONTENT).sort()).toEqual([
       "chronicleTemplates",
+      "destinations",
       "enemies",
       "events",
       "organs",
@@ -392,5 +414,7 @@ describe("禁用 API 纪律（源码扫描）", () => {
     expect(FIXTURE_CONTENT.organs).toHaveLength(4);
     expect(FIXTURE_CONTENT.enemies).toHaveLength(2);
     expect(FIXTURE_CONTENT.seeds).toHaveLength(1);
+    // [S2] 两处去处：一处无门槛无兽（既有断言的基线），一处要疾足且是绝境
+    expect(FIXTURE_CONTENT.destinations).toHaveLength(2);
   });
 });

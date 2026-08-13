@@ -43,8 +43,8 @@ function exists(url: string): boolean {
 
 describe("美术资源接线", () => {
   /**
-   * [2026-08-13] 44 → 51 个事件，其中 **7 条还没有图**（这一批新加的两个成道出口
-   * ＋五条开局变量专属线；美术管线要单独跑一轮）。
+   * [S2] 51 → 70 个事件，其中 **26 条还没有图**：7 条旧的（两个成道出口 ＋ 五条开局变量
+   * 专属线）＋ 19 条去处专属（`events/places.ts`）。美术管线要单独跑一轮。
    *
    * 白名单逐条列名而不是把断言放宽成「有图的才检查」：放宽等于给「以后某次改名把一批图
    * 变成孤儿」留了藏身处。名单只许收敛 —— 补图之后把 id 从这里删掉，这条测试会立刻要求
@@ -58,11 +58,31 @@ describe("美术资源接线", () => {
     "qiu-lone-winter",
     "qiu-twin-call",
     "qiu-twin-fall",
+    // [S2] 去处专属的 19 条（`events/places.ts`）—— 美术管线要单独跑一轮
+    "qiu-path-worn",
+    "qiu-tan-sunken",
+    "qiu-tan-scale-drift",
+    "qiu-tan-no-bottom",
+    "qiu-tan-heart-pearl",
+    "qiu-feng-eyrie",
+    "qiu-feng-gap",
+    "qiu-feng-cloud-root",
+    "qiu-ci-incense",
+    "qiu-ci-clay-figure",
+    "qiu-ci-slips",
+    "qiu-ku-blind-fish",
+    "qiu-ku-stone-teat",
+    "qiu-ku-old-mark",
+    "qiu-ku-earth-marrow",
+    "qiu-yuan-ash-egg",
+    "qiu-yuan-unburnt",
+    "qiu-yuan-great-bones",
+    "qiu-yuan-thunder-marrow",
   ]);
 
   it("有图的事件其文件都真在磁盘上（7 条待补图的在白名单里）", () => {
     const events = TALE_CONTENT.events;
-    expect(events.length).toBe(51);
+    expect(events.length).toBe(70);
     const withArt = events.filter((event) => !EVENTS_AWAITING_ART.has(event.id));
     expect(withArt).toHaveLength(44);
     const missing = withArt.filter(

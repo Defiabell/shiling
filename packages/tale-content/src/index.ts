@@ -22,6 +22,7 @@
 
 import type { TaleContent } from "@shiling/tale-sim";
 import { CHRONICLE_TEMPLATES } from "./chronicle.js";
+import { DESTINATIONS } from "./destinations.js";
 import { ENEMIES } from "./enemies.js";
 import { EVENTS } from "./events/index.js";
 import { ORIGINS, SKIES } from "./premises.js";
@@ -45,11 +46,27 @@ export const TALE_CONTENT: TaleContent = {
   skies: [...SKIES],
   origins: [...ORIGINS],
   synergies: [...SYNERGIES],
+  destinations: [...DESTINATIONS],
   tuning: TUNING,
   chronicleTemplates: CHRONICLE_TEMPLATES,
 };
 
 export { CHRONICLE_TEMPLATES } from "./chronicle.js";
+export {
+  DESTINATIONS,
+  DEST_GU_CI,
+  DEST_JIAO_YUAN,
+  DEST_MI_KU,
+  DEST_SHOU_JING,
+  DEST_XIAN_FENG,
+  DEST_YOU_TAN,
+  TREASURE_DI_XIN,
+  TREASURE_LEI_SUI,
+  TREASURE_LU_HEN,
+  TREASURE_YUAN_ZHU,
+  TREASURE_YUN_GEN,
+  TREASURE_ZHU_JIAN,
+} from "./destinations.js";
 export { ENEMIES, PREY_IDS } from "./enemies.js";
 export {
   ENEMY_CAO_HU,
@@ -63,9 +80,11 @@ export {
 } from "./enemies.js";
 export {
   EVENTS,
+  EXPLORE_BASE_EVENTS,
   EXPLORE_EVENTS,
   GENERIC_EVENTS,
   HUNT_EVENTS,
+  PLACE_EVENTS,
   PREMISE_EVENTS,
   REST_EVENTS,
 } from "./events/index.js";

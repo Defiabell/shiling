@@ -37,6 +37,7 @@ import {
   createCursor,
   createLife,
   eligibleChoiceIdxs,
+  exploreDestinations,
   performAction,
   resolveChoice,
   stalkAct,
@@ -48,6 +49,7 @@ import {
   type EndingType,
   type StalkAct,
   type TaleEvent,
+  type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
 import { SEED_CHANG_TAI, TALE_CONTENT } from "@shiling/tale-content";
@@ -154,7 +156,15 @@ function playLife(seed: number, profile: Profile): TaleState {
       state = stalkAct(state, decideStalk(state, profile), CONTENT).state;
       continue;
     }
-    const turn = performAction(state, decideAction(state, availableActions(state, CONTENT), profile, roll), CONTENT);
+    const action = decideAction(state, availableActions(state, CONTENT), profile, roll);
+    // [S2] 探索要指定去处：这两个 lab 只关心「文案够不够多」，所以恒去开得了的最深一处
+    // （深处的事件池是这一批新写的，量文案量的就该是它们）
+    const turn = performAction(
+      state,
+      action,
+      CONTENT,
+      action === "explore" ? { destinationId: deepestOpen(state, CONTENT) } : undefined,
+    );
     state = turn.state;
     const event = turn.pendingEvent;
     if (!event || !state.alive) continue;
@@ -379,3 +389,11 @@ async function main(): Promise<number> {
 }
 
 process.exitCode = await main();
+
+/** [S2] 开得了的最深一处（`content.destinations` 由浅入深排）。 */
+function deepestOpen(state: TaleState, content: TaleContent): string {
+  const open = exploreDestinations(state, content).filter((entry) => entry.unlocked);
+  const picked = open[open.length - 1];
+  if (picked === undefined) throw new Error("lab：一处去处都开不了");
+  return picked.def.id;
+}

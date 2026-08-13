@@ -31,6 +31,7 @@ import {
   makeSynergy,
   organWithSkill,
   withOrgans,
+  NEAR,
 } from "./fixtures.js";
 
 const CONTENT = contentWithoutEvents();
@@ -145,9 +146,9 @@ describe("sys: 保留 flag 命名空间", () => {
     const harsh = contentWithoutEvents({ tuning: { hungerPerSeason: 60 } });
     const cheat = effectEvent({ addFlags: [SYS_FLAG_STARVING] });
     const cheated = resolveChoice(createLife(1, FIXTURE_SEED_ID, harsh), cheat, 0, harsh).state;
-    const first = performAction(cheated, "explore", harsh).state;
+    const first = performAction(cheated, "explore", harsh, NEAR).state;
     expect(first.alive).toBe(true); // 第一季只挂旗
-    expect(performAction(first, "explore", harsh).state.ending).toBe("starve");
+    expect(performAction(first, "explore", harsh, NEAR).state.ending).toBe("starve");
   });
 });
 

@@ -11,6 +11,7 @@ import {
   enterCombat,
   enterStalk,
   makeContent,
+  NEAR,
 } from "./fixtures.js";
 
 const NO_EVENTS = contentWithoutEvents();
@@ -150,10 +151,11 @@ describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
 });
 
 describe("探索与休憩", () => {
-  it("探索只给旁白，本身不改数值", () => {
+  it("探索去常路：只给旁白（带去处名），本身不改数值", () => {
     const life = createLife(5, FIXTURE_SEED_ID, NO_EVENTS);
-    const { state, notices } = performAction(life, "explore", NO_EVENTS);
-    expect(notices.join("")).toContain("旧径");
+    const { state, notices } = performAction(life, "explore", NO_EVENTS, NEAR);
+    // [S2] 旁白带去处名：一世每季都在选一处，日志里不写去了哪儿就复盘不出因果
+    expect(notices.join("")).toContain("近野");
     expect(state.hunger).toBe(60 - 12);
     expect(state.stats).toEqual(life.stats);
     expect(state.essence).toEqual(life.essence);

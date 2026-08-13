@@ -31,6 +31,7 @@ import {
   createCursor,
   createLife,
   eligibleChoiceIdxs,
+  exploreDestinations,
   performAction,
   resolveChoice,
   stalkAct,
@@ -305,6 +306,33 @@ function decideAction(
 }
 
 /**
+ * [S2] 「往哪走」——**按画像分叉**，因为这一批新加的取舍恰好就在这里。
+ *
+ * | 画像 | 去哪 | 它在量什么 |
+ * |---|---|---|
+ * | `cautious` | 恒去第一处（兽径：无门槛、无路费、几乎无袭） | 只走常路的下限 |
+ * | `reckless` | 恒去**开得了的最深一处**（路费 12、三成遇袭） | 只走绝境的上限 |
+ * | `random`／`wayseek` | 开得了的里面等概率挑 | 中间态与四道成道率 |
+ *
+ * `content.destinations` 按由浅入深排（`destinations.ts` 的表头写了这条顺序），所以
+ * 「第一处」与「最后一处」就是这两端。分叉的意义是：**去处的风险差要在平衡数据上看得出来**
+ * —— 若 cautious 与 reckless 的活过 8 岁没有差别，那三档风险就是白设的。
+ *
+ * `wayseek` 刻意**不是**「恒去最深」：四条道的门槛散在不同的地方（登神的 `divine` 在焦原的
+ * 应龙，归山的德在古祠，化灵的灵在幽潭），恒去一处会让另外三条道的门槛量不到 ——
+ * 实测那正是第一版登神成道率掉到 **0.2%** 的原因之一（另一半是焦原的门槛，
+ * 见 `tale-content/src/destinations.ts` 焦原那一段）。
+ */
+function decideDestination(state: TaleState, profile: Profile, roll: () => number): string {
+  const open = exploreDestinations(state, CONTENT).filter((entry) => entry.unlocked);
+  const first = open[0];
+  if (first === undefined) throw new Error("平衡：一处去处都开不了（内容库缺无门槛的那一处）");
+  if (profile === "cautious") return first.def.id;
+  if (profile === "reckless") return (open[open.length - 1] ?? first).def.id;
+  return (open[Math.floor(roll() * open.length)] ?? first).def.id;
+}
+
+/**
  * 「奔某条道」的抉择偏好：按 outcome 声明的 effects 给每个抉择打分，挑分最高的。
  *
  * 它只读**内容自己声明的 effects**（与玩家读得到的抉择文案同源），不碰引擎内部 ——
@@ -569,7 +597,12 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     );
     if (action === "rest") restsThisInjury += 1;
     decisions.action += 1;
-    const turn = performAction(state, action, CONTENT);
+    const turn = performAction(
+      state,
+      action,
+      CONTENT,
+      action === "explore" ? { destinationId: decideDestination(state, profile, roll) } : undefined,
+    );
     chars.prose += turn.notices.join("").length;
     state = turn.state;
     const event = turn.pendingEvent;

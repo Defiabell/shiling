@@ -17,6 +17,7 @@ import {
   type CombatSkillDef,
   type CombatSkillEffect,
   type CombatState,
+  type DestinationDef,
   type EnemyDef,
   type OrganDef,
   type PremiseDef,
@@ -329,6 +330,62 @@ export const FIXTURE_ORIGIN: PremiseDef = {
   weight: 1,
 };
 
+/**
+ * [S2] fixture 的探索去处：**两处**（够小、够极端）。
+ *
+ * - `DEST_NEAR` 无门槛、`calm`、**无兽**（`denizens: []`）—— 于是既有的探索断言不会被
+ *   遇袭掷骰打乱，且它是「摇不出敌人的地方连概率骰都不掷」那条分支的用例。
+ * - `DEST_FAR` 要疾足、`grim`、只有一头穷奇 —— 门槛、路费、遇袭三条都能在它身上钉死。
+ *
+ * 秘藏两件，各自的 id 在下面导出：`applyEffects` 的 `findTreasureId` 只认它们。
+ */
+export const DEST_NEAR = "dest-near";
+export const DEST_FAR = "dest-far";
+export const TREASURE_NEAR = "treasure-near";
+export const TREASURE_FAR = "treasure-far";
+
+/**
+ * 「去近野」这个行动参数 —— 既有的探索断言一律改用它。
+ *
+ * 抽成常量而不是每处写 `{ destinationId: DEST_NEAR }`：这些断言测的都不是去处本身
+ * （是季推进、饿死、事件概率…），近野的定义是「不改变任何既有量的那一处」——
+ * 无门槛、无路费、无兽，于是它们的期望值一个字都不用改。
+ */
+export const NEAR = { destinationId: "dest-near" } as const;
+
+export const FIXTURE_DESTINATIONS: DestinationDef[] = [
+  {
+    id: DEST_NEAR,
+    name: "近野",
+    desc: "测试用的常路：无门槛、无兽。",
+    requiresOrganIds: [],
+    peril: "calm",
+    denizens: [],
+    treasure: {
+      id: TREASURE_NEAR,
+      name: "近野之秘",
+      reveal: "走得多了自然看得见。",
+      desc: "测试用的秘藏。",
+    },
+    scenery: ["野"],
+  },
+  {
+    id: DEST_FAR,
+    name: "远地",
+    desc: "测试用的绝境：要疾足才去得了。",
+    requiresOrganIds: [ORGAN_JI_ZU],
+    peril: "grim",
+    denizens: [{ enemyId: ENEMY_QIONG_QI, weight: 1 }],
+    treasure: {
+      id: TREASURE_FAR,
+      name: "远地之秘",
+      reveal: "去得了的人少，所以还在。",
+      desc: "测试用的秘藏。",
+    },
+    scenery: ["远"],
+  },
+];
+
 /** fixture 内容聚合体，形状与 B2 的 `TALE_CONTENT` 一致。 */
 export const FIXTURE_CONTENT: TaleContent = {
   events: FIXTURE_EVENTS,
@@ -340,6 +397,7 @@ export const FIXTURE_CONTENT: TaleContent = {
   // [S1] 缺省**没有**组合：既有的两百多条搏杀断言都建立在「技能池里只有器官技」之上。
   // 组合的机制由专测用 `makeContent({ synergies: [...] })` 显式声明（同 fixture 天时的理由）。
   synergies: [],
+  destinations: FIXTURE_DESTINATIONS,
   tuning: FIXTURE_TUNING,
   chronicleTemplates: FIXTURE_CHRONICLE,
 };
@@ -353,6 +411,7 @@ export interface ContentOverrides {
   skies?: PremiseDef[];
   origins?: PremiseDef[];
   synergies?: SynergyDef[];
+  destinations?: DestinationDef[];
   tuning?: Partial<TaleTuning>;
   chronicleTemplates?: ChronicleTemplates;
 }
@@ -370,6 +429,7 @@ export function makeContent(overrides: ContentOverrides = {}): TaleContent {
     skies: overrides.skies ?? FIXTURE_CONTENT.skies,
     origins: overrides.origins ?? FIXTURE_CONTENT.origins,
     synergies: overrides.synergies ?? FIXTURE_CONTENT.synergies,
+    destinations: overrides.destinations ?? FIXTURE_CONTENT.destinations,
     tuning: { ...FIXTURE_CONTENT.tuning, ...overrides.tuning },
     chronicleTemplates: overrides.chronicleTemplates ?? FIXTURE_CONTENT.chronicleTemplates,
   };

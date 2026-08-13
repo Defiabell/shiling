@@ -32,6 +32,7 @@ import {
   createCursor,
   createLife,
   eligibleChoiceIdxs,
+  exploreDestinations,
   performAction,
   recommendCombatAct,
   resolveChoice,
@@ -172,6 +173,31 @@ function pickChoice(
   return eligible[Math.floor(roll() * eligible.length)] ?? eligible[0] ?? 0;
 }
 
+/**
+ * [S2] 「往哪走」的机器玩家策略。
+ *
+ * 两条，都对得上一个明理玩家会做的事：
+ * 1. **饿了走常路**：饱食 ≤40 时挑第一处（`content.destinations` 按由浅入深排，
+ *    第一处恒是无门槛无路费的兽径）—— 远行的路费在快饿死时是致命的。
+ * 2. **否则在开得了的去处里等概率挑一处**：刻意不「总去最深的」——那样兽径的九条事件
+ *    在有疾足的一世里再也撞不到，而这份冒烟的头号指标就是**事件覆盖率**。
+ *
+ * ⚠️ 这是**策略**不是规则，所以它在这里而不在引擎里。界面刻意**不给**目的地推荐
+ * （与追猎／搏杀不同）：那两处有唯一最优解，而「往哪走」的答案取决于这一世想要什么。
+ */
+function decideDestination(state: TaleState, roll: () => number): string {
+  const open = exploreDestinations(state, CONTENT).filter((entry) => entry.unlocked);
+  const first = open[0];
+  if (first === undefined) throw new Error("冒烟：一处去处都开不了（内容库缺无门槛的那一处）");
+  if (state.hunger <= 40) return first.def.id;
+  // 好奇：这一世还没去过的地方优先。刚开出一处新去处就去看看，是玩家真会做的事，
+  // 也是这份冒烟的头号指标（事件覆盖率）唯一能指望的采样方式 —— 均匀乱挑的话，
+  // 深处那几个池子会被兽径的高频稀释掉
+  const fresh = open.filter((entry) => !entry.visited);
+  const from = fresh.length > 0 ? fresh : open;
+  return (from[Math.floor(roll() * from.length)] ?? first).def.id;
+}
+
 function runLife(seed: number): LifeSummary {
   // 策略自己的随机源与引擎的 rngState 分开，互不污染（同 seed 仍完全可复现）
   const cursor = createCursor(seed ^ 0x5f3759df);
@@ -196,7 +222,12 @@ function runLife(seed: number): LifeSummary {
     const actions = availableActions(state, CONTENT);
     const action = decideAction(state, actions, roll, restsThisInjury);
     if (action === "rest") restsThisInjury += 1;
-    const turn = performAction(state, action, CONTENT);
+    const turn = performAction(
+      state,
+      action,
+      CONTENT,
+      action === "explore" ? { destinationId: decideDestination(state, roll) } : undefined,
+    );
     state = turn.state;
     const event = turn.pendingEvent;
     if (!event || !state.alive) continue;

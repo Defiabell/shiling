@@ -1,5 +1,5 @@
 /**
- * 探索事件（20）—— `trigger.actions: ["explore"]`，本库最大的一池。
+ * 探索事件（20，S2 之前写的那一批）—— `trigger.actions: ["explore"]`。
  *
  * 探索一季不产食物（`hunger` 净减），换来的是**双倍事件概率**与这池子里的东西：精气、
  * 灵与德、器官线索、以及四条会改写一世走向的稀有奇遇（白泽／应龙／骨坛／照影潭）。
@@ -7,9 +7,36 @@
  *
  * 稀有奇遇一律 `once: true` 且权重压在 30〜60 —— 稀有不是靠低概率堆出来的，是靠
  * 「一世只有一次」＋「选错就没了」。
+ *
+ * ## [S2] 这 20 条按地点重新归属了（一条没删、一条没改文案）
+ * S2 之前「探索」只有一个池子，所以这些事件写的时候不知道自己在哪儿。归属的判据是
+ * **正文里已经写着的那个地方**，不是硬贴标签：
+ *
+ * | 去处 | 归到这一处的（按本文件顺序） |
+ * |---|---|
+ * | 兽径 | 灵泉·鬼伞·雾林·采药人·蝉蜕·萤引·乌鸦示警·空巢遗卵 |
+ * | 幽潭 | 悬瀑·照影潭 |
+ * | 险峰 | 白泽问路（山脊）·石林·千年桑（坡顶） |
+ * | 古祠 | 断碑·骨坛·野狐坟 |
+ * | 秘窟 | 幽穴·蟒穴 |
+ * | 焦原 | 雷击木·垂死应龙（谷底那条快烧完的龙，正落在这片烧过的地上） |
+ *
+ * 归属之后六处的密度差得离谱（兽径 8 条、秘窟 2 条），所以 `places.ts` 按处补了 19 条 ——
+ * 两个文件合起来才是探索池（见 `events/index.ts` 的 `EXPLORE_EVENTS`）。
+ *
+ * ⚠️ 本文件的导出名是 `EXPLORE_BASE_EVENTS`（不是 `EXPLORE_EVENTS`）：后者现在是**并集**。
+ * 留同名会让「import 了 `EXPLORE_EVENTS` 却少了一半池子」变成一个静默的 bug。
  */
 
 import type { TaleEvent } from "@shiling/tale-sim";
+import {
+  DEST_GU_CI,
+  DEST_JIAO_YUAN,
+  DEST_MI_KU,
+  DEST_SHOU_JING,
+  DEST_XIAN_FENG,
+  DEST_YOU_TAN,
+} from "../destinations.js";
 import { EV_FOE, EV_KIN, EV_WATER, EV_WONDER } from "../eventTags.js";
 import { ENEMY_CAO_HU, ENEMY_SHAN_XIAO, ENEMY_XUAN_MANG } from "../enemies.js";
 import {
@@ -28,10 +55,10 @@ import { ORGAN_LONG_XIAN } from "../organs.js";
 import { TAG_DIG, TAG_FAR_SIGHT, TAG_INSIGHT, TAG_SWIFT, TAG_VENOM } from "../tags.js";
 import { VT } from "../visualTokens.js";
 
-export const EXPLORE_EVENTS: readonly TaleEvent[] = [
+export const EXPLORE_BASE_EVENTS: readonly TaleEvent[] = [
   {
     id: "qiu-explore-spring",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 28, tags: [EV_WATER, EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], weight: 28, tags: [EV_WATER, EV_WONDER] },
     title: "灵泉",
     body: "乱石之间一眼清泉，泉底铺着九曲青石纹，水面浮一层极薄的白气。你低头去饮，水里那张脸比你自己的更清楚些——它先动的嘴，你才觉出渴。",
     illustration: "events/qiu-explore-spring.webp",
@@ -87,7 +114,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-stele",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 22, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_GU_CI], weight: 22, tags: [EV_WONDER] },
     title: "断碑",
     body: "半截石碑埋在藤里，字是刻上去的，比爪痕深得多。你不识字，可看久了那些笔画会在眼里动，像很多小虫排着队往同一个方向走。你也想跟着走。",
     illustration: "events/qiu-explore-stele.webp",
@@ -138,7 +165,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     // 血祭过的东西白泽不与之言 —— FLAG_BLOOD_RITE 在这里被读掉
     trigger: {
       region: "qingqiu",
-      actions: ["explore"],
+      actions: ["explore"], destinations: [DEST_XIAN_FENG],
       minStats: { ling: 20 },
       forbidsFlags: [FLAG_BLOOD_RITE],
       once: true,
@@ -195,7 +222,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-yinglong",
-    trigger: { region: "qingqiu", actions: ["explore"], minYear: 3, once: true, weight: 44, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_JIAO_YUAN], minYear: 3, once: true, weight: 44, tags: [EV_WONDER] },
     title: "垂死应龙",
     body: "谷底横着一条身长数丈的巨物，背上残翼半张，鳞色青金而黯。它还活着，每一次呼吸都把地上的碎石一粒粒吹开。它的眼睛正对着你，从你进谷起就一直对着你。",
     illustration: "events/qiu-explore-yinglong.webp",
@@ -255,7 +282,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-mushroom",
-    trigger: { region: "qingqiu", actions: ["explore"], seasons: [1, 2], weight: 24 },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], seasons: [1, 2], weight: 24 },
     title: "鬼伞",
     body: "腐叶堆上生出一圈灰白的伞，伞面有淡红的斑，一碰就渗水。这东西闻起来像肉，可青丘的老兽从不碰它，连蝇都绕着走。你饿，而且已经饿了很久。",
     illustration: "events/qiu-explore-mushroom.webp",
@@ -307,7 +334,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-fog-woods",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 26 },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], weight: 26 },
     title: "雾林",
     body: "雾起得极快，三步之外只剩灰白。你辨不出方向，只听见水声在左边，走两步又像在右边。这样的雾里走错一步，一整季就要费在原地打转。",
     illustration: "events/qiu-explore-fog-woods.webp",
@@ -357,7 +384,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     // 已经知道这处幽穴就不必再「发现」一次
     trigger: {
       region: "qingqiu",
-      actions: ["explore"],
+      actions: ["explore"], destinations: [DEST_MI_KU],
       forbidsFlags: [FLAG_CAVE_KNOWN],
       weight: 24,
     },
@@ -412,7 +439,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-hermit",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 20, forbidsFlags: [FLAG_HUNTED] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], weight: 20, forbidsFlags: [FLAG_HUNTED] },
     title: "采药人",
     body: "坡上有个青布短褐的人，背着竹篓，腰悬小镰，正低头挖一株带紫花的草。他没有抬头。你与他之间不过十步——这十步很近，近到你能听见他哼的调子。",
     illustration: "events/qiu-explore-hermit.webp",
@@ -459,7 +486,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-cicada",
-    trigger: { region: "qingqiu", actions: ["explore"], seasons: [1], weight: 22, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], seasons: [1], weight: 22, tags: [EV_WONDER] },
     title: "蝉蜕",
     body: "枝上挂着一只完整的空壳，背缝裂开一线，六足还牢牢抓着树皮。壳仍是活物的形状，里头却什么都没有。你看着看着，觉得自己身上某一处也开始发痒。",
     illustration: "events/qiu-explore-cicada.webp",
@@ -504,7 +531,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-altar",
-    trigger: { region: "qingqiu", actions: ["explore"], once: true, weight: 32, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_GU_CI], once: true, weight: 32, tags: [EV_WONDER] },
     title: "骨坛",
     body: "林中空地垒着一圈兽骨，中央一块黑石，石面被血浸得发亮。骨都朝着同一个方向摆，摆得太整齐了，不像野兽干的，也不太像人干的。空地上一根草都不长。",
     illustration: "events/qiu-explore-altar.webp",
@@ -554,7 +581,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-waterfall",
-    trigger: { region: "qingqiu", actions: ["explore"], seasons: [0, 1, 2], weight: 22, tags: [EV_WATER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_YOU_TAN], seasons: [0, 1, 2], weight: 22, tags: [EV_WATER] },
     title: "悬瀑",
     body: "水从三十丈高的崖口砸下来，砸出的白雾把整条谷填满。崖壁湿滑，雾里却隐约有一条斜上去的石棱，棱上留着旧爪痕——比你的爪大，而且只上不下。",
     illustration: "events/qiu-explore-waterfall.webp",
@@ -608,7 +635,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     id: "qiu-explore-firefly",
     trigger: {
       region: "qingqiu",
-      actions: ["explore"],
+      actions: ["explore"], destinations: [DEST_SHOU_JING],
       seasons: [1, 2],
       forbidsFlags: [FLAG_FIREFLY_LED],
       weight: 24,
@@ -669,7 +696,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-mulberry",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 20, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_XIAN_FENG], weight: 20, tags: [EV_WONDER] },
     title: "千年桑",
     body: "一株老桑独立在坡顶，树身要三兽合抱，枝上却只剩几片叶。树根处的土是暖的，暖得像底下睡着一个活物。你把耳朵贴上去，听见很慢很慢的一下、又一下。",
     illustration: "events/qiu-explore-mulberry.webp",
@@ -720,7 +747,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-mang-den",
-    trigger: { region: "qingqiu", actions: ["explore"], minYear: 2, weight: 16, tags: [EV_FOE] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_MI_KU], minYear: 2, weight: 16, tags: [EV_FOE] },
     title: "蟒穴",
     body: "石隙里堆着一层蜕下的旧皮，薄如纸，长得看不到尽头。隙内很暗，暗处有一段极缓的呼吸，缓到你要屏住自己的呼吸才听得见。旧皮上没有灰——蜕下不久。",
     illustration: "events/qiu-explore-mang-den.webp",
@@ -769,7 +796,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
     // 知道灵泉在哪的，才找得到与它同源的这一潭 —— FLAG_SPRING_KNOWN 在这里被读掉
     trigger: {
       region: "qingqiu",
-      actions: ["explore"],
+      actions: ["explore"], destinations: [DEST_YOU_TAN],
       minYear: 2,
       requiresFlags: [FLAG_SPRING_KNOWN],
       once: true,
@@ -821,7 +848,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-thunder-tree",
-    trigger: { region: "qingqiu", actions: ["explore"], seasons: [1, 2], weight: 20, tags: [EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_JIAO_YUAN], seasons: [1, 2], weight: 20, tags: [EV_WONDER] },
     title: "雷击木",
     body: "一株松被雷劈成两半，断口焦黑，里头还留着一股说不出的躁气。你走近三步，身上的毛就全立起来，牙根发麻，像有什么东西在皮下面找出口。",
     illustration: "events/qiu-explore-thunder-tree.webp",
@@ -868,7 +895,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-crow-omen",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 22 },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], weight: 22 },
     title: "乌鸦示警",
     body: "一群乌鸦从林子那头炸开，绕着你叫了三圈，往南飞了。青丘的鸦从不多事——它们叫，是因为林子里有比你更饿的东西，而且那东西已经知道你在这里。",
     illustration: "events/qiu-explore-crow-omen.webp",
@@ -919,7 +946,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-empty-nest",
-    trigger: { region: "qingqiu", actions: ["explore"], seasons: [0, 1], weight: 24, tags: [EV_KIN] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_SHOU_JING], seasons: [0, 1], weight: 24, tags: [EV_KIN] },
     title: "空巢遗卵",
     body: "高枝上的巢空了，巢里剩三枚卵，还是温的。母鸟的羽毛散在树下，散得很开，一直散到坡那边去。你数了数：三枚，每一枚都够你半日。",
     illustration: "events/qiu-explore-empty-nest.webp",
@@ -960,7 +987,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-stone-forest",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 22 },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_XIAN_FENG], weight: 22 },
     title: "石林",
     body: "一片直立的青石，高矮如林，风穿过去有人说话的声音。石面上凿着许多小坑，坑里积着雨水，水面浮着不知多少年的灰。凿坑的东西没留下别的痕迹。",
     illustration: "events/qiu-explore-stone-forest.webp",
@@ -1007,7 +1034,7 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
 
   {
     id: "qiu-explore-fox-grave",
-    trigger: { region: "qingqiu", actions: ["explore"], weight: 20, tags: [EV_KIN, EV_WONDER] },
+    trigger: { region: "qingqiu", actions: ["explore"], destinations: [DEST_GU_CI], weight: 20, tags: [EV_KIN, EV_WONDER] },
     title: "野狐坟",
     body: "土坡上有一排小丘，每丘前压着一块白石。你嗅得出丘下都是狐，死了很久，骨头一律朝着丘外摆。其中有一丘的土是新的，新到还能闻出翻土者的气味。",
     illustration: "events/qiu-explore-fox-grave.webp",
