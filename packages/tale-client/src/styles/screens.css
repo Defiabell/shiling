@@ -1025,6 +1025,18 @@
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /*
+   * 「下面还有」的影子（纯 CSS 的 scroll-shadow：`local` 那两层跟着内容滚，
+   * `scroll` 那两层钉在容器上，两者相减就只在真有溢出时看得见）。
+   *
+   * 非有不可：技能池到了后期是 12〜13 颗按钮（6 技 ＋ 2 组合），第三行要滚才看得到，
+   * 而一个没有任何提示的滚动区等于那几颗按钮不存在 —— 玩家不会去滚一个看着已经排完的格子。
+   */
+  background:
+    linear-gradient(var(--bg-card, rgba(12, 15, 20, 0.001)) 30%, rgba(12, 15, 20, 0)) center top / 100% 26px no-repeat local,
+    linear-gradient(rgba(12, 15, 20, 0), rgba(12, 15, 20, 0.85)) center bottom / 100% 26px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgba(232, 180, 95, 0.28), rgba(232, 180, 95, 0)) center top / 100% 12px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgba(232, 180, 95, 0.28), rgba(232, 180, 95, 0)) center bottom / 100% 12px no-repeat scroll;
 }
 
 /*
