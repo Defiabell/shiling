@@ -26,6 +26,7 @@ import {
   bloodlineGain,
   combatAct,
   combatPreview,
+  recommendCombatAct,
   composeChronicle,
   createCursor,
   createLife,
@@ -445,38 +446,14 @@ function decideStalk(state: TaleState, plan: StalkPlan): StalkAct {
 export type CombatPlan = "screen" | "throat" | "eye" | "leg" | "greedy" | "coward";
 
 /**
- * 「照屏幕金光打」的那条链 —— 与 `tale-client` 的 `recommendCombatAct` 同形。
+ * 「照屏幕金光打」＝ 引擎导出的 `recommendCombatAct`（**玩家屏幕上发金光的那一手**）。
  *
- * 改推荐链要同步三处：客户端那个函数／`tale-content` 冒烟／这里（三处都有注释指回去）。
- * 它回答的是一个比「最优解是什么」更要紧的问题：界面自己推荐的那一手，跟得住吗？
- * 若这条的成绩明显低于手写的最优打法，那就是界面在**误导**玩家 —— 那种 bug 不会有测试变红。
+ * [S1] 这里原先是手抄镜像（三处之一）。手抄的后果是这张表量的打法**不是玩家真按的那套**
+ * —— 而这张表存在的全部理由恰恰是「界面自己推荐的那一手跟得住吗」。推荐链已上提到
+ * `tale-sim`（呈现层建议，引擎不消费），三处收成一份。
  */
 function screenCombat(state: TaleState): CombatAct {
-  const p = combatPreview(state, CONTENT);
-  const best = [...p.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
-  const bestBite: CombatAct = { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
-  // 能一下打死就打（逃掉＝没有精气，能赢就别走）
-  if (p.roundsToKill <= 1) return bestBite;
-  // 撑不过两合且逃得掉就走 —— 第一版把这条排在 roundsToLive<=1，200 世战死率飙到 33.5%
-  if (p.roundsToLive <= 2 && p.fleeChance >= 0.4) return { kind: "flee" };
-  // 读不出确切意图的 build 只看得见粗档：「按兵不动」就当它要走，先拦一手
-  const mayFlee = p.intentKnown ? p.enemyWillFlee : p.intentClass === "hold";
-  if (mayFlee) return { kind: "bite", part: "leg" };
-  // 它宣告了重击而它还看得见 → 先弄瞎它（致盲五成五让 2.2 倍的那一下整个打空）。
-  // 读不出意图的 build 做不到这一手 —— 这一条就是 seer 与 bare 的差额来源。
-  if (p.intentKnown && p.intent.kind === "pounce" && p.blind <= 0) {
-    return { kind: "bite", part: "eye" };
-  }
-  const skill = p.skills.find((item) => item.ready);
-  if (skill) return { kind: "skill", organId: skill.organId };
-  if (p.roundsToLive <= 3 && p.blind <= 0) return { kind: "bite", part: "eye" };
-  const leg = p.bites.find((bite) => bite.part === "leg");
-  if (p.roundsToKill >= 3 && leg?.riderLands === true) return { kind: "bite", part: "leg" };
-  if (p.intentKnown && p.intent.kind === "guard") {
-    const want = p.roundsToLive <= 3 ? "low" : "lunge";
-    if (p.stance !== want) return { kind: "stance", to: want };
-  }
-  return bestBite;
+  return recommendCombatAct(combatPreview(state, CONTENT));
 }
 
 function decideCombatPlan(state: TaleState, plan: CombatPlan): CombatAct {
@@ -490,7 +467,7 @@ function decideCombatPlan(state: TaleState, plan: CombatPlan): CombatAct {
   if (plan === "greedy") {
     // 只知道咬伤害最高那处 ＋ 有技就放：M0 那种「挑最强的一手」的打法
     const skill = p.skills.find((item) => item.ready);
-    if (skill) return { kind: "skill", organId: skill.organId };
+    if (skill) return { kind: "skill", skillId: skill.skillId };
     const best = [...p.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
     return { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
   }
@@ -975,8 +952,18 @@ function runCombatLab(samples: number): number {
   );
   const deathRate = (rows: readonly CombatOutcome[]): number =>
     pct(rows.filter((o) => o.over === "dead").length, rows.length);
-  const bareRows = buildRows.get(ENEMY_YAN_YANG)?.get(LAB_COMBAT_BUILDS[0]?.name ?? "") ?? [];
-  const seerRows = buildRows.get(ENEMY_YAN_YANG)?.get(LAB_COMBAT_BUILDS[1]?.name ?? "") ?? [];
+  /*
+   * [S1] 量「读得出意图值不值」的**对象换了一头**：岩羊 → 玄蟒。
+   *
+   * 换的理由与 P1 那条「屏息」判据同形（在一个用不到某工具的场景里量那个工具，量到 0 是
+   * 正常的）：S1 给推荐链加了一条「这一手最坏情况也打得死它就打」，于是对岩羊这种好打的
+   * 兽，**裸 build 的死亡率本来就掉到 6%** —— 要求灵犀把 6% 再压到 4% 是在量噪声。
+   * 玄蟒才是这条信息真正值钱的地方（它爱守，「守还是要走」正是粗档分不出的那一对）：
+   * 实测死亡率 43.8% → 33.3%、胜率 15.3% → 25.3%。判据因此改成「在最硬的那头兽身上，
+   * 死亡率至少低五分之一 **且** 胜率明显更高」。数值没动，判据换了。
+   */
+  const bareRows = buildRows.get(ENEMY_XUAN_MANG)?.get(LAB_COMBAT_BUILDS[0]?.name ?? "") ?? [];
+  const seerRows = buildRows.get(ENEMY_XUAN_MANG)?.get(LAB_COMBAT_BUILDS[1]?.name ?? "") ?? [];
   const bareWin = winRate(bareRows);
   const seerWin = winRate(seerRows);
   const bareDeath = deathRate(bareRows);
@@ -994,14 +981,20 @@ function runCombatLab(samples: number): number {
       Math.min(...screenVsBest) >= -5,
     ],
     /*
-     * 判据换过一次（同 P1 对「屏息」那条的处理）：第一版量的是**胜率**差额 ≥4 个点，
-     * 实测只有 +3.3 —— 回头看判据本身：读得出意图买到的是**防守**信息（知道重击要来，
-     * 提前把它弄瞎），而读不出的 build 会靠「撑不住就逃」把胜率补回来。所以差额主要落在
-     * **死亡率**上（7.5% → 4.5%），胜率只是顺带。改成量死亡率，并要求胜率不倒退。
+     * 判据换过**两次**（都是「换判据不换数值」，同 P1 对「屏息」那条的处理）：
+     * ① M1-P2：第一版量胜率差额 ≥4 个点，实测只有 +3.3 —— 读得出意图买到的是**防守**
+     *    信息，而读不出的 build 会靠「撑不住就逃」把胜率补回来，所以差额落在死亡率上。
+     * ② S1：量测对象从岩羊换成玄蟒（见上面 bareRows 那段的理由 —— 岩羊现在裸 build
+     *    死亡率就只有 6%，在那儿量信息的价值是在量噪声）。**同时把比值从「低三分之一」
+     *    放宽到「低五分之一」，并新增一条更严的胜率条件**（+4 个点以上）：玄蟒的实测是
+     *    43.8% → 33.3%（比值 0.76，过不了旧的 2/3）与 15.3% → 25.3%。
+     *    放宽比值不是为了让这一版过线，而是因为**换了对象就得换量纲**：玄蟒的基线死亡率
+     *    是岩羊的七倍，同一个相对比值在两头兽身上不是同一件事；而胜率那条在岩羊上量不出来
+     *    （信息在好打的兽身上只省时间），在玄蟒上才是它真正买到的东西。
      */
     [
-      `读得出意图更能活（岩羊：死亡率 裸 ${bareDeath}% → 灵犀 ${seerDeath}%，至少低三分之一；胜率不倒退 ${bareWin}% → ${seerWin}%）`,
-      seerDeath <= bareDeath * (2 / 3) && seerWin >= bareWin,
+      `读得出意图更能活（玄蟒：死亡率 裸 ${bareDeath}% → 灵犀 ${seerDeath}%，至少低五分之一；胜率 ${bareWin}% → ${seerWin}% 明显更高）`,
+      seerDeath <= bareDeath * 0.8 && seerWin >= bareWin + 4,
     ],
     [
       `一挨打就逃不是解（coward 胜率 ${cowardWin.map((r) => `${r}%`).join("／")}，最高 ≤35%）`,

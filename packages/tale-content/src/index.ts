@@ -15,8 +15,9 @@
  *
  * ## 内容清单
  * 44 事件（狩猎 12／探索 20／休憩 4／通用季节 8，其中 `once` 稀有 8）＝133 抉择／176 结果分支、
- * 12 器官（覆盖 6 槽与 4 型精气，4 件带战斗技）、3 神种、8 敌人、列传模板（8 段赞语变体）、
- * tuning（基线覆写 5 项）、27 个视觉 token。
+ * 12 器官（覆盖 6 槽与 4 型精气，**12 件全部带战斗技** —— S1）、**10 条器官组合**（异变，
+ * 对玩家隐藏、跨世记入图鉴 —— S1）、3 神种、8 敌人、列传模板（8 段赞语变体）、
+ * tuning（基线覆写若干项）、27 个视觉 token。
  */
 
 import type { TaleContent } from "@shiling/tale-sim";
@@ -26,6 +27,7 @@ import { EVENTS } from "./events/index.js";
 import { ORIGINS, SKIES } from "./premises.js";
 import { ORGANS } from "./organs.js";
 import { SEEDS } from "./seeds.js";
+import { SYNERGIES } from "./synergies.js";
 import { TUNING } from "./tuning.js";
 
 /**
@@ -42,6 +44,7 @@ export const TALE_CONTENT: TaleContent = {
   enemies: [...ENEMIES],
   skies: [...SKIES],
   origins: [...ORIGINS],
+  synergies: [...SYNERGIES],
   tuning: TUNING,
   chronicleTemplates: CHRONICLE_TEMPLATES,
 };
@@ -121,6 +124,19 @@ export {
   ORGAN_YE_TONG,
 } from "./organs.js";
 export { SEED_BAI_ZE, SEED_CHANG_TAI, SEED_YING_LONG, SEEDS } from "./seeds.js";
+export {
+  SYNERGIES,
+  SYN_CHUAN_DI,
+  SYN_DI_ZHUANG,
+  SYN_KUI_XIN,
+  SYN_KUI_YAO,
+  SYN_LONG_YU,
+  SYN_MAI_DU_ZHAO,
+  SYN_SUI_GU,
+  SYN_TU_WU,
+  SYN_YE_LIE_YAN,
+  SYN_ZHONG_JIA,
+} from "./synergies.js";
 export { ALL_TAGS } from "./tags.js";
 export { TUNING } from "./tuning.js";
 export { VISUAL_TOKENS, VT, type VisualToken, type VisualTokenId } from "./visualTokens.js";

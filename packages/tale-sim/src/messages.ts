@@ -20,6 +20,21 @@ export const ENGINE_MESSAGES = {
 
   combatStart: "{{enemy}}当道，避之不得。",
   combatSkillHit: "施{{skill}}，{{enemy}}受创{{dmg}}。",
+  /** [S1] 不出伤的技（护体／明识／脱身／硬受）—— 不能借 `combatSkillHit` 报「受创 0」 */
+  combatSkillUse: "施{{skill}}。",
+  /**
+   * [S1] 自伤代价。
+   *
+   * 单独一行而不是并进技能那一句：代价是玩家**主动**付的，它该在日志里留一道自己的痕
+   * （「这一架我为了放两次溃咬掉了六血」是复盘时看得见的账）。
+   */
+  combatSkillToll: "施{{skill}}，自身亦损{{dmg}}。",
+  /** [S1] 流血在回合末结算（单句、不抽变体 —— 见 combatAct 的抽取顺序） */
+  combatBleedTick: "{{enemy}}的伤口仍在渗血，又失{{dmg}}。",
+  /** [S1] 反刺：它命中我方时自扎一记 */
+  combatThornsPrick: "{{enemy}}这一下撞在硬鬃上，自伤{{dmg}}。",
+  /** [S1] 硬受挡下了它这一手 */
+  combatBraceHold: "{{enemy}}这一下砸在合拢的鳞上，一分力也没进来。",
   combatWin: "{{enemy}}毙于爪牙之下，吞其精气。",
   combatWinRecord: "搏杀{{enemy}}，食其精气。",
   combatFleeOk: "觑得一隙遁去，未损分毫。",
@@ -145,6 +160,16 @@ export const COMBAT_MESSAGES = {
   warded: ["一层硬物在皮下撑开，钝击都吃得住了。"],
   /** 疗愈落地 */
   healed: ["涎液敷上创口，血止住了。"],
+  /** [S1] 流血落地（此后每合末它自己掉血） */
+  bleeding: ["爪痕深而不齐，{{enemy}}的血止不住了。"],
+  /** [S1] 反刺落地 */
+  thorned: ["颈背的鬃根根竖起，尖端向外 —— 谁撞上来谁疼。"],
+  /** [S1] 明识落地（数合内读得出意图） */
+  insighted: ["心里忽然静下来，它每一处细小的动静都有了意思。"],
+  /** [S1] 硬受落地（这一合免伤） */
+  braced: ["鳞片层层合拢，把自己钉在原地。"],
+  /** [S1] 脱身落地（必定遁走） */
+  bolted: ["一蹬石棱，几个起落便隔开了它。"],
   /** 敌人遁走（意图＝逃且未被迟滞）——玩家什么也没得到 */
   enemyFled: [
     "{{enemy}}掉头就走，几步便没入林中 —— 什么也没留下。",

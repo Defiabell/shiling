@@ -26,6 +26,7 @@ import {
   type ActionId,
   type ChronicleEntry,
   type CombatAct,
+  type SynergyDef,
   type TaleEvent,
   type TaleState,
   type WayId,
@@ -63,6 +64,7 @@ import { createFloaterHost, spawnFloaters } from "./fx/floaters.js";
 import { playCinematic } from "./fx/cinematic.js";
 import { playInkBlot } from "./fx/inkBlot.js";
 import { playMoltReveal } from "./fx/moltReveal.js";
+import { playSynergyReveal } from "./fx/synergyReveal.js";
 import { installMotionClass } from "./fx/motion.js";
 import { ESSENCE_RGB, createParticleLayer, type ParticleLayer } from "./fx/particles.js";
 import { renderChronicle } from "./screens/chronicleScreen.js";
@@ -72,6 +74,9 @@ import { renderTitle, type ScreenHandle } from "./screens/titleScreen.js";
 import {
   browserStorage,
   loadBloodline,
+  buyBoon,
+  consumeBoon,
+  noteSynergies,
   recordLife,
   saveBloodline,
   unlockSeed,
@@ -266,6 +271,7 @@ export class TaleApp {
         // createLife 在神种 id 不存在时抛错（内容 bug）——同样不让它变成静默死局
         onChoose: (seedId) => void this.safely(async () => this.startLife(seedId)),
         onUnlock: (seedId) => this.tryUnlock(seedId),
+        onBuyBoon: (organId) => this.tryBuyBoon(organId),
         onBack: () => this.goTitle(),
       }),
     );
@@ -273,6 +279,20 @@ export class TaleApp {
 
   private tryUnlock(seedId: string): void {
     const next = unlockSeed(this.bloodline, seedId, CONTENT);
+    if (!next) return;
+    this.bloodline = next;
+    saveBloodline(this.storage, this.bloodline);
+    this.renderSeed();
+  }
+
+  /**
+   * [S1] 买「血脉」——血统点的第二个去处。
+   *
+   * 买不成（点数不足／没见过这件器官）时 `buyBoon` 返回 null，这里就什么都不做：
+   * 界面上那颗按钮本来也是置灰的（同 `tryUnlock` 的约定 —— 判据只有一份，在 persist 层）。
+   */
+  private tryBuyBoon(organId: string): void {
+    const next = buyBoon(this.bloodline, organId, CONTENT);
     if (!next) return;
     this.bloodline = next;
     saveBloodline(this.storage, this.bloodline);
@@ -301,7 +321,21 @@ export class TaleApp {
      * 天时／出身生出来的，留着就等于「每一局几乎都一样」，只是这次重复的是 AI 写的那一半。
      */
     clearInjectedEvents();
-    const born = createLife(seedNum, seedId, CONTENT);
+    /*
+     * [S1] 血脉：花过血统点的那一件器官在**降世那一刻**就在身上。
+     *
+     * 用掉即清（`consumeBoon`）—— 钱在转世屏按下按钮时就付了，若不清，一次付费会变成
+     * 世世自带。清完立刻存档：玩家可能在这一世中途关掉浏览器，那时钱已经付了、器官也
+     * 已经拿到过，不该在下一次开局时又白拿一件。
+     */
+    const boonOrganId = this.bloodline.boonOrganId;
+    const born = createLife(seedNum, seedId, CONTENT, {
+      boonOrganIds: boonOrganId === null ? [] : [boonOrganId],
+    });
+    if (boonOrganId !== null) {
+      this.bloodline = consumeBoon(this.bloodline);
+      saveBloodline(this.storage, this.bloodline);
+    }
     // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
     const state =
       this.grantOrganIds.length > 0
@@ -521,6 +555,8 @@ export class TaleApp {
     this.showDelta(prev, next, next.stalk ? 0 : seasonHungerCost(prev));
 
     if (result.moltResult) await playMoltReveal(this.overlayHost, result.moltResult, CONTENT);
+    // 异变排在蜕变开奖**之后**：先看清蜕出了什么，再看它与身上旧器官凑出了什么
+    await this.revealSynergies(result.newSynergies);
 
     this.busy = false;
     this.renderPlayScreen();
@@ -553,9 +589,33 @@ export class TaleApp {
       continueLabel: !next.alive ? this.closeLabel() : next.combat ? "迎　敌" : null,
     };
 
-    this.busy = false;
     this.renderPlayScreen();
     this.showDelta(prev, next, 0);
+    // 事件送的器官（「垂死应龙」那一类）也可能凑齐一条组合 —— 两条获得器官的路径都要接住
+    await this.revealSynergies(result.newSynergies);
+
+    this.busy = false;
+    this.renderPlayScreen();
+  }
+
+  /**
+   * [S1] 播「异变」揭示，并把新发现记进图鉴（跨世持久化）。
+   *
+   * 引擎报的是「这一步新凑齐的组合」（它不认识 `Bloodline`），**是否是头一次**由图鉴判：
+   * 头一次给完整演出并记档，第二世重新凑齐同一条只给降一档的「异变再现」。
+   * 一步里凑齐两条（罕见但可能：一件器官同时补上两个配方的最后一件）就逐条播。
+   */
+  private async revealSynergies(synergies: readonly SynergyDef[]): Promise<void> {
+    if (synergies.length === 0) return;
+    for (const synergy of synergies) {
+      const first = !this.bloodline.knownSynergyIds.includes(synergy.id);
+      const next = noteSynergies(this.bloodline, [synergy.id]);
+      if (next !== this.bloodline) {
+        this.bloodline = next;
+        saveBloodline(this.storage, this.bloodline);
+      }
+      await playSynergyReveal(this.overlayHost, synergy, CONTENT, first);
+    }
   }
 
   /**
@@ -707,7 +767,8 @@ export class TaleApp {
     if (drafted) reportTelemetry(drafted.telemetry);
     const entry: ChronicleEntry = drafted?.entry ?? composeChronicle(state, CONTENT);
     const gain = bloodlineGain(state, CONTENT);
-    this.bloodline = recordLife(this.bloodline, gain, entry);
+    // [S1] 这一世拥有过的器官进图鉴 —— 「血脉」只卖已发现过的（神种器官由 persist 层挡掉）
+    this.bloodline = recordLife(this.bloodline, gain, entry, state.organIds, CONTENT);
     saveBloodline(this.storage, this.bloodline);
     this.chronicleVm = buildChronicleVm(entry, gain, CONTENT, state);
     // 择神种屏那句「换条路试试」要读上一世的终态（差距报告算不出于 ChronicleEntry）
@@ -893,7 +954,8 @@ export class TaleApp {
    * 兜住引擎抛出的异常。
    *
    * 今天每个调用点都是可证安全的：按钮的 enabled 用的就是引擎自己抛错前判的那个函数
-   * （`availableActions`／`eligibleChoiceIdxs`／`combatSkillOrgan`），构造上不可能分叉。
+   * （`availableActions`／`eligibleChoiceIdxs`／`combatPreview.skills` 的 `ready`），
+   * 构造上不可能分叉（[S1] 第三个原是 `combatSkillOrgan`，那个函数已随技能池删除）。
    * 但这里的失败模式极不对称 —— 一旦真抛了（内容数据 bug 在 `applyEffects` 里冒出来、
    * 或将来谁给某个 VM 换了个「等价」判断），`void this.doAction()` 会变成一个没人接的
    * rejected promise：`busy` 永远停在 true，此后**每一次点击与按键都静默失效**，界面看着

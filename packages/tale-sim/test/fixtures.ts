@@ -14,6 +14,7 @@ import {
   BASELINE_TUNING,
   SYS_FLAG_ASCEND_READY,
   type ChronicleTemplates,
+  type CombatSkillDef,
   type CombatSkillEffect,
   type CombatState,
   type EnemyDef,
@@ -21,6 +22,7 @@ import {
   type PremiseDef,
   type SeedDef,
   type StalkState,
+  type SynergyDef,
   type TaleContent,
   type TaleEvent,
   type TaleState,
@@ -335,6 +337,9 @@ export const FIXTURE_CONTENT: TaleContent = {
   enemies: FIXTURE_ENEMIES,
   skies: [FIXTURE_SKY],
   origins: [FIXTURE_ORIGIN],
+  // [S1] 缺省**没有**组合：既有的两百多条搏杀断言都建立在「技能池里只有器官技」之上。
+  // 组合的机制由专测用 `makeContent({ synergies: [...] })` 显式声明（同 fixture 天时的理由）。
+  synergies: [],
   tuning: FIXTURE_TUNING,
   chronicleTemplates: FIXTURE_CHRONICLE,
 };
@@ -347,6 +352,7 @@ export interface ContentOverrides {
   enemies?: EnemyDef[];
   skies?: PremiseDef[];
   origins?: PremiseDef[];
+  synergies?: SynergyDef[];
   tuning?: Partial<TaleTuning>;
   chronicleTemplates?: ChronicleTemplates;
 }
@@ -363,6 +369,7 @@ export function makeContent(overrides: ContentOverrides = {}): TaleContent {
     enemies: overrides.enemies ?? FIXTURE_CONTENT.enemies,
     skies: overrides.skies ?? FIXTURE_CONTENT.skies,
     origins: overrides.origins ?? FIXTURE_CONTENT.origins,
+    synergies: overrides.synergies ?? FIXTURE_CONTENT.synergies,
     tuning: { ...FIXTURE_CONTENT.tuning, ...overrides.tuning },
     chronicleTemplates: overrides.chronicleTemplates ?? FIXTURE_CONTENT.chronicleTemplates,
   };
@@ -406,6 +413,9 @@ export function enterCombat(
       blind: 0,
       slow: 0,
       ward: 0,
+      bleed: 0,
+      thorns: 0,
+      insight: 0,
       skillCooldowns: {},
       log: [],
       ...overrides,
@@ -413,12 +423,18 @@ export function enterCombat(
   };
 }
 
-/** 造一个带指定战斗技的器官（`effect` 缺省＝纯伤害），用于覆盖四种 effect 的分支。 */
+/**
+ * 造一个带战斗技的器官。
+ *
+ * [S1] `effects` 是**数组**（一个技可以同时附两条效果，组合技就靠这个），`extra` 用来
+ * 加代价／伤害倍率／出伤属性 —— 那三项都是 S1 新加的、需要逐项钉住的字段。
+ */
 export function organWithSkill(
   id: string,
   name: string,
-  effect?: CombatSkillEffect,
+  effects?: readonly CombatSkillEffect[],
   cooldown?: number,
+  extra: Partial<CombatSkillDef> = {},
 ): OrganDef {
   return {
     id,
@@ -429,10 +445,33 @@ export function organWithSkill(
     combatSkill: {
       name,
       desc: `试${name}。`,
-      ...(effect === undefined ? {} : { effect }),
+      ...(effects === undefined ? {} : { effects }),
       ...(cooldown === undefined ? {} : { cooldown }),
+      ...extra,
     },
     desc: `试用器官${name}。`,
+  };
+}
+
+/**
+ * [S1] 造一条组合：`organIds` 全在身上即解锁，技名与效果可指定。
+ *
+ * fixture 侧要能造「两件器官凑一条」的最小局面 —— 真内容那 10 条的因果自洽由
+ * `tale-content` 的 schema 测试守，这里只守机制（差集、技能池、冷却、代价）。
+ */
+export function makeSynergy(
+  id: string,
+  organIds: readonly string[],
+  skill: CombatSkillDef,
+): SynergyDef {
+  return {
+    id,
+    name: skill.name,
+    organIds,
+    kind: "skill",
+    skill,
+    reveal: `试${skill.name}的因果。`,
+    desc: `试用组合${id}。`,
   };
 }
 

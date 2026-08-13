@@ -16,21 +16,32 @@
  * - 有：「它压低身子，重心后坐 —— 这一顶会重」＋「预计受伤 11」＋ 每颗按钮的受伤账。
  * - 无：「似要动手」，你知道要挨打，但不知道多重、也分不出它是在守还是要走。
  * 这两件正是姿态与咬腿两个决定的前提 —— 信息本身就是器官奖励。
+ *
+ * ## [S1] 技能池：全部技摊在同一屏，每颗都摊开后果
+ * `preview.skills` 现在是**池子**（器官技 ＋ 已凑齐的组合技），不再是「第一件带技器官」。
+ * 每颗技能按钮上必须写清四件事：伤害区间／附带效果／冷却／**代价**，以及不可用时
+ * 「为什么不可用」（还需几合 ＝ 等得到；精气不足 ＝ 这一架里等不到，得去猎）。
+ * 没有预览的按钮就是翻牌 —— 这是追猎屏验过的铁律，技能池把它从 1 颗按钮扩到 5〜8 颗，
+ * 铁律不打折。
  */
 
 import {
   BODY_PART_NAMES,
   combatPreview,
+  recommendCombatAct,
   type BodyPart,
-  type DamageRange,
   type CombatAct,
   type CombatPreview,
+  type CombatSkillCost,
+  type CombatSkillPreview,
   type CombatState,
+  type DamageRange,
   type EnemyDef,
   type Stance,
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
+import { ESSENCE_LABELS, SKILL_EFFECT_LABELS } from "./format.js";
 import { enemyArt } from "../art/assets.js";
 import { chanceCn as chanceCnOf, toPercent } from "./format.js";
 import type { MediaAsset } from "./eventVm.js";
@@ -54,13 +65,27 @@ export interface CombatActionVm {
   label: string;
   /** 预期效果，如「伤 6±1 · 它护此处 → 减半 ＋ 五成反击」 */
   effect: string;
-  /** 需要提醒的后果；无则 null */
+  /** 需要提醒的**后果**（咬腿能拦逃、打在守备处会被反咬、换姿态占一合）；无则 null */
   warning: string | null;
+  /**
+   * [S1] 风味一句（今天只有组合技有：它自己的描述）。
+   *
+   * 与 `warning` 分开是因为两者的语义不同：warning 是「按下去会有这个后果，注意」，
+   * flavor 是「这一手是什么」。共用一个字段会让「有没有要提醒的事」变得没法判断
+   * （code-reviewer 抓到的：同一套 `has-warn` 样式底下混了两种东西）。
+   */
+  flavor: string | null;
   /** 这一手是不是当前最该按的（金色呼吸） */
   highlight: boolean;
   enabled: boolean;
   disabledReason: string | null;
   group: "bite" | "stance" | "skill" | "flee";
+  /**
+   * [S1] 这一手是**组合技**（异变）—— 界面给它一枚朱砂「异」印。
+   *
+   * 玩家凑齐两件器官换来的一手，若在按钮排里与器官技长得一样，那次发现就白发现了。
+   */
+  synergy: boolean;
 }
 
 export interface CombatVm {
@@ -161,62 +186,64 @@ function damageText(range: DamageRange): string {
   return range.min === range.max ? String(range.mid) : `${range.min}〜${range.max}`;
 }
 
+/** 按钮 id：`CombatAct` → `data-combat` 字符串。**唯一一处**做这个映射，反向解析不存在。 */
+export function combatActId(act: CombatAct): CombatActId {
+  switch (act.kind) {
+    case "bite":
+      return `bite:${act.part}`;
+    case "stance":
+      return `stance:${act.to}`;
+    case "skill":
+      return `skill:${act.skillId}`;
+    case "flee":
+      return "flee";
+  }
+}
+
 /**
  * 界面推荐的那一手 —— **同一时刻只推荐一手**（P1 踩过的坑：两颗按钮同时发金光等于没有推荐）。
  *
- * ## 这条链同时是「什么时候该逃」的答案
- * 它的第一版把逃排得很后（`roundsToLive <= 1`），200 世实测**战死率 33.5%**（M0 是 8.5%）
- * —— 因为「还能撑一合」的下一合往往是一记重击（扑是 2.2 倍），于是机器打手总是死在
- * 「再打一下就赢了」的幻觉里。这不是数值问题，是**推荐链在劝玩家送死**。改成
- * 「能一下打死就打，否则撑不过两合就走」。
+ * ## [S1] 链本身搬到了 tale-sim
+ * 它此前住在这里，于是同一条链在三处各有一份手抄镜像（这里／`tale-content` 冒烟／
+ * `packages/gen` 实验台）—— P2 报告的遗留第 5 条。S1 把技能池从 1 颗扩到 5〜8 颗、
+ * 链从 9 条长到 11 条，手抄的漂移就从「风险」变成「必然」，而漂移的后果是**实验台量的
+ * 打法与玩家屏幕上金光指的那一手不是同一个**（我自己的平衡数据会说谎）。
  *
- * 优先级（每一条都有可见依据）：
- * 1. 这一下能打死它 → 打（逃掉＝没有精气，能赢就别走）。
- * 2. 撑不过两合且逃得掉 → 逃。
- * 3. 它要走（读不出意图时：粗档「按兵不动」也当它要走）→ 咬腿拦住。
- * 4. **它宣告了重击而它还看得见 → 扑眼**（致盲五成五让重击整个打空；读不出意图的 build
- *    做不到这一手，这就是洞察类器官的兑现）。
- * 5. 器官技好了 → 放（有冷却，早放早转）。
- * 6. 挨得凶而它还看得见 → 扑眼买两合。
- * 7. **是场长仗、而迟滞这一咬落得下来** → 咬腿钝它的势（附带效果不叠加，所以这是有节奏的）。
- * 8. 它在守、而迟滞还挂着（咬腿这一手落不下来）→ 那一合白送，用来换姿态。
- *    **顺序是量出来的**：把这一条排到第 7 条之前，岩羊的 seer 胜率 88.8%→87.8%、
- *    玄蟒的 seer+fang 67.5%→63.5% —— 守着的那一合你本来就不挨伤，拿去咬一口比换姿态划算，
- *    换姿态只在「这一口本来也没什么附带可捞」时才是最优。
- * 9. 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处）。
- *
- * 实验台里那套打法是这条链的镜像（`packages/gen` 的 `screenCombat`），
- * `tale-content` 的冒烟测试里还有一份 —— 改这里要同步三处（那两处都有注释指回来）。
+ * 所以链上提到 `recommendCombatAct`（tale-sim，纯函数、只吃 `CombatPreview`、引擎自己不
+ * 消费）。这里只剩一件事：把它返回的 `CombatAct` 翻成按钮 id。呈现层的决定仍在呈现层 ——
+ * 变的只是「这段代码住在哪个包」。
  */
-export function recommendCombatAct(preview: CombatPreview): CombatActId {
-  const bestBite = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
-  const bestId = `bite:${bestBite?.part ?? "throat"}`;
-  if (preview.roundsToKill <= 1) return bestId;
-  if (preview.roundsToLive <= 2 && preview.fleeChance >= 0.4) return "flee";
-  // 读不出意图时「按兵不动」既可能是守也可能是逃 —— 拦一手的代价远小于丢掉整顿肉
-  const mayFlee = preview.intentKnown ? preview.enemyWillFlee : preview.intentClass === "hold";
-  if (mayFlee) return "bite:leg";
+export function recommendCombatActId(preview: CombatPreview): CombatActId {
+  return combatActId(recommendCombatAct(preview));
+}
+
+/** [S1] 代价读法：「自伤 3」「鳞之精气 8」。付不起时按钮上还要说清缺哪一样。 */
+function costText(cost: CombatSkillCost): string {
+  return cost.kind === "hp" ? `自伤 ${cost.amount}` : `${ESSENCE_LABELS[cost.type]}精气 ${cost.amount}`;
+}
+
+/**
+ * 一颗技能按钮的文案。
+ *
+ * 顺序刻意是「伤害 → 附带 → 冷却 → 代价」：前两项是收益，后两项是价钱。
+ * 四项**恒在**（哪怕是 0 伤的纯效果技也写清它不出伤），因为这排按钮有五到八颗，
+ * 少写一项就得靠玩家记住哪颗技是什么 —— 那正是「摸不着头脑」的来源。
+ */
+function skillEffectText(skill: CombatSkillPreview): string {
   /*
-   * 它宣告了重击、而它还看得见 → **先把它弄瞎**。
+   * 伤害那一格**恒有**：出伤就报区间，不出伤就明说「不出伤」。
    *
-   * 这一条是洞察类器官在屏幕上的兑现：致盲有五成五让它这一下完全打空，而扑是 2.2 倍伤 ——
-   * 花一记极轻的伤（1 点）换掉一次重击是明显的赚。读不出意图的 build **做不到这件事**，
-   * 它只知道「似要动手」，于是只能挨。实验台上这一条就是 seer 与 bare 的差额来源。
+   * 先前是「不出伤时省掉这一格」，实测（自己的单测）抓到的后果是：一颗写着
+   * 「明识·数合读得出它的意图 · 冷却 3 合 · 鳞精气 8」的按钮，玩家读不出它到底顺带
+   * 咬不咬一口 —— 而那正好决定「要不要在它血剩一口的时候按它」。省一个词换来一次歧义。
    */
-  if (preview.intentKnown && preview.intent.kind === "pounce" && preview.blind <= 0) {
-    return "bite:eye";
-  }
-  const skill = preview.skills.find((item) => item.ready);
-  if (skill) return `skill:${skill.organId}`;
-  if (preview.roundsToLive <= 3 && preview.blind <= 0) return "bite:eye";
-  // 长仗里先把它的势钝下来（附带效果不叠加，所以这一手有节奏：钝完就换回咬喉输出）
-  const leg = preview.bites.find((bite) => bite.part === "leg");
-  if (preview.roundsToKill >= 3 && leg?.riderLands === true) return "bite:leg";
-  if (preview.intentKnown && preview.intent.kind === "guard") {
-    const want: Stance = preview.roundsToLive <= 3 ? "low" : "lunge";
-    if (preview.stance !== want) return `stance:${want}`;
-  }
-  return bestId;
+  const parts: string[] = [
+    skill.damage.mid > 0 ? `伤 ${damageText(skill.damage)}` : "不出伤",
+  ];
+  for (const effect of skill.effects) parts.push(SKILL_EFFECT_LABELS[effect]);
+  parts.push(`冷却 ${skill.cooldown} 合`);
+  if (skill.cost) parts.push(costText(skill.cost));
+  return parts.join(" · ");
 }
 
 export function buildCombatVm(
@@ -231,7 +258,7 @@ export function buildCombatVm(
   const enemyHpMax = enemy?.hp ?? Math.max(1, combat.enemyHp);
   const playerHpMax = Math.max(1, state.stats.ti);
   const known = preview.intentKnown;
-  const recommended = recommendCombatAct(preview);
+  const recommended = recommendCombatActId(preview);
 
   const bites: CombatActionVm[] = preview.bites.map((bite) => {
     const meta = PART_ACT[bite.part];
@@ -269,6 +296,8 @@ export function buildCombatVm(
       enabled: true,
       disabledReason: null,
       group: "bite",
+      synergy: false,
+      flavor: null,
     };
   });
 
@@ -294,36 +323,40 @@ export function buildCombatVm(
         enabled: true,
         disabledReason: null,
         group: "stance",
+        synergy: false,
+        flavor: null,
       };
     });
 
-  const skills: CombatActionVm[] = preview.skills.map((skill) => {
-    const tail =
-      skill.effect === "heal"
-        ? "回血"
-        : skill.effect === "venom"
-          ? "附毒·迟滞"
-          : skill.effect === "stun"
-            ? "顿挫·它下合只守"
-            : skill.effect === "armor"
-              ? "护体·受伤减半"
-              : null;
-    const parts = skill.effect === "heal" ? ["回血"] : [`伤 ${damageText(skill.damage)}`];
-    if (tail && skill.effect !== "heal") parts.push(tail);
-    parts.push(`冷却 ${skill.cooldown} 合`);
-    return {
-      id: `skill:${skill.organId}`,
-      act: { kind: "skill", organId: skill.organId },
-      glyph: "技",
-      label: skill.name,
-      effect: parts.join(" · "),
-      warning: null,
-      highlight: recommended === `skill:${skill.organId}`,
-      enabled: skill.ready,
-      disabledReason: skill.ready ? null : `还需 ${skill.cooldownLeft} 合`,
-      group: "skill",
-    };
-  });
+  /*
+   * [S1] 技能池：全部技（器官技 ＋ 组合技）平铺在同一排按钮里。
+   *
+   * 不可用时**说清是哪一种不可用**：「还需 2 合」等得到，「鳞精气不足 8」这一架里等不到
+   * （得先去猎），两者对玩家的下一步是完全不同的指示。冷却与代价同时缺时先报冷却
+   * （它是马上会变的那一个）。
+   */
+  const skills: CombatActionVm[] = preview.skills.map((skill) => ({
+    id: `skill:${skill.skillId}`,
+    act: { kind: "skill", skillId: skill.skillId },
+    glyph: skill.synergyId === null ? "技" : "异",
+    label: skill.name,
+    effect: skillEffectText(skill),
+    warning: null,
+    // 组合技多一行它自己的描述（「咬住不松，把腺里的东西全挤进伤口」）—— 那次发现值得被记住
+    flavor: skill.synergyId === null ? null : skill.desc,
+    highlight: recommended === `skill:${skill.skillId}`,
+    enabled: skill.ready,
+    disabledReason:
+      skill.cooldownLeft > 0
+        ? `还需 ${skill.cooldownLeft} 合`
+        : skill.affordable || !skill.cost
+          ? null
+          : skill.cost.kind === "hp"
+            ? `血不够（需 ${skill.cost.amount}）`
+            : `${ESSENCE_LABELS[skill.cost.type]}精气不足（需 ${skill.cost.amount}）`,
+    group: "skill",
+    synergy: skill.synergyId !== null,
+  }));
 
   const flee: CombatActionVm = {
     id: "flee",
@@ -336,12 +369,18 @@ export function buildCombatVm(
     enabled: true,
     disabledReason: null,
     group: "flee",
+    synergy: false,
+    flavor: null,
   };
 
   const marks: string[] = [];
   if (preview.blind > 0) marks.push(`它半盲 ${preview.blind} 合`);
   if (preview.slow > 0) marks.push(`它迟滞 ${preview.slow} 合`);
   if (preview.ward > 0) marks.push(`护体 ${preview.ward} 合`);
+  // [S1] 三个新计数器同样要上屏：看不见的状态等于不存在（同 P1 四量那条纪律）
+  if (preview.bleed > 0) marks.push(`它流血 ${preview.bleed} 合`);
+  if (preview.thorns > 0) marks.push(`反刺 ${preview.thorns} 合`);
+  if (preview.insight > 0) marks.push(`明识 ${preview.insight} 合`);
 
   const intentDetail = known
     ? [

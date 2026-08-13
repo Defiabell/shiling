@@ -4,8 +4,23 @@
  * 「已解锁 / 可解锁 / 点数不足」三态与解锁花费的判定都在这里，界面只挑样式。
  */
 
-import { rollPremise, type Bloodline, type SeedDef, type TaleContent, type TaleState } from "@shiling/tale-sim";
-import { STAT_LABELS, STAT_ORDER, WAY_LABELS, WAY_SCOPES, formatSigned } from "./format.js";
+import {
+  boonCost,
+  rollPremise,
+  type Bloodline,
+  type OrganDef,
+  type SeedDef,
+  type TaleContent,
+  type TaleState,
+} from "@shiling/tale-sim";
+import {
+  STAT_LABELS,
+  STAT_ORDER,
+  WAY_LABELS,
+  WAY_SCOPES,
+  formatSigned,
+  skillMulLine,
+} from "./format.js";
 import { composeAscendGap } from "./chronicleVm.js";
 
 export type SeedLockState = "unlocked" | "affordable" | "locked";
@@ -55,9 +70,74 @@ export interface NextLifeVm {
   advice: string | null;
 }
 
+/**
+ * [S1] 「异变图鉴」的一行。
+ *
+ * 两种形态，**未发现的那一种不许泄露任何配方**（计划的铁律之一）：
+ * - 已发现：名号 ＋ 配方（器官名）＋ 那一手的效果 ＋ 因果一句。
+ * - 未发现：只有「？」与一句「尚未撞见」—— 连「要几件器官」都不说
+ *   （件数本身就是线索，而这一批的全部本钱是「意料之外」）。
+ */
+export interface SynergyRowVm {
+  /** 已发现才有 id（未发现的行连 id 都不给界面，免得从 DOM 里读出来） */
+  id: string | null;
+  known: boolean;
+  /** 已发现＝「溃咬」；未发现恒为「？」 */
+  name: string;
+  /** 已发现＝「狩齿 ＋ 毒腺」；未发现为空串 */
+  recipe: string;
+  /** 已发现＝那一手的账（伤害倍率／效果／冷却／代价）；未发现为空串 */
+  effect: string;
+  /** 已发现＝`SynergyDef.reveal` 那一句因果；未发现＝「尚未撞见」 */
+  note: string;
+}
+
+/** [S1] 「血脉」商店的一行：一件已发现过的器官，标价、买不买得起、买没买。 */
+export interface BoonRowVm {
+  organId: string;
+  name: string;
+  desc: string;
+  /** 「肢位 · 猛 +2 灵 +2 体 +2」 */
+  meta: string;
+  /** 有战技就报技名（这是买它的主要动机） */
+  skillName: string | null;
+  cost: number;
+  affordable: boolean;
+  /**
+   * 还差多少血统点（够买或已买时为 0）—— 同屏的神种卡也这么写。
+   * 只写「买不起」而不写差多少，玩家就不知道「再活一世够不够」。
+   */
+  shortfall: number;
+  /** 已经买下、下一世自带 */
+  chosen: boolean;
+}
+
+/**
+ * [S1] 血统点的第二个去处 ＋ 图鉴。
+ *
+ * 为什么与神种卡同屏：血统点此前**只能**解锁神种（三枚共 13 点），13 点花完后一世产的
+ * 3〜8 点永久无处可花 —— owner 的原话「血统没什么用途」说的就是这个。血脉与图鉴摆在
+ * 同一屏，转世那一刻的问题才从「按哪枚种」变成「这一世我要带什么、去凑什么」。
+ */
+export interface CodexVm {
+  /** 已发现的组合数 ／ 全部（「已知 3/10」） */
+  knownCount: number;
+  total: number;
+  caption: string;
+  rows: SynergyRowVm[];
+  /** 血脉可买的器官（已发现过的，最近发现的在前）；一件都没发现过时为空 */
+  boons: BoonRowVm[];
+  /** 已选的血脉（下一世自带），null ＝ 没买 */
+  chosenBoonName: string | null;
+  /** 一件都还没见过时的那句话（不留空白区） */
+  boonEmptyNote: string | null;
+}
+
 export interface SeedScreenVm {
   points: number;
   cards: SeedCardVm[];
+  /** [S1] 异变图鉴 ＋ 血脉 */
+  codex: CodexVm;
   /** 前世列传目录，**最新在前** */
   chronicle: { title: string; body: string; ending: string; years: number; organCount: number }[];
   /** 已历几世 */
@@ -112,6 +192,90 @@ function composeAdvice(last: TaleState | null, content: TaleContent, skyId: stri
   return `${head}这一世不妨试试${WAY_LABELS[suggest]} —— ${WAY_SCOPES[suggest]}。`;
 }
 
+/** 器官槽位的单字读法（与蜕变卷轴同一套字）。 */
+const SLOT_GLYPH: Record<string, string> = {
+  eye: "窍",
+  tooth: "颌",
+  hide: "皮",
+  limb: "肢",
+  gut: "腑",
+  spirit: "神",
+};
+
+/** 组合技那一手的账（按倍率读，与异变揭示演出共用 `skillMulLine`）。 */
+function synergySkillText(content: TaleContent, id: string): string {
+  const synergy = content.synergies.find((item) => item.id === id);
+  return synergy ? skillMulLine(synergy.skill, content.tuning) : "";
+}
+
+function organName(content: TaleContent, id: string): string {
+  return content.organs.find((organ) => organ.id === id)?.name ?? id;
+}
+
+function organMeta(organ: OrganDef): string {
+  const slot = SLOT_GLYPH[organ.slot] ?? organ.slot;
+  const mods = STAT_ORDER.filter((key) => (organ.statMods?.[key] ?? 0) !== 0).map(
+    (key) => `${STAT_LABELS[key]} ${formatSigned(organ.statMods?.[key] ?? 0)}`,
+  );
+  return [`${slot}位`, ...mods].join(" · ");
+}
+
+/**
+ * [S1] 图鉴 ＋ 血脉。
+ *
+ * **顺序恒定**（按 `content.synergies`）而不是「已发现的排前面」：位置固定，玩家才会记住
+ * 「第三格还是问号」—— 那一格就是他下一世想去凑的东西。若已发现的往前挤，问号的位置
+ * 每世都在动，图鉴就只是一个计数器。
+ */
+function buildCodexVm(bloodline: Bloodline, content: TaleContent): CodexVm {
+  const known = new Set(bloodline.knownSynergyIds);
+  const rows: SynergyRowVm[] = content.synergies.map((synergy) =>
+    known.has(synergy.id)
+      ? {
+          id: synergy.id,
+          known: true,
+          name: synergy.name,
+          recipe: synergy.organIds.map((id) => organName(content, id)).join(" ＋ "),
+          effect: synergySkillText(content, synergy.id),
+          note: synergy.reveal,
+        }
+      : { id: null, known: false, name: "？", recipe: "", effect: "", note: "尚未撞见" },
+  );
+  const boons: BoonRowVm[] = [...bloodline.knownOrganIds]
+    .reverse()
+    .map((id) => content.organs.find((organ) => organ.id === id))
+    .filter((organ): organ is OrganDef => organ !== undefined)
+    .map((organ) => {
+      const cost = boonCost(organ.id, content);
+      return {
+        organId: organ.id,
+        name: organ.name,
+        desc: organ.desc,
+        meta: organMeta(organ),
+        skillName: organ.combatSkill?.name ?? null,
+        cost,
+        // [S1] 与 `buyBoon` **逐条同形**（一世只带一件，买过就整排锁住）——
+        // 界面的置灰是那条规则的镜像，不许比它更严也不许更松
+        affordable: bloodline.boonOrganId === null && bloodline.points >= cost,
+        shortfall: Math.max(0, cost - bloodline.points),
+        chosen: bloodline.boonOrganId === organ.id,
+      };
+    });
+  const chosen = boons.find((boon) => boon.chosen);
+  return {
+    knownCount: known.size,
+    total: content.synergies.length,
+    caption: `已知异变 ${known.size}/${content.synergies.length}`,
+    rows,
+    boons,
+    chosenBoonName: chosen?.name ?? null,
+    boonEmptyNote:
+      boons.length > 0
+        ? null
+        : "还没有蜕出过任何器官 —— 活过一世、蜕一件形，这里就有东西可带了。",
+  };
+}
+
 /**
  * @param nextSeedNum 下一世将要用的种子数（`TaleApp` 按 `baseSeed + lifeIndex × φ` 算）——
  *   有了它才能**提前**问出这一世的天时与出身（`rollPremise` 是纯函数，与 `createLife` 同解）
@@ -147,6 +311,7 @@ export function buildSeedScreenVm(
   return {
     points: bloodline.points,
     cards,
+    codex: buildCodexVm(bloodline, content),
     next: {
       skyName: sky.name,
       skyEffect: sky.effect,

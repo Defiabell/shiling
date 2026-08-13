@@ -24,6 +24,7 @@ import {
   lifeTuning,
   waysProgress,
   organIndex,
+  type CombatSkillEffect,
   type EnemyDef,
   type EssenceType,
   type OrganDef,
@@ -575,24 +576,52 @@ export function tagEffects(tags: readonly string[], t: TaleTuning): string[] {
   return out;
 }
 
-/** 战斗技那一行的后果（`effect` 的实际账，数全从 tuning 来）。 */
+/**
+ * 战斗技那一行的后果（数全从 tuning 与技的数据来，界面不写第二份）。
+ *
+ * [S1] 效果是**数组**（一个技可以同时附两条），倍率与代价也归数据，所以这一行现在是
+ * 「伤害 ×N（按猛／按灵）· 效果一 · 效果二 · 冷却 · 代价」。器官详情里的这一行与
+ * 搏杀屏按钮上的那一行说的是同一件事，读法刻意一致。
+ */
 function skillEffectText(organ: OrganDef, t: TaleTuning): string {
   const skill = organ.combatSkill;
   if (!skill) return "";
   const cooldown = skill.cooldown ?? t.combatSkillCooldown;
-  const damage = `伤 ×${t.organSkillDamageMul}`;
-  const rider =
-    skill.effect === "stun"
-      ? "它下一合只守得住（等于偷一个回合）"
-      : skill.effect === "venom"
-        ? `给它挂迟滞 ${t.combatVenomSlowRounds} 合：出伤只剩 ${Math.round(t.combatSlowDamageMul * 100)}%，且扑不起来、逃不掉`
-        : skill.effect === "armor"
-          ? `给自己挂护体 ${t.combatWardRounds} 合：受伤减半`
-          : skill.effect === "heal"
-            ? `回 ${t.combatSkillHealAmount} 血（不出伤）`
-            : "纯伤，没有附带";
-  return `${skill.name}　${damage} · ${rider} · 冷却 ${cooldown} 合`;
+  const mul = skill.damageMul ?? t.organSkillDamageMul;
+  const parts: string[] = [];
+  parts.push(mul <= 0 ? "不出伤" : `伤 ×${mul}${skill.stat === "ling" ? "（按灵算）" : ""}`);
+  for (const effect of skill.effects ?? []) parts.push(SKILL_EFFECT_DETAIL[effect](t));
+  parts.push(`冷却 ${cooldown} 合`);
+  if (skill.cost) {
+    parts.push(
+      skill.cost.kind === "hp"
+        ? `代价 自伤 ${skill.cost.amount}`
+        : `代价 ${ESSENCE_LABELS[skill.cost.type]}之精气 ${skill.cost.amount}`,
+    );
+  }
+  return `${skill.name}　${parts.join(" · ")}`;
 }
+
+/**
+ * 十档效果各自的「实际账」—— 每一句都把 tuning 里的数实例化出来。
+ *
+ * 与按钮上的短读法（`format.SKILL_EFFECT_LABELS`）分工：那边一行要塞五颗按钮，只能写
+ * 结论；这里是点开来看的详情，写得出「出伤只剩 75%，且扑不起来、逃不掉」这种账。
+ */
+const SKILL_EFFECT_DETAIL: Record<CombatSkillEffect, (t: TaleTuning) => string> = {
+  stun: () => "它下一合只守得住（等于偷一个回合）",
+  venom: (t) =>
+    `给它挂迟滞 ${t.combatVenomSlowRounds} 合：出伤只剩 ${Math.round(t.combatSlowDamageMul * 100)}%，且扑不起来、逃不掉`,
+  bleed: (t) => `给它挂流血 ${t.combatBleedRounds} 合：每合末自损 ${t.combatBleedDamage}（它守着不动也照掉）`,
+  blind: (t) =>
+    `蒙其目 ${t.combatBlindRounds} 合：它 ${Math.round(t.combatBlindMissChance * 100)}% 打空，也不再反咬`,
+  armor: (t) => `给自己挂护体 ${t.combatWardRounds} 合：受伤减半`,
+  thorns: (t) => `反刺 ${t.combatThornsRounds} 合：它每命中你一次自伤 ${t.combatThornsDamage}`,
+  brace: () => "这一合硬受：它那一手伤害归零",
+  bolt: () => "必定脱身（不掷骰）—— 但这一架的精气与饱食都没有",
+  insight: (t) => `明识 ${t.combatInsightRounds} 合：读得出它的确切意图（不必有灵犀）`,
+  heal: (t) => `回 ${t.combatSkillHealAmount} 血`,
+};
 
 function organDetail(state: TaleState, content: TaleContent, id: string): DetailVm | null {
   const organ = organIndex(content).get(id);

@@ -9,13 +9,15 @@ import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import { seedArt } from "../art/assets.js";
 import { ENDING_LABELS, formatCountCn, formatYearCn } from "../model/format.js";
-import type { SeedCardVm, SeedScreenVm } from "../model/seedVm.js";
+import type { BoonRowVm, CodexVm, SeedCardVm, SeedScreenVm, SynergyRowVm } from "../model/seedVm.js";
 import type { EndingType } from "@shiling/tale-sim";
 
 export interface SeedProps {
   vm: SeedScreenVm;
   onChoose(seedId: string): void;
   onUnlock(seedId: string): void;
+  /** [S1] 买「血脉」：花血统点让下一世起手自带这件器官 */
+  onBuyBoon(organId: string): void;
   onBack(): void;
 }
 
@@ -108,6 +110,90 @@ function chronicleRow(
   ]);
 }
 
+/**
+ * [S1] 图鉴一行。
+ *
+ * 未发现的那一行**只渲染一个「？」**：不给 id、不给件数、不给任何 title —— 从 DOM 里
+ * 也读不出配方（这一批的全部本钱是「意料之外」，而 devtools 是玩家伸手就能开的东西）。
+ */
+function synergyRow(row: SynergyRowVm): HTMLElement {
+  if (!row.known) {
+    return el("li", { class: "codex__row is-unknown", attrs: { "data-synergy": "unknown" } }, [
+      el("b", { class: "codex__name", text: "？" }),
+      el("em", { class: "codex__note", text: row.note }),
+    ]);
+  }
+  return el("li", { class: "codex__row is-known", attrs: { "data-synergy": row.id ?? "" } }, [
+    el("div", { class: "codex__head" }, [
+      el("span", { class: "codex__seal", text: "异" }),
+      el("b", { class: "codex__name", text: row.name }),
+      el("span", { class: "codex__recipe", text: row.recipe }),
+    ]),
+    el("em", { class: "codex__effect", text: row.effect }),
+    el("p", { class: "codex__note", text: row.note }),
+  ]);
+}
+
+/** [S1] 血脉一行：一件已发现过的器官 ＋ 标价。买不起就置灰**并写清还差多少**。 */
+function boonRow(row: BoonRowVm, props: SeedProps): HTMLElement {
+  return el("li", { class: `boon__row${row.chosen ? " is-chosen" : ""}` }, [
+    el("div", { class: "boon__main" }, [
+      el("b", { class: "boon__name", text: row.name }),
+      el("span", { class: "boon__meta", text: row.meta }),
+      row.skillName ? el("em", { class: "boon__skill", text: `战技 · ${row.skillName}` }) : null,
+    ]),
+    el("button", {
+      class: `btn btn--ghost boon__buy${row.chosen ? " is-chosen" : ""}`,
+      text: row.chosen
+        ? "下一世自带"
+        : row.shortfall > 0
+          ? `血统 ${row.cost}（尚差 ${row.shortfall}）`
+          : `以血统 ${row.cost} 带上`,
+      attrs: {
+        type: "button",
+        disabled: row.chosen || !row.affordable,
+        "data-boon": row.organId,
+      },
+      on: { click: () => props.onBuyBoon(row.organId) },
+    }),
+  ]);
+}
+
+/**
+ * [S1] 「异变图鉴 ＋ 血脉」那一段。
+ *
+ * 摆在神种卡**之后**、前传之前：它回答的是「这一世我要带什么、去凑什么」，
+ * 而那是选完神种之后的问题。血统点此前只能解锁神种（三枚共 13 点，花完永久无处可花），
+ * 这一段就是它的第二个去处。
+ */
+function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
+  return el("section", { class: "seed__codex", attrs: { "data-codex": "1" } }, [
+    el("div", { class: "seed__codex-head" }, [
+      el("h2", { text: "异　变" }),
+      el("span", { attrs: { "data-codex-count": "1" }, text: codex.caption }),
+    ]),
+    el("p", {
+      class: "seed__codex-lede",
+      text: "某几件器官凑在一处会生出新的一手。配方不载于图鉴 —— 凑齐的那一刻自会知道。",
+    }),
+    el("ul", { class: "codex__list" }, codex.rows.map(synergyRow)),
+    el("div", { class: "seed__boon" }, [
+      el("div", { class: "seed__boon-head" }, [
+        el("h3", { text: "血　脉" }),
+        el("span", {
+          text:
+            codex.chosenBoonName === null
+              ? "花血统点，让下一世起手自带一件已见过的器官（一世只带一件）"
+              : `下一世自带　${codex.chosenBoonName} —— 一世只带一件，这一世的血脉已定`,
+        }),
+      ]),
+      codex.boonEmptyNote !== null
+        ? el("p", { class: "seed__boon-empty", text: codex.boonEmptyNote })
+        : el("ul", { class: "boon__list" }, codex.boons.map((row) => boonRow(row, props))),
+    ]),
+  ]);
+}
+
 export function renderSeedSelect(props: SeedProps): HTMLElement {
   const { vm } = props;
   return el("div", { class: "screen screen--seed" }, [
@@ -149,6 +235,7 @@ export function renderSeedSelect(props: SeedProps): HTMLElement {
         : null,
     ]),
     el("div", { class: "seed__grid" }, vm.cards.map((card) => seedCard(card, props))),
+    codexSection(vm.codex, props),
     vm.chronicle.length > 0
       ? el("section", { class: "seed__past" }, [
           el("div", { class: "seed__past-head" }, [

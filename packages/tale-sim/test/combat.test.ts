@@ -97,16 +97,19 @@ describe("搏杀：前置校验", () => {
 
   it("未持有的器官／没有战技的器官／还在冷却的技，一律抛错", () => {
     const bare = fighting(ENEMY_QIONG_QI);
-    expect(() => combatAct(bare, { kind: "skill", organId: ORGAN_GOU_CHI }, EXACT)).toThrow(/未持有器官/);
+    // [S1] 「没有这个技」一句话盖两种情形：技能池是由 combatSkills 算出来的，
+    // 「器官不在身上」与「器官没技」都表现为「池子里没有这个 skillId」——
+    // 分两句报错等于在客户端之外再维护一份「这个 id 是器官吗」的知识。
+    expect(() => combatAct(bare, { kind: "skill", skillId: ORGAN_GOU_CHI }, EXACT)).toThrow(/没有这个技/);
     const noSkill = withOrgans(bare, "wu-mu");
-    expect(() => combatAct(noSkill, { kind: "skill", organId: "wu-mu" }, EXACT)).toThrow(/没有战斗技/);
+    expect(() => combatAct(noSkill, { kind: "skill", skillId: "wu-mu" }, EXACT)).toThrow(/没有这个技/);
     const cooling = enterCombat(
       withOrgans(createLife(1, FIXTURE_SEED_ID, EXACT), ORGAN_GOU_CHI),
       ENEMY_QIONG_QI,
       EXACT,
       { skillCooldowns: { [ORGAN_GOU_CHI]: 2 } },
     );
-    expect(() => combatAct(cooling, { kind: "skill", organId: ORGAN_GOU_CHI }, EXACT)).toThrow(/还要等2合/);
+    expect(() => combatAct(cooling, { kind: "skill", skillId: ORGAN_GOU_CHI }, EXACT)).toThrow(/还要等2合/);
   });
 });
 
@@ -432,7 +435,7 @@ describe("搏杀：器官技与冷却", () => {
   it("伤害 ×organSkillDamageMul（4 × 2 = 8）", () => {
     const { state: next, roundLog } = combatAct(
       armed(EXACT),
-      { kind: "skill", organId: ORGAN_GOU_CHI },
+      { kind: "skill", skillId: ORGAN_GOU_CHI },
       EXACT,
     );
     expect(next.combat?.enemyHp).toBe(40 - 8);
@@ -441,7 +444,7 @@ describe("搏杀：器官技与冷却", () => {
 
   it("用掉即进冷却，缺省 combatSkillCooldown 回合后才好", () => {
     const content = pinIntent("guard", { combatSkillCooldown: 2 });
-    let state = combatAct(armed(content), { kind: "skill", organId: ORGAN_GOU_CHI }, content).state;
+    let state = combatAct(armed(content), { kind: "skill", skillId: ORGAN_GOU_CHI }, content).state;
     expect(state.combat?.skillCooldowns[ORGAN_GOU_CHI]).toBe(2);
     expect(combatPreview(state, content).skills[0]?.ready).toBe(false);
     state = combatAct(state, BITE("throat"), content).state;
@@ -459,7 +462,7 @@ describe("搏杀：器官技与冷却", () => {
     });
     const state = combatAct(
       armed(content, "long-cd"),
-      { kind: "skill", organId: "long-cd" },
+      { kind: "skill", skillId: "long-cd" },
       content,
     ).state;
     expect(state.combat?.skillCooldowns["long-cd"]).toBe(5);
@@ -468,11 +471,11 @@ describe("搏杀：器官技与冷却", () => {
   it("effect=venom 挂迟滞", () => {
     const content = contentWithoutEvents({
       tuning: { combatDamageJitter: 0, combatVenomSlowRounds: 3 },
-      organs: [...FIXTURE_CONTENT.organs, organWithSkill("venom-organ", "喷毒", "venom")],
+      organs: [...FIXTURE_CONTENT.organs, organWithSkill("venom-organ", "喷毒", ["venom"])],
     });
     const { state: next, roundLog } = combatAct(
       armed(content, "venom-organ"),
-      { kind: "skill", organId: "venom-organ" },
+      { kind: "skill", skillId: "venom-organ" },
       content,
     );
     expect(next.combat?.slow).toBe(2); // 3 挂上，回合末减 1
@@ -482,11 +485,11 @@ describe("搏杀：器官技与冷却", () => {
   it("effect=stun 把它下一回合的意图压成「守」", () => {
     const content = contentWithoutEvents({
       tuning: { combatDamageJitter: 0 },
-      organs: [...FIXTURE_CONTENT.organs, organWithSkill("stun-organ", "顿挫", "stun")],
+      organs: [...FIXTURE_CONTENT.organs, organWithSkill("stun-organ", "顿挫", ["stun"])],
     });
     const { state: next, roundLog } = combatAct(
       armed(content, "stun-organ"),
-      { kind: "skill", organId: "stun-organ" },
+      { kind: "skill", skillId: "stun-organ" },
       content,
     );
     expect(next.combat?.intent.kind).toBe("guard");
@@ -496,10 +499,15 @@ describe("搏杀：器官技与冷却", () => {
   it("effect=heal 回血且不出伤", () => {
     const content = contentWithoutEvents({
       tuning: { combatDamageJitter: 0, combatSkillHealAmount: 8 },
-      organs: [...FIXTURE_CONTENT.organs, organWithSkill("heal-organ", "疗愈", "heal")],
+      organs: [
+        ...FIXTURE_CONTENT.organs,
+        // [S1] 「不出伤」现在由数据声明（`damageMul: 0`），不再从 effect 反推 ——
+        // 组合技里「又咬又护」是正当的组合，见 skillDealsDamage 的注释
+        organWithSkill("heal-organ", "疗愈", ["heal"], undefined, { damageMul: 0 }),
+      ],
     });
     const hurt = armed(content, "heal-organ", { playerHp: 6 });
-    const { state: next } = combatAct(hurt, { kind: "skill", organId: "heal-organ" }, content);
+    const { state: next } = combatAct(hurt, { kind: "skill", skillId: "heal-organ" }, content);
     expect(next.combat?.enemyHp).toBe(40);
     // 6 ＋ 8 = 14，再挨它常规一口 6 → 8
     expect(next.combat?.playerHp).toBe(8);
@@ -509,23 +517,26 @@ describe("搏杀：器官技与冷却", () => {
   it("heal 不会超过体（血量上限＝ti）", () => {
     const content = contentWithoutEvents({
       tuning: { combatDamageJitter: 0, combatSkillHealAmount: 40 },
-      organs: [...FIXTURE_CONTENT.organs, organWithSkill("heal-organ", "疗愈", "heal")],
+      organs: [
+        ...FIXTURE_CONTENT.organs,
+        organWithSkill("heal-organ", "疗愈", ["heal"], undefined, { damageMul: 0 }),
+      ],
     });
     const state = armed(content, "heal-organ", {
       playerHp: 18,
       intent: { kind: "guard", text: "它守着。" },
     });
-    expect(combatAct(state, { kind: "skill", organId: "heal-organ" }, content).state.combat?.playerHp).toBe(20);
+    expect(combatAct(state, { kind: "skill", skillId: "heal-organ" }, content).state.combat?.playerHp).toBe(20);
   });
 
   it("effect=armor 挂护体，受伤减半", () => {
     const content = contentWithoutEvents({
       tuning: { combatDamageJitter: 0, combatWardRounds: 2, combatWardDamageMul: 0.5 },
-      organs: [...FIXTURE_CONTENT.organs, organWithSkill("armor-organ", "护体", "armor")],
+      organs: [...FIXTURE_CONTENT.organs, organWithSkill("armor-organ", "护体", ["armor"])],
     });
     const { state: next, roundLog } = combatAct(
       armed(content, "armor-organ"),
-      { kind: "skill", organId: "armor-organ" },
+      { kind: "skill", skillId: "armor-organ" },
       content,
     );
     // 护体当回合就生效：6 × 0.5 = 3
@@ -743,7 +754,7 @@ describe("搏杀：预览与真跑逐字对账（没有预览的按钮就是翻�
       { guardPart: "eye" },
     );
     const shown = combatPreview(state, EXACT).skills[0];
-    const after = combatAct(state, { kind: "skill", organId: ORGAN_GOU_CHI }, EXACT).state;
+    const after = combatAct(state, { kind: "skill", skillId: ORGAN_GOU_CHI }, EXACT).state;
     expect(shown?.damage.mid).toBe(40 - (after.combat?.enemyHp ?? 0));
   });
 

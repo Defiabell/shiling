@@ -12,7 +12,7 @@
 import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import type { ActionButtonVm } from "../model/actionVm.js";
-import type { CombatVm } from "../model/combatVm.js";
+import type { CombatActionVm, CombatVm } from "../model/combatVm.js";
 import type { DetailSel, DetailVm } from "../model/detailVm.js";
 import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
 import type { GuideVm } from "../model/guideVm.js";
@@ -563,6 +563,9 @@ function hpBar(label: string, name: string, hp: number, max: number, percent: nu
  * 三颗咬击 ＋ 两颗姿态（当前姿态不出按钮）＋ 器官技若干 ＋ 遁走。
  */
 function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
+  // [S1] 遁走单独拎出来（见下面 combat__stand 那段的理由）；其余按钮留在可滚的网格里
+  const flee = combat.actions.find((action) => action.group === "flee") ?? null;
+  const grid = combat.actions.filter((action) => action.group !== "flee");
   const log = el(
     "ol",
     { class: "combat__log" },
@@ -626,41 +629,61 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
         hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
         hpBar("我", "此身", combat.playerHp, combat.playerHpMax, combat.playerPercent, "self"),
       ]),
-      // 形势一行：「还撑得住约 3 合 · 它还需 4 下」—— 没有它，「什么时候该逃」就只能凭感觉
-      el("div", {
-        class: `combat__outlook${combat.outlookHot ? " is-hot" : ""}`,
-        text: combat.outlook,
-        attrs: { "data-outlook": "1" },
-      }),
+      /*
+       * [S1] **遁走从滚动网格里搬到形势那一行旁边**（`combat__stand`）。
+       *
+       * 两个理由，一个是实机量出来的、一个是设计上的：
+       * 1. 技能池长到 5〜8 颗（极端 build 十几颗）之后，网格必须能滚，而滚动会把**末尾**
+       *    那颗顶出可视区 —— 末尾正好是遁走。「什么时候该逃」是搏杀屏三道题之一，
+       *    它的按钮不能是要滚才找得到的那一颗。
+       * 2. 「还撑得住约 3 合 · 它还需 4 下」就是这道题的算式。按钮挨着它的依据放，
+       *    才读得成一句话。
+       */
+      el("div", { class: "combat__stand" }, [
+        el("div", {
+          class: `combat__outlook${combat.outlookHot ? " is-hot" : ""}`,
+          text: combat.outlook,
+          attrs: { "data-outlook": "1" },
+        }),
+        ...(flee ? [combatButton(flee, props)] : []),
+      ]),
       log,
-      el(
-        "div",
-        { class: "combat__acts" },
-        combat.actions.map((action) =>
-          el(
-            "button",
-            {
-              class: `cact cact--${action.group}${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}`,
-              attrs: {
-                type: "button",
-                disabled: !action.enabled || props.busy,
-                "data-combat": action.id,
-              },
-              title: action.disabledReason ?? action.warning ?? action.effect,
-              on: { click: () => props.onCombat(action.act) },
-            },
-            [
-              el("span", { class: "cact__seal", text: action.glyph }),
-              el("span", { class: "cact__text" }, [
-                el("b", { text: action.label }),
-                // 预期效果**恒在**：没有预览的按钮就是翻牌
-                el("em", { class: "cact__effect", text: action.disabledReason ?? action.effect }),
-                action.warning ? el("i", { class: "cact__warn", text: action.warning }) : null,
-              ]),
-            ],
-          ),
-        ),
-      ),
+      el("div", { class: "combat__acts" }, grid.map((action) => combatButton(action, props))),
+    ],
+  );
+}
+
+/** 一颗搏杀指令按钮 —— 网格与「形势那一行」共用这一份（两处长得必须一样）。 */
+function combatButton(action: CombatActionVm, props: PlayProps): HTMLElement {
+  return el(
+    "button",
+    {
+      class: `cact cact--${action.group}${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}${action.synergy ? " is-synergy" : ""}`,
+      attrs: {
+        type: "button",
+        disabled: !action.enabled || props.busy,
+        "data-combat": action.id,
+      },
+      title: action.disabledReason ?? action.warning ?? action.flavor ?? action.effect,
+      on: { click: () => props.onCombat(action.act) },
+    },
+    [
+      el("span", { class: "cact__seal", text: action.glyph }),
+      el("span", { class: "cact__text" }, [
+        el("b", { text: action.label }),
+        /*
+         * 预期效果**恒在**：没有预览的按钮就是翻牌。
+         *
+         * [S1] 不可用时**照样写后果**，把原因另起一行 —— 此前是「原因顶掉后果」，
+         * 技能池只有一颗按钮时无所谓，而现在有五到八颗：一颗只写「还需 2 合」的
+         * 按钮，玩家既不知道它是什么，也就没法决定「要不要留着它收官」。
+         */
+        el("em", { class: "cact__effect", text: action.effect }),
+        action.disabledReason ? el("i", { class: "cact__lock", text: action.disabledReason }) : null,
+        action.warning ? el("i", { class: "cact__warn", text: action.warning }) : null,
+        // 风味（组合技那一行）与警告分开排版：一个是「这一手是什么」，一个是「注意后果」
+        action.flavor ? el("i", { class: "cact__flavor", text: action.flavor }) : null,
+      ]),
     ],
   );
 }

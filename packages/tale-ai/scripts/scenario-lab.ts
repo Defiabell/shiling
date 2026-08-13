@@ -25,6 +25,7 @@ import {
   availableActions,
   combatAct,
   combatPreview,
+  recommendCombatAct,
   createCursor,
   createLife,
   eligibleChoiceIdxs,
@@ -108,14 +109,8 @@ function decideStalk(state: TaleState, content: TaleContent): StalkAct {
 }
 
 function decideCombat(state: TaleState, content: TaleContent): CombatAct {
-  const preview = combatPreview(state, content);
-  const best = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
-  const bestBite: CombatAct = { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
-  if (preview.roundsToKill <= 1) return bestBite;
-  if (preview.roundsToLive <= 2 && preview.fleeChance >= 0.4) return { kind: "flee" };
-  const skill = preview.skills.find((item) => item.ready);
-  if (skill) return { kind: "skill", organId: skill.organId };
-  return bestBite;
+  // [S1] 同 historian-lab：手抄镜像换成引擎导出的推荐链（漏改 skillId 时这里也崩过）
+  return recommendCombatAct(combatPreview(state, content));
 }
 
 function pickChoice(event: TaleEvent, eligible: readonly number[], roll: () => number): number {

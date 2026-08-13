@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   SYS_FLAG_ASCEND_READY,
   SYS_FLAG_STARVING,
-  combatSkillOrgan,
+  combatSkills,
+  SYNERGY_SKILL_PREFIX,
   createLife,
   organIndex,
   ownedOrgans,
@@ -27,6 +28,8 @@ import {
   ORGAN_WU_MU,
   contentWithoutEvents,
   makeContent,
+  makeSynergy,
+  organWithSkill,
   withOrgans,
 } from "./fixtures.js";
 
@@ -72,11 +75,48 @@ describe("器官解析 API（B3 靠它渲染门槛原因与战斗第四按钮）
     expect(ownedTags(withOrgans(life(), ORGAN_GOU_CHI), CONTENT).has("hunter")).toBe(true);
   });
 
-  it("combatSkillOrgan 与 combatAct 的 organ 前置条件严格一致", () => {
-    expect(combatSkillOrgan(life(), CONTENT)).toBeNull();
+  /**
+   * [S1] `combatSkillOrgan` 已删（它是 `.find`，只返回第一件带技器官）。
+   * 现在的公开查询是 `combatSkills` —— **池子**，而且与 `combatAct` 的前置条件同源：
+   * 池子里有这个 skillId ⇔ `combatAct` 不抛「没有这个技」。
+   */
+  it("combatSkills 返回全部带技器官（不是只有第一件），且与 combatAct 前置条件一致", () => {
+    expect(combatSkills(life(), CONTENT)).toEqual([]);
     const armed = withOrgans(life(), ORGAN_WU_MU, ORGAN_GOU_CHI);
-    expect(combatSkillOrgan(armed, CONTENT)?.id).toBe(ORGAN_GOU_CHI);
-    expect(combatSkillOrgan(armed, CONTENT)?.combatSkill?.name).toBe("撕咬");
+    // 雾目在 fixture 里没技，狩齿有 —— 池子按 organIds 顺序只收有技的那些
+    expect(combatSkills(armed, CONTENT).map((entry) => entry.skillId)).toEqual([ORGAN_GOU_CHI]);
+    expect(combatSkills(armed, CONTENT)[0]?.skill.name).toBe("撕咬");
+    expect(combatSkills(armed, CONTENT)[0]?.organId).toBe(ORGAN_GOU_CHI);
+    expect(combatSkills(armed, CONTENT)[0]?.synergyId).toBeNull();
+  });
+
+  it("身上两件带技器官时，池子里就有两条（S1 之前只有第一条）", () => {
+    const content = makeContent({
+      organs: [...CONTENT.organs, organWithSkill("second-skill", "二技")],
+    });
+    const armed = withOrgans(life(), ORGAN_GOU_CHI, "second-skill");
+    expect(combatSkills(armed, content).map((entry) => entry.skillId)).toEqual([
+      ORGAN_GOU_CHI,
+      "second-skill",
+    ]);
+  });
+
+  it("凑齐组合后池子里多一条组合技，skillId 带 syn: 前缀", () => {
+    const content = makeContent({
+      synergies: [
+        makeSynergy("test-syn", [ORGAN_GOU_CHI, ORGAN_WU_MU], {
+          name: "试组合",
+          desc: "两件凑齐。",
+          effects: ["stun"],
+        }),
+      ],
+    });
+    expect(combatSkills(withOrgans(life(), ORGAN_GOU_CHI), content)).toHaveLength(1);
+    const both = withOrgans(life(), ORGAN_GOU_CHI, ORGAN_WU_MU);
+    const pool = combatSkills(both, content);
+    expect(pool.map((entry) => entry.skillId)).toEqual([ORGAN_GOU_CHI, `${SYNERGY_SKILL_PREFIX}test-syn`]);
+    expect(pool[1]?.organId).toBeNull();
+    expect(pool[1]?.synergyId).toBe("test-syn");
   });
 });
 

@@ -32,6 +32,7 @@ import {
   availableActions,
   combatAct,
   combatPreview,
+  recommendCombatAct,
   composeChronicle,
   createCursor,
   createLife,
@@ -93,17 +94,17 @@ function decideStalk(state: TaleState, profile: Profile): StalkAct {
 
 function decideCombat(state: TaleState, profile: Profile): CombatAct {
   const preview = combatPreview(state, CONTENT);
-  const best = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
-  const bestBite: CombatAct = { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
   if (profile === "brute") {
+    // 莽夫：有技就放（不看局面）—— 与 `screen` 那一支的分工是「它不读屏幕」
     const skill = preview.skills.find((item) => item.ready);
-    return skill ? { kind: "skill", organId: skill.organId } : bestBite;
+    if (skill) return { kind: "skill", skillId: skill.skillId };
+    const best = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
+    return { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
   }
-  if (preview.roundsToKill <= 1) return bestBite;
-  if (preview.roundsToLive <= 2 && preview.fleeChance >= 0.4) return { kind: "flee" };
-  const skill = preview.skills.find((item) => item.ready);
-  if (skill) return skill.organId === undefined ? bestBite : { kind: "skill", organId: skill.organId };
-  return bestBite;
+  // [S1] 明理那一支直接用引擎导出的推荐链（＝玩家屏幕上发金光的那一手）。
+  // 此前是手抄镜像，S1 重命名 `organId → skillId` 时漏改，两个 lab 当场崩
+  // （`combatAct: 没有这个技 undefined`）—— 手抄的第四份就是这么埋的。
+  return recommendCombatAct(preview);
 }
 
 /** 抉择打分：`saint` 攒德与寿，`brute` 攒猛与夺命，`plain` 求稳（不挑送死那条）。 */

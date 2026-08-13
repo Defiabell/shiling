@@ -87,6 +87,9 @@ describe("与引擎对账：客户端唯一两处复算", () => {
         blind: 0,
         slow: 0,
         ward: 0,
+        bleed: 0,
+        thorns: 0,
+        insight: 0,
         skillCooldowns: {},
         log: [],
       },
@@ -108,6 +111,9 @@ describe("与引擎对账：客户端唯一两处复算", () => {
         blind: 0,
         slow: 0,
         ward: 0,
+        bleed: 0,
+        thorns: 0,
+        insight: 0,
         skillCooldowns: {},
         log: [],
       },
@@ -299,13 +305,18 @@ describe("器官详情：进化有啥好处（交付内容 B）", () => {
     expect(text).toContain(gate.choiceLabel!);
   });
 
-  it("战斗技把冷却与附带效果的账算给玩家", () => {
+  it("战斗技把冷却、附带效果与**代价**的账都算给玩家", () => {
     const state = realLife({ organIds: ["organ-ling-yun", ORGAN_LONG_XIAN] });
     const text = rowsText(state, { kind: "organ", id: ORGAN_LONG_XIAN });
+    const skill = TALE_CONTENT.organs.find((organ) => organ.id === ORGAN_LONG_XIAN)?.combatSkill;
     expect(text).toContain("龙吟");
-    expect(text).toContain(`伤 ×${T.organSkillDamageMul}`);
+    // [S1] 倍率归数据（龙吟是 ×1，不是缺省的 ×2）—— 断言读的是那件器官自己声明的数，
+    // 抄成 tuning 缺省值会让「内容把倍率改了而详情还在报旧值」这种谎溜过去
+    expect(text).toContain(`伤 ×${skill?.damageMul ?? T.organSkillDamageMul}`);
     expect(text).toContain(`护体 ${T.combatWardRounds} 合`);
     expect(text).toContain("冷却 4 合");
+    // [S1] 代价必须上屏：只写收益不写价钱的详情，就是这一批要消灭的那种「看不懂」
+    expect(text).toContain("代价 自伤 2");
     // 龙涎 affinity 为空：不入开奖池这件事要说出来（否则玩家会一直等它开出来）
     expect(text).toContain("不入蛰伏的开奖池");
   });

@@ -589,3 +589,130 @@
   animation: none !important;
   transform: none !important;
 }
+
+/* ==========================================================================
+   S1 异变揭示（凑齐一条器官组合的那一刻）
+   ==========================================================================
+   与蜕变开奖的分工：那边是「开奖」（滚动、悬念），这边是「确认」（浮现）——
+   组合是玩家自己凑出来的，没有悬念可言。
+   ========================================================================== */
+
+.synergy__fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.synergy__card {
+  position: relative;
+  width: min(520px, 92vw);
+  padding: 26px 30px 28px;
+  text-align: center;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.34), var(--sh-2);
+  backdrop-filter: blur(16px);
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 520ms var(--ease),
+    transform 520ms var(--ease);
+}
+
+.synergy__card.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+.synergy__kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  color: var(--cinnabar-lt);
+}
+
+.synergy__seal {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  background: rgba(226, 105, 76, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.5);
+  font-family: var(--kai);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+/* 配方先亮：玩家第一眼看到的是自己攒的那几件东西，而不是一个新名词 */
+.synergy__recipe {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.synergy__organ {
+  font-family: var(--kai);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+
+.synergy__plus {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--txt-3);
+}
+
+/* 因果排在名号之前：先懂道理，再知道它叫什么 */
+.synergy__reveal {
+  margin: 14px 0 0;
+  font-family: var(--kai);
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--txt-2);
+}
+
+.synergy__name {
+  margin-top: 16px;
+  font-family: var(--kai);
+  font-size: 30px;
+  letter-spacing: 0.18em;
+  color: var(--cinnabar-lt);
+  text-shadow: 0 0 26px rgba(226, 105, 76, 0.45);
+}
+
+.synergy__desc {
+  margin: 10px 0 0;
+  font-family: var(--kai);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--txt-2);
+}
+
+.synergy__stat {
+  margin-top: 12px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--gold-soft);
+}
+
+.synergy__foot {
+  margin: 14px 0 0;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--txt-3);
+}
+
+.synergy__confirm {
+  margin-top: 18px;
+}

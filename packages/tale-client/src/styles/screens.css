@@ -724,7 +724,8 @@
   display: flex;
   align-items: flex-start;
   gap: 20px;
-  padding: 22px 32px 0;
+  /* [S1] 上内边距 22 → 14：让出的 8px 正好是技能格多站半行的余量（实机量出来的） */
+  padding: 14px 30px 0;
 }
 
 .foe {
@@ -889,8 +890,9 @@
 
 .combat__bars {
   display: grid;
-  gap: 10px;
-  padding: 12px 30px 2px;
+  gap: 8px;
+  /* [S1] 同 combat__head：纵向每一处让出几像素，都是为了技能格少滚一行 */
+  padding: 8px 30px 2px;
 }
 
 .hp__head {
@@ -955,17 +957,29 @@
 }
 
 /*
- * 战斗日志：**高度给死**（约四行），不随内容增长 —— 同追猎屏那条教训（M1-P1 第五个缺陷）。
+ * 战斗日志：**高度稳定**（约四行），不随内容增长 —— 同追猎屏那条教训（M1-P1 第五个缺陷）。
  * P2 的一个回合最多吐五行（咬中／守备减半／反击／附带落地／它的动作），原来的
  * `max-height` 会让下面那片按钮一步一步往下挪，而搏杀是一屏之内连按五六次的界面。
  *
  * `flex: 0 0 auto` 不是装饰：卡片是纵向 flex 容器，光写 `height` 会被 flex 压缩
  * （实测压到 24px，一行都读不全 —— overflow 让 min-height:auto 解析成 0）。
+ *
+ * [S1] 改成 `flex: 0 1 auto` ＋ 保底三行（`min-height`）：技能池从 1 颗按钮长到 5〜8 颗
+ * （极端 build 十几颗），高度死钉的日志会把**遁走**那颗按钮挤出视口 —— 实机量到 1440×900
+ * 下裁掉 2〜8 颗按钮，而「什么时候该逃」正是那颗被裁掉的。让日志先让位，是因为它是
+ * **回顾**（滚得到），按钮是**当下**（点不到就等于不存在）。它仍然不随内容增长：
+ * 收缩只由「这一世技能多少颗」决定，同一场架里高度是常数，按钮不会在两次点击之间移位。
  */
 .combat__log {
   margin: 12px 30px 0;
   height: 108px;
-  flex: 0 0 auto;
+  min-height: 68px;
+  /*
+   * [S1] 收缩因子给到 100：卡片高度不够时**日志先让位、指令网格最后让位**
+   * （网格是 `flex: 1 1 auto`）。缺省的 1 : 1 会让两边按基准高度成比例地缩，
+   * 于是指令网格照样少半行 —— 而少的那半行是玩家点不到的按钮，日志少一行只是少看一句回顾。
+   */
+  flex: 0 100 auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -993,22 +1007,41 @@
  */
 .combat__acts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px 30px 14px;
+  /*
+   * [S1] 列数从死钉的 4 列改成自适应：卡片放宽到 1200 之后同一行能站 5〜6 颗，
+   * 于是「12 颗按钮」从 3 行压到 2 行。技能池是变长的（7〜16 颗），死钉列数必然溢出。
+   */
+  grid-template-columns: repeat(auto-fit, minmax(224px, 1fr));
+  gap: 7px;
+  padding: 8px 24px 12px;
+  /*
+   * 装不下时**这一格自己滚**，而不是把末尾几颗按钮顶出卡片（`.card` 是 overflow:hidden，
+   * 顶出去就是彻底消失）。实机量到的后果：1440×900 下裁掉 2〜8 颗按钮，而被裁掉的末尾
+   * 恰好是**遁走** —— 「什么时候该逃」那颗。`min-height: 0` 是让 flex 子项真能收缩的开关
+   * （不写它，overflow 容器的 min-height 解析成内容高度，于是根本不缩）。
+   */
+  min-height: 0;
+  /* 抢剩下的全部纵向空间（日志让位之后）；仍装不下才滚 */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-/* 全屏模式收掉了右栏与行动面板，横向空间是白给的 —— 与追猎卡同宽 */
+/*
+ * 全屏模式收掉了右栏与行动面板，横向空间是白给的 —— 与追猎卡同宽。
+ * [S1] 1000 → 1200：技能池长到 5〜8 颗按钮，一行多站一颗就少一整行（每行 ~76px）。
+ */
 .card--combat {
-  max-width: 1000px;
+  max-width: 1200px;
 }
 
 .cact {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 9px;
-  padding: 10px 11px 11px;
+  gap: 8px;
+  /* [S1] 内边距压一档：一排按钮从 76px 高降到 ~68px，五颗技能就少滚一行 */
+  padding: 8px 10px 9px;
   text-align: left;
   border-radius: var(--r);
   background: var(--glass-lo);
@@ -2916,4 +2949,320 @@
     margin-top: 10px;
   }
 
+}
+
+/* ==========================================================================
+   S1 技能组合：技能池的「异」印 ＋ 不可用原因另起一行 ＋ 转世屏的异变图鉴与血脉
+   ========================================================================== */
+
+/*
+ * 组合技（异变）用朱砂印，与器官技的金印分色 —— 玩家凑齐两件器官换来的一手，
+ * 若在按钮排里与器官技长得一样，那次发现就白发现了。
+ */
+.cact.is-synergy .cact__seal {
+  background: rgba(226, 105, 76, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.5);
+  color: var(--cinnabar-lt);
+}
+
+.cact.is-synergy {
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.3);
+}
+
+/* 不可用的原因：与后果**并存**（后果在上，原因在下），不再顶掉后果 */
+.cact__lock {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--txt-3);
+}
+
+.cact.is-locked .cact__lock {
+  color: var(--cinnabar-lt);
+}
+
+/* — 转世屏：异变图鉴 — */
+
+.seed__codex {
+  display: grid;
+  gap: 10px;
+  margin-top: 26px;
+  padding: 18px 20px 20px;
+  border-radius: var(--r-lg);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.seed__codex-head,
+.seed__boon-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.seed__codex-head h2,
+.seed__boon-head h3 {
+  margin: 0;
+  font-family: var(--kai);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  color: var(--txt);
+}
+
+.seed__codex-head span,
+.seed__boon-head span {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--gold-soft);
+}
+
+.seed__codex-lede {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--txt-3);
+}
+
+.codex__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.codex__row {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px 10px;
+  border-radius: var(--r);
+  background: rgba(8, 11, 16, 0.4);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+/* 未发现的一格：只有一个「？」—— 位置固定，玩家才会记住「第三格还是问号」 */
+.codex__row.is-unknown {
+  place-items: center;
+  padding: 14px 11px;
+  opacity: 0.5;
+}
+
+.codex__row.is-unknown .codex__name {
+  font-size: 20px;
+  color: var(--txt-3);
+}
+
+.codex__head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.codex__seal {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  background: rgba(226, 105, 76, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.42);
+  font-family: var(--kai);
+  font-size: 12px;
+  color: var(--cinnabar-lt);
+}
+
+.codex__name {
+  font-family: var(--kai);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--txt);
+}
+
+.codex__recipe {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+}
+
+.codex__effect {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--gold-soft);
+}
+
+.codex__note {
+  margin: 0;
+  font-family: var(--kai);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--txt-3);
+}
+
+/* — 转世屏：血脉 — */
+
+.seed__boon {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hair);
+}
+
+.seed__boon-empty {
+  margin: 0;
+  font-family: var(--kai);
+  font-size: 12.5px;
+  color: var(--txt-3);
+}
+
+.boon__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.boon__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: var(--r);
+  background: rgba(8, 11, 16, 0.4);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.boon__row.is-chosen {
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.45);
+}
+
+.boon__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.boon__name {
+  font-family: var(--kai);
+  font-size: 14.5px;
+  font-weight: 400;
+  color: var(--txt);
+}
+
+.boon__meta {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--txt-3);
+}
+
+.boon__skill {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--gold-soft);
+}
+
+.boon__buy {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+/*
+ * [S1] 形势那一行 ＋ 遁走：一句算式配一颗按钮。
+ *
+ * 遁走从可滚的指令网格里搬出来（见 playScreen 的 `combat__stand` 注释）：技能池长了之后
+ * 网格必须能滚，而滚动会把末尾那颗顶出可视区 —— 末尾正好是「什么时候该逃」那一颗。
+ */
+.combat__stand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 6px 30px 0;
+}
+
+.combat__stand .combat__outlook {
+  margin: 0;
+}
+
+ /*
+ * 形势行里的遁走按钮排成**横条**（不是网格里那种两行卡片）：
+ * 竖着放会吃掉 110px 的纵向空间 —— 那正好是指令网格的一整行按钮（实机量的）。
+ * 横排之后它只占 ~56px，而「成 五成 · 走得脱也吃不到」照样写在脸上。
+ */
+.combat__stand .cact {
+  flex: 0 0 auto;
+  width: min(420px, 46%);
+  align-items: center;
+  padding: 7px 12px;
+}
+
+.combat__stand .cact__text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+/*
+ * [S1] 矮屏（≤860px 高）把搏杀卡的上半身压一档 —— 技能池长了之后，那一档正好是
+ * 指令网格的一整行。实机量（1440×800，10〜11 颗按钮）：不压则要滚，压完两行全露。
+ * 只动内边距与头像尺寸，不动任何读数与按钮 —— 少显示一个数比多滚一行糟得多。
+ */
+@media (max-height: 860px) {
+  .card--combat .combat__head {
+    padding: 8px 30px 0;
+  }
+
+  .card--combat .foe {
+    width: clamp(72px, 8vw, 96px);
+  }
+
+  .combat__bars {
+    gap: 6px;
+    padding: 4px 30px 0;
+  }
+
+  .combat__log {
+    min-height: 52px;
+  }
+
+  .combat__stand {
+    margin-top: 4px;
+  }
+
+  /* 按钮本身也压一档：一行从 ~97px 降到 ~82px，两行就装得下（10〜11 颗按钮） */
+  .combat__acts .cact {
+    padding: 6px 9px 7px;
+  }
+
+  .combat__acts .cact__effect,
+  .combat__acts .cact__lock,
+  .combat__acts .cact__warn {
+    font-size: 10.5px;
+    line-height: 1.45;
+  }
+}
+
+/* 组合技那一行风味（与警告分色：一个说「这一手是什么」，一个说「注意后果」） */
+.cact__flavor {
+  font-family: var(--kai);
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--cinnabar-lt);
+  opacity: 0.85;
 }

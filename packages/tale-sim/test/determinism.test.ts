@@ -382,6 +382,7 @@ describe("禁用 API 纪律（源码扫描）", () => {
       "origins",
       "seeds",
       "skies",
+      "synergies",
       "tuning",
     ]);
     expect(FIXTURE_CONTENT.events).toHaveLength(3);

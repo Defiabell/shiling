@@ -33,6 +33,7 @@ import {
   createLife,
   eligibleChoiceIdxs,
   performAction,
+  recommendCombatAct,
   resolveChoice,
   stalkAct,
   stalkPreview,
@@ -40,7 +41,6 @@ import {
   WAY_FLAGS,
   waysProgress,
   type ActionId,
-  type BodyPart,
   type CombatAct,
   type StalkAct,
   type ChronicleEntry,
@@ -141,36 +141,15 @@ function decideStalk(state: TaleState): StalkAct {
 }
 
 /**
- * 搏杀策略（M1-P2）：**明理但不作弊** —— 只读 `combatPreview`（界面摆给玩家看的那些数）。
+ * 搏杀策略：直接用引擎导出的 `recommendCombatAct`（＝**玩家屏幕上发金光的那一手**）。
  *
- * 优先级链是一份可执行的手感说明，与 `tale-client` 的 `recommendCombatAct` 同形
- * （改推荐链要同步三处：这里／`packages/gen` 实验台／客户端那个函数，三处都有注释指回去）：
- * 它要走就咬腿拦住（不然整顿肉白丢）→ 撑不住就逃 → 器官技好了就放 →
- * 挨得凶就扑眼买回合 → 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处）。
+ * [S1] 这里原先是客户端那条链的**手抄镜像**（三处之一）。S1 把技能池从 1 颗按钮扩到
+ * 5〜8 颗、推荐链从 9 条长到 11 条之后，手抄必然漂移 —— 而漂移的后果是这条冒烟
+ * 「一个明理玩家按屏幕打不会饿死」量的**不是玩家真按的那套打法**。推荐链已上提到
+ * `tale-sim`（呈现层建议，引擎自己不消费，见它的 JSDoc），三处镜像就此收成一份。
  */
 function decideCombat(state: TaleState): CombatAct {
-  const p = combatPreview(state, CONTENT);
-  const best = [...p.bites].sort((a, b) => b.damage.mid - a.damage.mid)[0];
-  const bestBite: CombatAct = { kind: "bite", part: (best?.part ?? "throat") as BodyPart };
-  if (p.roundsToKill <= 1) return bestBite;
-  if (p.roundsToLive <= 2 && p.fleeChance >= 0.4) return { kind: "flee" };
-  const mayFlee = p.intentKnown ? p.enemyWillFlee : p.intentClass === "hold";
-  if (mayFlee) return { kind: "bite", part: "leg" };
-  // 它宣告了重击而它还看得见 → 先弄瞎它（致盲五成五让 2.2 倍的那一下整个打空）。
-  // 读不出意图的 build 做不到这一手 —— 这一条就是 seer 与 bare 的差额来源。
-  if (p.intentKnown && p.intent.kind === "pounce" && p.blind <= 0) {
-    return { kind: "bite", part: "eye" };
-  }
-  const skill = p.skills.find((item) => item.ready);
-  if (skill) return { kind: "skill", organId: skill.organId };
-  if (p.roundsToLive <= 3 && p.blind <= 0) return { kind: "bite", part: "eye" };
-  const leg = p.bites.find((bite) => bite.part === "leg");
-  if (p.roundsToKill >= 3 && leg?.riderLands === true) return { kind: "bite", part: "leg" };
-  if (p.intentKnown && p.intent.kind === "guard") {
-    const want = p.roundsToLive <= 3 ? "low" : "lunge";
-    if (p.stance !== want) return { kind: "stance", to: want };
-  }
-  return bestBite;
+  return recommendCombatAct(combatPreview(state, CONTENT));
 }
 
 /**

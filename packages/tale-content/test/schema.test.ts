@@ -1,5 +1,5 @@
 /**
- * 内容 schema 校验 —— 44 事件 ＋ 12 器官 ＋ 3 神种 ＋ 8 敌人 ＋ 列传模板 ＋ tuning 的静态体检。
+ * 内容 schema 校验 —— 44 事件 ＋ 12 器官 ＋ 10 组合 ＋ 3 神种 ＋ 8 敌人 ＋ 列传模板 ＋ tuning 的静态体检。
  *
  * 这些断言不是形式主义：本库全是手写数据，**一个拼错的 id 或 tag 不会让任何运行时报错，
  * 只会静默变成一条永远不入池的事件、一个永远置灰的按钮、或一个永远拿不到的器官**。
@@ -10,6 +10,7 @@
  * 2. 数量与分布（计划 B2 节的硬性清单）
  * 3. 文案纪律（长度、全角标点、标题/label 尺寸）
  * 4. 视觉 token 一致性（brief 里的具名角色必须来自 token 表）
+ * 5. [S1] 技能与组合表（12 件器官全部带技、效果分散、配方自洽且凑得到）
  */
 
 import { describe, expect, it } from "vitest";
@@ -37,6 +38,7 @@ import {
   REST_EVENTS,
   SEEDS,
   SKIES,
+  SYNERGIES,
   TALE_CONTENT,
   TUNING,
   VISUAL_TOKENS,
@@ -653,6 +655,172 @@ describe("视觉 token", () => {
         tokenNames.some((name) => enemy.name.includes(name)),
         `敌人 ${enemy.name} 缺视觉 token`,
       ).toBe(true);
+    }
+  });
+});
+
+/*
+ * ===== 5. [S1] 技能与组合表 =====
+ *
+ * 这一组守的是 S1 的三条设计约束 —— 每一条错了都**不会有任何运行时报错**：
+ * 少一件器官带技 ＝ 那一世蜕出它只涨属性（owner 原话「摸不着头脑」的来源）；
+ * 效果全是纯伤害 ＝ 技能池是一排等价按钮；配方指向不存在的器官 ＝ 一条永远凑不齐的组合
+ * （而图鉴上那一格会永远是「？」，玩家会一直去凑一个不存在的东西）。
+ */
+
+describe("S1 器官战斗技", () => {
+  it("12 件器官**全部**带 combatSkill（S1 之前只有 4 件）", () => {
+    const missing = ORGANS.filter((organ) => !organ.combatSkill).map((organ) => organ.id);
+    expect(missing).toEqual([]);
+    expect(ORGANS).toHaveLength(12);
+  });
+
+  it("每个技都有冷却与代价 —— 只有冷却的技是「转好了就按」", () => {
+    for (const organ of ORGANS) {
+      const skill = organ.combatSkill;
+      expect(skill?.cooldown, organ.id).toBeGreaterThanOrEqual(2);
+      expect(skill?.cost, organ.id).toBeDefined();
+      if (skill?.cost?.kind === "hp") {
+        // 自伤要付得起：出生体质 20，代价过半就成了陷阱按钮
+        expect(skill.cost.amount, organ.id).toBeLessThanOrEqual(5);
+      } else if (skill?.cost?.kind === "essence") {
+        // 精气代价不能超过蜕变阈值的四分之一 —— 否则一次技就吃掉小半个蜕变
+        expect(skill.cost.amount, organ.id).toBeLessThanOrEqual(TALE_CONTENT.tuning.moltThreshold / 4);
+      }
+    }
+  });
+
+  it("效果类型分散：至少 6 档不同的效果在用，纯伤害技不超过 2 件", () => {
+    const kinds = new Set(ORGANS.flatMap((organ) => organ.combatSkill?.effects ?? []));
+    expect(kinds.size).toBeGreaterThanOrEqual(6);
+    const pureDamage = ORGANS.filter((organ) => (organ.combatSkill?.effects ?? []).length === 0);
+    expect(pureDamage.map((organ) => organ.id).length).toBeLessThanOrEqual(2);
+  });
+
+  it("控制／防御类技的伤害倍率压在缺省之下（否则三颗咬击按钮又废了）", () => {
+    const control = ["blind", "stun", "thorns", "brace", "insight", "bolt", "heal"];
+    for (const organ of ORGANS) {
+      const skill = organ.combatSkill;
+      if (!skill?.effects?.some((effect) => control.includes(effect))) continue;
+      expect(skill.damageMul ?? TALE_CONTENT.tuning.organSkillDamageMul, organ.id).toBeLessThan(
+        TALE_CONTENT.tuning.organSkillDamageMul,
+      );
+    }
+  });
+
+  it("精气代价的型跟着器官的 affinity 走（付的是养出它的那一型）", () => {
+    for (const organ of ORGANS) {
+      const cost = organ.combatSkill?.cost;
+      if (cost?.kind !== "essence") continue;
+      expect(organ.affinity[cost.type], organ.id).toBeGreaterThan(0);
+    }
+  });
+
+  it("不出伤的技必须显式写 damageMul: 0（靠 rollDamage 的下限会偷偷打 1 点）", () => {
+    const noDamage = ["heal", "bolt", "insight", "brace"];
+    for (const organ of ORGANS) {
+      const skill = organ.combatSkill;
+      if (!skill) continue;
+      const onlyNoDamage =
+        (skill.effects ?? []).length > 0 &&
+        (skill.effects ?? []).every((effect) => noDamage.includes(effect));
+      if (onlyNoDamage) expect(skill.damageMul, organ.id).toBe(0);
+    }
+  });
+});
+
+describe("S1 器官组合表（异变）", () => {
+  it("10 条组合，id 唯一且不与器官 id 撞", () => {
+    expect(SYNERGIES).toHaveLength(10);
+    const ids = SYNERGIES.map((synergy) => synergy.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const organIds = new Set(ORGANS.map((organ) => organ.id));
+    for (const id of ids) expect(organIds.has(id)).toBe(false);
+  });
+
+  it("器官 id 不许以 syn: 开头（skillId 命名空间要分得开）", () => {
+    for (const organ of [...ORGANS, ...SEEDS.map((seed) => seed.organ)]) {
+      expect(organ.id.startsWith("syn:"), organ.id).toBe(false);
+    }
+  });
+
+  it("配方是 2〜3 件**真实存在**的器官，且同一条里不重复", () => {
+    const organIds = new Set(ORGANS.map((organ) => organ.id));
+    for (const synergy of SYNERGIES) {
+      expect(synergy.organIds.length, synergy.id).toBeGreaterThanOrEqual(2);
+      expect(synergy.organIds.length, synergy.id).toBeLessThanOrEqual(3);
+      expect(new Set(synergy.organIds).size, synergy.id).toBe(synergy.organIds.length);
+      for (const id of synergy.organIds) expect(organIds.has(id), `${synergy.id} → ${id}`).toBe(true);
+    }
+  });
+
+  it("没有两条组合共用同一份配方（否则一次凑齐会同时报两条，玩家分不出是哪一条给的）", () => {
+    const keys = SYNERGIES.map((synergy) => [...synergy.organIds].sort().join("+"));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  /**
+   * 「情理之中」没法被断言（那是文案判断，由报告里的第②问回答），但**它的载体必须在**：
+   * `reveal` 是因果那一句，缺了它揭示演出就只剩「解锁了一个新按钮」。
+   */
+  it("每条都有因果一句（reveal）与风味（desc），且都不是占位", () => {
+    for (const synergy of SYNERGIES) {
+      expect(synergy.reveal.length, synergy.id).toBeGreaterThanOrEqual(10);
+      expect(synergy.desc.length, synergy.id).toBeGreaterThanOrEqual(10);
+      expect(synergy.reveal, synergy.id).not.toContain("TODO");
+      expect(synergy.skill.desc.length, synergy.id).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it("组合技的冷却与代价都比单件器官技重一档（它是攒来的，不是白拿的）", () => {
+    const organMaxCooldown = Math.max(
+      ...ORGANS.map((organ) => organ.combatSkill?.cooldown ?? TALE_CONTENT.tuning.combatSkillCooldown),
+    );
+    for (const synergy of SYNERGIES) {
+      expect(synergy.skill.cooldown, synergy.id).toBeGreaterThanOrEqual(4);
+      expect(synergy.skill.cost, synergy.id).toBeDefined();
+      // 三件配方的那两条（capstone）要最贵
+      if (synergy.organIds.length === 3) {
+        expect(synergy.skill.cooldown, synergy.id).toBeGreaterThanOrEqual(organMaxCooldown + 1);
+      }
+    }
+  });
+
+  /**
+   * 组合技必须**与任何单件器官技不同形** —— 否则凑齐两件器官换来的只是「又一颗按钮」。
+   *
+   * 判据不写成「≥2 条效果或更高倍率」：那会漏掉一类真正的新东西 —— 「穿地」是
+   * 「出伤 ＋ 这一合免伤」，而 12 件器官里带 `brace` 的那件（合鳞）**不出伤**。
+   * 「同一组效果、伤害不低于它」才是「同形」的定义。
+   */
+  it("每条组合技都与所有单件器官技不同形（不能只是「又一个技」）", () => {
+    const key = (effects: readonly string[]): string => [...effects].sort().join("+");
+    const organSkills = ORGANS.map((organ) => ({
+      id: organ.id,
+      key: key(organ.combatSkill?.effects ?? []),
+      mul: organ.combatSkill?.damageMul ?? TALE_CONTENT.tuning.organSkillDamageMul,
+    }));
+    for (const synergy of SYNERGIES) {
+      const mul = synergy.skill.damageMul ?? TALE_CONTENT.tuning.organSkillDamageMul;
+      const sameShape = organSkills.find(
+        (organ) => organ.key === key(synergy.skill.effects ?? []) && organ.mul >= mul,
+      );
+      expect(sameShape?.id ?? null, synergy.id).toBeNull();
+    }
+  });
+
+  /**
+   * **凑得到**才算数（这一条是数值约束，不是洁癖）：蛰伏开奖按 `affinity × 该型精气` 加权，
+   * 所以一世拿到的器官大概率同属一两个精气型。若某一型没有任何**同型可凑**的配方，
+   * 走那条精气线的玩家首世发现率近乎零 —— 那时「隐藏」就不是惊喜而是无感。
+   */
+  it("四型精气各有至少一条「同型可凑」的配方（首世发现率的下限）", () => {
+    const organById = new Map(ORGANS.map((organ) => [organ.id, organ] as const));
+    for (const type of ["zu", "lin", "xue", "meng"] as const) {
+      const reachable = SYNERGIES.filter((synergy) =>
+        synergy.organIds.every((id) => (organById.get(id)?.affinity[type] ?? 0) >= 0.2),
+      );
+      expect(reachable.length, type).toBeGreaterThanOrEqual(1);
     }
   });
 });

@@ -27,6 +27,8 @@ import type {
   ChroniclePraiseVariant,
   ChronicleTemplates,
   CombatAct,
+  CombatSkillCost,
+  CombatSkillDef,
   CombatSkillEffect,
   EffectDelta,
   EnemyDef,
@@ -47,6 +49,7 @@ import type {
   StalkState,
   Stance,
   Stats,
+  SynergyDef,
   TaleEvent,
   TaleState,
   TaleTuning,
@@ -73,6 +76,11 @@ export interface TaleContent {
   skies: PremiseDef[];
   /** [2026-08-13] 出身池（异相）—— 同上，不得为空。 */
   origins: PremiseDef[];
+  /**
+   * [S1] 器官组合表（异变）。**可以为空**（空表＝这一版没有组合可发现），与天时池不同：
+   * 空的天时池会让 `createLife` 抛错，而空的组合表只是让图鉴显示「已知 0/0」。
+   */
+  synergies: SynergyDef[];
   tuning: TaleTuning;
   /** 结构见 types.ts 的 ChronicleTemplates，composeChronicle 消费 */
   chronicleTemplates: ChronicleTemplates;
@@ -86,6 +94,14 @@ export interface TurnResult {
   pendingEvent: TaleEvent | null;
   notices: string[];
   moltResult: MoltResult | null;
+  /**
+   * [S1] 这一步**新凑齐**的器官组合（`SynergyDef`，按 `content.synergies` 顺序）。
+   *
+   * 「新」＝这一步之前不满足、之后满足（引擎手上同时有两个状态，所以这个差集只能由它算；
+   * 让界面自己前后比对等于把规则抄进客户端）。**是否播「首次发现」的大演出由客户端定** ——
+   * 引擎不认识 `Bloodline`，第二世重新凑齐同一条组合时它照样报，客户端据图鉴决定演出规格。
+   */
+  newSynergies: SynergyDef[];
 }
 
 /**
@@ -111,6 +127,8 @@ export interface ChoiceResult {
   state: TaleState;
   outcomeText: string;
   delta: EffectDelta;
+  /** [S1] 这一次抉择（`addOrganId`）**新凑齐**的组合；语义同 `TurnResult.newSynergies` */
+  newSynergies: SynergyDef[];
 }
 
 /**
@@ -259,17 +277,32 @@ export interface StancePreview {
 }
 
 export interface CombatSkillPreview {
-  organId: string;
+  /** 交给 `combatAct({ kind: "skill", skillId })` 的那个 id（器官技＝器官 id，组合技＝`syn:<id>`） */
+  skillId: string;
+  /** 器官技的来源器官；组合技为 null */
+  organId: string | null;
+  /** [S1] 组合技的来源组合（`SynergyDef.id`）；器官技为 null —— 界面据它打「异变」印记 */
+  synergyId: string | null;
   name: string;
   desc: string;
-  effect: CombatSkillEffect | null;
-  /** 冷却已好，这一回合能使 */
+  /** [S1] 附带效果（可多条；空数组＝纯伤害） */
+  effects: CombatSkillEffect[];
+  /** 这一回合**能不能使**＝冷却已好 **且** 付得起代价 */
   ready: boolean;
-  /** 还要等几回合（0 ＝ 现在就能使） */
+  /** 还要等几回合（0 ＝ 冷却已好） */
   cooldownLeft: number;
   /** 用掉之后要等几回合 */
   cooldown: number;
-  /** 伤害区间（`heal` 类恒为 0） */
+  /** [S1] 代价；null ＝ 无代价 */
+  cost: CombatSkillCost | null;
+  /**
+   * [S1] 付得起代价（`hp` 类要求付完还活着 —— 自伤致死的按钮是陷阱，不是取舍）。
+   *
+   * 与 `cooldownLeft` 分开报是因为**不可用的原因不同**，而按钮上要写清是哪一个：
+   * 「还需 2 合」是等得到的，「鳞之精气不足」是这一架里等不到的（得去猎）。
+   */
+  affordable: boolean;
+  /** 伤害区间（`heal` 类与纯效果类恒为 0） */
   damage: DamageRange;
 }
 
@@ -288,7 +321,14 @@ export interface CombatPreview {
   bites: BitePreview[];
   /** 三种姿态，顺序恒为 伏低→正对→扑击（含当前姿态，`current` 为真） */
   stances: StancePreview[];
-  /** 持有的带战斗技的器官，按 `organIds` 顺序；空数组＝这一世还没有技 */
+  /**
+   * [S1] **技能池**：持有的全部器官技 ＋ 已凑齐的组合技，顺序恒为「器官技（按 `organIds`）
+   * → 组合技（按 `content.synergies`）」。空数组＝这一世还没有技。
+   *
+   * S1 之前这里只有一件器官的技（`combatSkillOrgan` 是 `.find`），身上五件带技器官也只
+   * 用得上一件 —— 「组合」的可能性为零。现在它是池子，界面把全部技（含冷却态与
+   * 不可用原因）摆在同一屏。
+   */
   skills: CombatSkillPreview[];
   fleeChance: number;
   /** 它这一回合若打中，会挨多少（已含意图倍率、姿态、迟滞、护体） */
@@ -306,9 +346,19 @@ export interface CombatPreview {
   roundsToLive: number;
   /** 还要几下能打死它（估，按当前最强的一咬算） */
   roundsToKill: number;
+  /** [S1] 双方血量 —— 界面本来就从 `state.combat` 读，这里同报一份是为了让 `recommendCombatAct`
+   *  只吃 `CombatPreview` 一个入参（「这一手打不打得死它」算不出来的话，推荐链就只能猜） */
+  enemyHp: number;
+  playerHp: number;
   blind: number;
   slow: number;
   ward: number;
+  /** [S1] 敌人流血剩余回合（每回合末它自己掉血） */
+  bleed: number;
+  /** [S1] 我方反刺剩余回合（它每命中我一次就自伤） */
+  thorns: number;
+  /** [S1] 我方明识剩余回合（期间 `intentKnown` 为真，哪怕没有洞察器官） */
+  insight: number;
   /** 它这一回合真的会走掉（意图＝逃且未被迟滞）—— 不拦就什么都拿不到 */
   enemyWillFlee: boolean;
 }
@@ -496,13 +546,85 @@ export function ownedTags(state: TaleState, content: TaleContent): Set<string> {
 }
 
 /**
- * 提供战斗技的器官（多个则取 `organIds` 里最早的那个）；没有则 null。
+ * [S1] 已凑齐的器官组合（按 `content.synergies` 顺序）。
  *
- * B3 用它决定战斗界面第四个按钮是否点亮、显示什么技名 —— `combatAct(state, "organ", …)`
- * 在返回 null 时会抛错。
+ * 判据只有一条：配方里的每一件器官都在身上（`organIds`）。**不看是怎么来的** ——
+ * 蛰伏开出来的、事件送的、血脉带来的，一样算。
  */
-export function combatSkillOrgan(state: TaleState, content: TaleContent): OrganDef | null {
-  return ownedOrgans(state, content).find((organ) => organ.combatSkill) ?? null;
+export function ownedSynergies(state: TaleState, content: TaleContent): SynergyDef[] {
+  const owned = new Set(state.organIds);
+  return content.synergies.filter((synergy) => synergy.organIds.every((id) => owned.has(id)));
+}
+
+/** [S1] 组合技的 `skillId` 前缀 —— 器官 id 不许以它开头（内容 schema 测试盯着这条）。 */
+export const SYNERGY_SKILL_PREFIX = "syn:";
+
+/**
+ * [S1] 这一步**新凑齐**了哪些组合（差集，按 `content.synergies` 顺序）。
+ *
+ * 只在「获得器官」那两条路径（蛰伏开奖／事件 `addOrganId`）之后调 —— 别处 organIds 不变，
+ * 差集恒为空，白算一遍。
+ */
+function newSynergiesBetween(
+  before: TaleState,
+  after: TaleState,
+  content: TaleContent,
+): SynergyDef[] {
+  if (before.organIds.length === after.organIds.length) return [];
+  const had = new Set(ownedSynergies(before, content).map((synergy) => synergy.id));
+  return ownedSynergies(after, content).filter((synergy) => !had.has(synergy.id));
+}
+
+/** [S1] 技能池里的一条：一个技 ＋ 它是从哪儿来的。 */
+export interface CombatSkillEntry {
+  /** 交给 `combatAct` 的 id（器官技＝器官 id，组合技＝`syn:<synergyId>`） */
+  skillId: string;
+  organId: string | null;
+  synergyId: string | null;
+  skill: CombatSkillDef;
+}
+
+/**
+ * [S1] 这一世**全部可用的技**：器官技（按 `organIds` 顺序）＋ 已凑齐的组合技。
+ *
+ * ## 它替掉了 `combatSkillOrgan`
+ * 那个函数是 `ownedOrgans(...).find(o => o.combatSkill)` —— **只取第一件**，而且取的是
+ * `organIds` 顺序里碰巧最前的那件。身上五件带技器官也只用得上一件，于是「技能组合」
+ * 在代码层面根本不存在。删掉而不是留着：留一个「只返回一件」的公开查询，下一个人
+ * 一定会拿它去画技能栏，然后困惑为什么另外四件不见了。
+ */
+export function combatSkills(state: TaleState, content: TaleContent): CombatSkillEntry[] {
+  const out: CombatSkillEntry[] = [];
+  for (const organ of ownedOrgans(state, content)) {
+    if (organ.combatSkill) {
+      out.push({ skillId: organ.id, organId: organ.id, synergyId: null, skill: organ.combatSkill });
+    }
+  }
+  for (const synergy of ownedSynergies(state, content)) {
+    out.push({
+      skillId: `${SYNERGY_SKILL_PREFIX}${synergy.id}`,
+      organId: null,
+      synergyId: synergy.id,
+      skill: synergy.skill,
+    });
+  }
+  return out;
+}
+
+/**
+ * [S1] 「血脉」的价钱：让下一世起手自带这一件器官要花几点血统。
+ *
+ * 规则（而不是一张手写价目表）：蛰伏池里开得出来的器官一律 `bloodlineBoonCost`，
+ * **事件专属器官**（`affinity` 为空，永不进开奖池，今天只有龙涎）按 `bloodlineBoonRareCost`。
+ * 让引擎给价而不是界面写死：价钱是规则的一部分，界面写一份就会与这里漂移。
+ *
+ * @throws 器官 id 不存在时抛错（内容 bug／脏存档要吵，不要静默按便宜的算）
+ */
+export function boonCost(organId: string, content: TaleContent): number {
+  const organ = organIndex(content).get(organId);
+  if (!organ) throw new Error(`boonCost: 未知器官 ${organId}`);
+  const rare = Object.values(organ.affinity).every((weight) => (weight ?? 0) <= 0);
+  return rare ? content.tuning.bloodlineBoonRareCost : content.tuning.bloodlineBoonCost;
 }
 
 function enemyById(content: TaleContent, id: string): EnemyDef | undefined {
@@ -730,17 +852,38 @@ function refreshWayFlags(draft: TaleState, content: TaleContent): void {
  * 出身的属性修正排在神种之后（它是「这一胎生得如何」，比神种更晚发生的一件事），
  * 而寿限先按体质算再吃 `lifespanDelta` —— 否则「灵胎寿 −2」会被体质的整除吃掉一半。
  *
+ * ## [S1] 「血脉」：起手自带的器官
+ * `options.boonOrganIds` 里的器官在**神种之后、出身之前**落账（它们是「这一胎带来的东西」，
+ * 与出身同一类）。刻意**不写 `molt` 记录**：`bloodlineGain` 数的就是 molt 记录数，写了
+ * 等于每一世白拿一点血统，而这一件器官的钱已经在转世屏付过了。
+ *
  * @param seedNum 种子数（同时作为 rngState 初值）
  * @param seedDefId 选中的神种 `SeedDef.id`
- * @throws 神种 id 不存在、或天时／出身池为空时抛错（内容 bug 要吵，不要静默降级）
+ * @param options.boonOrganIds [S1] 血脉带来的器官 id（重复／与神种同一件时自动跳过）
+ * @throws 神种 id 不存在、血脉器官 id 不存在、或天时／出身池为空时抛错（内容 bug 要吵）
  */
-export function createLife(seedNum: number, seedDefId: string, content: TaleContent): TaleState {
+export function createLife(
+  seedNum: number,
+  seedDefId: string,
+  content: TaleContent,
+  options?: { boonOrganIds?: readonly string[] },
+): TaleState {
   const seed = content.seeds.find((candidate) => candidate.id === seedDefId);
   if (!seed) throw new Error(`createLife: 未知神种 ${seedDefId}`);
   const cursor = createCursor(seedNum >>> 0);
   const premise = drawPremise(cursor, content);
   const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
-  const stats = addStats(addStats(t.initialStats, seed.organ.statMods), premise.origin.statMods);
+  const index = organIndex(content);
+  const organIds: string[] = [seed.organ.id];
+  let stats = addStats(t.initialStats, seed.organ.statMods);
+  for (const id of options?.boonOrganIds ?? []) {
+    const organ = index.get(id);
+    if (!organ) throw new Error(`createLife: 未知血脉器官 ${id}`);
+    if (organIds.includes(id)) continue;
+    organIds.push(id);
+    stats = addStats(stats, organ.statMods);
+  }
+  stats = addStats(stats, premise.origin.statMods);
   const lifespan =
     t.lifespanBase + Math.floor(stats.ti / t.lifespanTiDivisor) + (premise.origin.lifespanDelta ?? 0);
   const state: TaleState = {
@@ -755,7 +898,7 @@ export function createLife(seedNum: number, seedDefId: string, content: TaleCont
     hunger: clamp(t.hungerInit, 0, t.hungerMax),
     lifespanMax: Math.max(1, lifespan),
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
-    organIds: [seed.organ.id],
+    organIds,
     // 开局变量的专属事件线靠这些 flag 入池。走 contentFlags 过滤：内容侧写错一个
     // `sys:` 前缀不该在降世这一刻就改掉引擎规则（同 applyEffects 的理由）
     flags: contentFlags([...(premise.sky.flags ?? []), ...(premise.origin.flags ?? [])]),
@@ -824,6 +967,9 @@ function beginCombat(
     blind: 0,
     slow: 0,
     ward: 0,
+    bleed: 0,
+    thorns: 0,
+    insight: 0,
     skillCooldowns: {},
     log: [render(ENGINE_MESSAGES.combatStart, { enemy: enemy.name })],
   };
@@ -1487,7 +1633,8 @@ export function performAction(
   if (draft.stalk) {
     draft.records = [...state.records, ...records];
     draft.rngState = cursor.state;
-    return { state: draft, pendingEvent: null, notices, moltResult: null };
+    // 起追这一步不可能获得器官，所以组合差集恒为空（省一次全表扫描）
+    return { state: draft, pendingEvent: null, notices, moltResult: null, newSynergies: [] };
   }
 
   closeSeason(draft, content, t, records);
@@ -1497,7 +1644,13 @@ export function performAction(
   draft.rngState = cursor.state;
 
   refreshWayFlags(draft, content);
-  return { state: draft, pendingEvent: draft.alive ? drawn : null, notices, moltResult };
+  return {
+    state: draft,
+    pendingEvent: draft.alive ? drawn : null,
+    notices,
+    moltResult,
+    newSynergies: newSynergiesBetween(state, draft, content),
+  };
 }
 
 // ===== 事件抉择 =====
@@ -1687,6 +1840,7 @@ export function resolveChoice(
     state: draft,
     outcomeText: outcome.text,
     delta: cloneDelta(outcome.effects),
+    newSynergies: newSynergiesBetween(state, draft, content),
   };
 }
 
@@ -1785,9 +1939,46 @@ function riderOf(part: BodyPart, t: TaleTuning): { rider: "blind" | "slow" | nul
   return { rider: null, rounds: 0 };
 }
 
-/** 持有的带战斗技的器官（按 `organIds` 顺序）。 */
-function skillOrgans(state: TaleState, content: TaleContent): OrganDef[] {
-  return ownedOrgans(state, content).filter((organ) => organ.combatSkill);
+/**
+ * [S1] 一个技的代价此刻付不付得起。
+ *
+ * `hp` 类要求**付完还活着**（自伤 3 而只剩 3 血的按钮是陷阱，不是取舍）；
+ * `essence` 类看这一型精气够不够。
+ */
+function canAfford(cost: CombatSkillCost | undefined, playerHp: number, state: TaleState): boolean {
+  if (!cost) return true;
+  if (cost.kind === "hp") return playerHp - cost.amount > 0;
+  return state.essence[cost.type] >= cost.amount;
+}
+
+/** [S1] 一个技的伤害倍率：数据写了就用它，否则吃 `organSkillDamageMul`；再乘当前姿态。 */
+function skillDamageMul(skill: CombatSkillDef, t: TaleTuning, stance: Stance): number {
+  const base = skill.damageMul ?? t.organSkillDamageMul;
+  return base * (t.combatStanceMul[stance]?.out ?? 1);
+}
+
+/** [S1] 一个技按哪个属性出伤（缺省猛；灵性技按灵 —— 灵系 build 的输出手）。 */
+function skillStatOf(skill: CombatSkillDef, stats: Stats): number {
+  return skill.stat === "ling" ? stats.ling : stats.meng;
+}
+
+function skillEffectsOf(skill: CombatSkillDef): CombatSkillEffect[] {
+  return [...(skill.effects ?? [])];
+}
+
+/**
+ * [S1] 这个技出不出伤 —— 判据是**数据写的 `damageMul === 0`**，不是从 effect 反推。
+ *
+ * 先前的写法是「`heal` 类不出伤」，那条规则一到组合技就站不住：「穿地」是从土下窜出来
+ * 咬一口**并且**躲开它那一下（`brace` ＋ 伤害），「溃咬」是伤害 ＋ 附毒。效果与出伤是
+ * 两件正交的事，谁不出伤该由内容自己说。
+ *
+ * 之所以不能靠 `damageMul: 0` 顺着算式自然算成 0：`rollDamage` 有 `Math.max(1, …)` 兜底
+ * （伤害不许是 0），所以 0 倍率会打出 1 点伤 —— 界面写「不出伤」而真跑掉 1 血，
+ * 正是这一批要消灭的那类谎。所以这里是显式分支。
+ */
+function skillDealsDamage(skill: CombatSkillDef, t: TaleTuning): boolean {
+  return (skill.damageMul ?? t.organSkillDamageMul) > 0;
 }
 
 /**
@@ -1853,21 +2044,27 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     };
   });
 
-  const skills: CombatSkillPreview[] = skillOrgans(state, content).map((organ) => {
-    const skill = organ.combatSkill;
-    const cooldown = skill?.cooldown ?? t.combatSkillCooldown;
-    const cooldownLeft = Math.max(0, combat.skillCooldowns[organ.id] ?? 0);
-    const effect = skill?.effect ?? null;
-    const mul = t.organSkillDamageMul * (t.combatStanceMul[combat.stance]?.out ?? 1);
+  const skills: CombatSkillPreview[] = combatSkills(state, content).map((entry) => {
+    const skill = entry.skill;
+    const cooldown = skill.cooldown ?? t.combatSkillCooldown;
+    const cooldownLeft = Math.max(0, combat.skillCooldowns[entry.skillId] ?? 0);
+    const affordable = canAfford(skill.cost, combat.playerHp, state);
     return {
-      organId: organ.id,
-      name: skill?.name ?? organ.name,
-      desc: skill?.desc ?? "",
-      effect,
-      ready: cooldownLeft <= 0,
+      skillId: entry.skillId,
+      organId: entry.organId,
+      synergyId: entry.synergyId,
+      name: skill.name,
+      desc: skill.desc,
+      effects: skillEffectsOf(skill),
+      // 两个条件都要满足才叫「能使」；不可用的**原因**分开报（见字段注释）
+      ready: cooldownLeft <= 0 && affordable,
       cooldownLeft,
       cooldown,
-      damage: effect === "heal" ? ZERO_DAMAGE : damageRange(meng, t, mul),
+      cost: skill.cost ?? null,
+      affordable,
+      damage: skillDealsDamage(skill, t)
+        ? damageRange(skillStatOf(skill, state.stats), t, skillDamageMul(skill, t, combat.stance))
+        : ZERO_DAMAGE,
     };
   });
 
@@ -1883,7 +2080,8 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     stance: combat.stance,
     guardPart: combat.guardPart,
     intent: combat.intent,
-    intentKnown: t.combatIntentTags.some((tag) => tags.has(tag)),
+    // [S1] 「明识」是洞察器官的临时替身：读得出意图的两个来源，一个判据
+    intentKnown: combat.insight > 0 || t.combatIntentTags.some((tag) => tags.has(tag)),
     intentClass:
       combat.intent.kind === "guard" || combat.intent.kind === "flee" ? "hold" : "act",
     bites,
@@ -1895,35 +2093,186 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     incomingExpected: Math.round(incomingDamage.mid * (1 - missChance) * 10) / 10,
     roundsToLive: typical <= 0 ? 99 : Math.min(99, Math.ceil(combat.playerHp / typical)),
     roundsToKill: bestBite <= 0 ? 99 : Math.min(99, Math.ceil(combat.enemyHp / bestBite)),
+    enemyHp: combat.enemyHp,
+    playerHp: combat.playerHp,
     blind: combat.blind,
     slow: combat.slow,
     ward: combat.ward,
+    bleed: combat.bleed,
+    thorns: combat.thorns,
+    insight: combat.insight,
     enemyWillFlee: combat.intent.kind === "flee" && combat.slow <= 0,
   };
+}
+
+/**
+ * [S1] 界面推荐的那一手 —— **同一时刻只推荐一手**（P1 踩过的坑：两颗按钮同时发金光
+ * 等于没有推荐）。纯函数，只吃 `CombatPreview`（＝玩家屏幕上看得见的那些数），
+ * **不读 `TaleState`、不消耗抽取、引擎自己也不消费它**。
+ *
+ * ## 它为什么在 tale-sim 里（这是一处有意的归属变更）
+ * M1-P2 把它放在 `tale-client`，于是同一条链在**三处**各有一份手抄镜像
+ * （客户端／`tale-content` 冒烟／`packages/gen` 实验台），P2 报告的遗留第 5 条就是这件事。
+ * S1 把技能池从 1 颗按钮扩到 5〜8 颗，这条链随之从 9 条长到 11 条 —— 三份手抄的漂移
+ * 就不再是「风险」而是「必然」，而且漂移的**后果是我自己的平衡数据在说谎**
+ * （实验台量的打法与玩家屏幕上金光指的那一手不是同一个）。
+ *
+ * 它仍然是**呈现层的建议**，不是规则：引擎的任何结算都不看它，删掉它引擎照样跑。
+ * 放在这里唯一的理由是「三个包都 import 得到 tale-sim」。
+ *
+ * ## 优先级链（每一条都有玩家看得见的依据）
+ * 1. 这一手打得死它（按最坏情况 `damage.min` 判）→ 打最重的那一手（**技也算**）。
+ * 2. 撑不过两合 → 保命：`bolt`（必定脱身）＞ 逃（掷骰）＞ `heal` ＞ `brace`。
+ * 3. 它要走 → 咬腿拦住（否则整顿肉白丢）。
+ * 4. 它宣告重击而它还看得见 → `brace` 硬吃那一下；没有则扑眼（致盲五成五让它整个打空）。
+ * 5. 读不出意图、有 `insight` 技、且这是场长仗 → 先买知情权（后面每一合都用得上）。
+ * 6. 长仗且持续类（`bleed`／`venom`／`thorns`）还没挂上 → 挂它（越早挂收得越满）。
+ * 7. 伤害类技比最强的一咬更重 → 放技。
+ * 8. 挨得凶而它还看得见 → 扑眼买两合。
+ * 9. 长仗、而咬腿的迟滞这一口落得下来 → 咬腿钝它的势。
+ * 10. 它在守（那一合本来就不挨伤）→ 换姿态。
+ * 11. 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处）。
+ *
+ * **自伤类技的安全阀**：代价 ≥ 当前血量一半的技一律不推荐（除了第 1 条那种能收官的）——
+ * `ready` 只保证「付完还活着」，而推荐一手让玩家剩 1 血的按钮是在劝他送死（同 P2 那条
+ * 「推荐链在劝玩家送死」的教训：那一版把逃排晚一格，战死率从 8.5% 飙到 33.5%）。
+ */
+export function recommendCombatAct(preview: CombatPreview): CombatAct {
+  const bites = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid);
+  const bestBite = bites[0];
+  const bestBiteAct: CombatAct = { kind: "bite", part: bestBite?.part ?? "throat" };
+  const skillAct = (skill: CombatSkillPreview): CombatAct => ({
+    kind: "skill",
+    skillId: skill.skillId,
+  });
+  /** 自伤过半的技此刻不该被推荐（收官那一条例外，见第 1 条） */
+  const affordableNow = (skill: CombatSkillPreview): boolean =>
+    !(skill.cost?.kind === "hp" && skill.cost.amount * 2 >= preview.playerHp);
+  const ready = preview.skills.filter((skill) => skill.ready);
+  const usable = ready.filter(affordableNow);
+  const withEffect = (effect: CombatSkillEffect): CombatSkillPreview | undefined =>
+    usable.find((skill) => skill.effects.includes(effect));
+  const hardest = [...usable]
+    .filter((skill) => skill.damage.mid > 0)
+    .sort((a, b) => b.damage.mid - a.damage.mid)[0];
+
+  // 1. 收官：技与咬一起比，取「最坏情况也打得死」的那一手（这里不管自伤过半 —— 打完就结束了）
+  const lethalSkill = [...ready]
+    .filter((skill) => skill.damage.min >= preview.enemyHp)
+    .sort((a, b) => b.damage.mid - a.damage.mid)[0];
+  if (lethalSkill) return skillAct(lethalSkill);
+  if (bestBite && bestBite.damage.min >= preview.enemyHp) return bestBiteAct;
+  if (preview.roundsToKill <= 1) return bestBiteAct;
+
+  /*
+   * 2. 撑不过两合 —— 保命的四条。
+   *
+   * 排序按「它把**这场架**了结到什么程度」，不是按「这一合有多确定」：
+   * `bolt` 必定脱身（威胁归零）＞ 逃（掷骰，但同样是了结）＞ `brace`（把这一下归零，
+   * 只是把死推迟一合，不解决问题）＞ `heal`（回 8 血，可能盖不住一记 2.2 倍的扑）。
+   * code-reviewer 提过把 `brace` 提到逃之前（按「确定性」排），但那会让一个必死的局面
+   * 多耗一合再死 —— 保命的目的是**活着离开**，不是活得久一点。
+   */
+  if (preview.roundsToLive <= 2) {
+    const bolt = withEffect("bolt");
+    if (bolt) return skillAct(bolt);
+    if (preview.fleeChance >= 0.4) return { kind: "flee" };
+    const brace = withEffect("brace");
+    if (brace) return skillAct(brace);
+    const heal = withEffect("heal");
+    if (heal) return skillAct(heal);
+  }
+
+  // 3. 它要走：读不出意图时「按兵不动」既可能是守也可能是逃 —— 拦一手的代价远小于丢掉整顿肉
+  const mayFlee = preview.intentKnown ? preview.enemyWillFlee : preview.intentClass === "hold";
+  if (mayFlee) return { kind: "bite", part: "leg" };
+
+  // 4. 它宣告重击：硬吃（免伤）优先于弄瞎（五成五打空）—— 前者是确定的
+  if (preview.intentKnown && preview.intent.kind === "pounce") {
+    const brace = withEffect("brace");
+    if (brace) return skillAct(brace);
+    if (preview.blind <= 0) return { kind: "bite", part: "eye" };
+  }
+
+  // 5. 读不出意图而买得到：知情权在长仗里每一合都用得上（这是「明识」存在的全部理由）
+  if (!preview.intentKnown && preview.roundsToKill >= 3) {
+    const insight = withEffect("insight");
+    if (insight) return skillAct(insight);
+  }
+
+  // 6. 长仗里先挂持续类（已经挂着的不重复挂 —— 那是白费一个回合）
+  if (preview.roundsToKill >= 3) {
+    if (preview.bleed <= 0) {
+      const bleed = withEffect("bleed");
+      if (bleed) return skillAct(bleed);
+    }
+    if (preview.slow <= 0) {
+      const venom = withEffect("venom");
+      if (venom) return skillAct(venom);
+    }
+    if (preview.thorns <= 0) {
+      const thorns = withEffect("thorns");
+      if (thorns) return skillAct(thorns);
+    }
+  }
+
+  // 7. 伤害类技比最强的一咬更重就放它（技有冷却，早放早转）
+  if (hardest && hardest.damage.mid > (bestBite?.damage.mid ?? 0)) return skillAct(hardest);
+
+  // 8. 挨得凶而它还看得见 → 扑眼买两合
+  if (preview.roundsToLive <= 3 && preview.blind <= 0) return { kind: "bite", part: "eye" };
+
+  // 9. 长仗里把它的势钝下来（附带效果不叠加，所以这一手有节奏：钝完就换回咬喉输出）
+  const leg = preview.bites.find((bite) => bite.part === "leg");
+  if (preview.roundsToKill >= 3 && leg?.riderLands === true) return { kind: "bite", part: "leg" };
+
+  /*
+   * 10. 它在守：那一合本来就不挨伤，拿去换姿态。
+   *
+   * **顺序是量出来的**：把这一条排到第 9 条之前，岩羊的 seer 胜率 88.8%→87.8%、
+   * 玄蟒的 seer+fang 67.5%→63.5% —— 守着的那一合拿去咬一口比换姿态划算，
+   * 换姿态只在「这一口本来也没什么附带可捞」时才是最优。
+   */
+  if (preview.intentKnown && preview.intent.kind === "guard") {
+    const want: Stance = preview.roundsToLive <= 3 ? "low" : "lunge";
+    if (preview.stance !== want) return { kind: "stance", to: want };
+  }
+  return bestBiteAct;
 }
 
 /**
  * 打一个搏杀回合。
  *
  * ## 一个回合的固定顺序（不可变更）
- * 1. 玩家动作（咬／换姿态／器官技／逃）；咬中被护部位可能招来**即时反击**。
+ * 1. 玩家动作（咬／换姿态／技／逃）；咬中被护部位可能招来**即时反击**。
+ *    [S1] 技先付代价（自伤／精气）再结算效果；`bolt` 那一档当场判 `fled`。
  * 2. 敌人血尽 → `win`（吞精气回饱食，写一条 combat 记录），到此结束。
  * 3. 敌人按**已宣告的意图**动作：扑／咬（致盲期间可能打空）／守（不出手）／
  *    逃（未被迟滞则 `escaped`，玩家什么也拿不到）。
+ *    [S1] 它这一下命中我方时，若挂着反刺（`thorns`）它自伤一记；`brace` 让这一下伤害归零。
  * 4. 玩家血尽 → `dead`（ending＝slain）。
- * 5. 计数器各减一（致盲／迟滞／护体／器官技冷却）。
- * 6. 摇下一回合的守备与意图（`rollFace`，恒 3 次抽取）—— **玩家下一次出手前就看得见**。
+ * 5. [S1] 流血（`bleed`）在回合**末**结算 —— 它守着不动也照掉。掉光了算 `win`。
+ * 6. 计数器各减一（致盲／迟滞／护体／流血／反刺／明识／技能冷却）。
+ * 7. 摇下一回合的守备与意图（`rollFace`，恒 3 次抽取）—— **玩家下一次出手前就看得见**。
+ *
+ * 反刺与流血刻意排在两处不同的地方：反刺是**对它出手的惩罚**（跟着它那一下走），
+ * 流血是**独立于出手的损耗**（跟着回合走）。两者若并到一处，「它爱守」这类敌人就分不出
+ * 该用哪一个了。
  *
  * ## 抽取顺序（改它就是破坏所有既存种子的剧本）
  * 咬：伤害抖动 →（被护住**且它没瞎**时）反击掷骰 → 反击伤害抖动 → 旁白；
  *   （瞎着的敌人不会反口，所以那一掷**不抽** —— 与下面敌人段的「致盲才抽打空掷骰」对称）
- * 姿态：旁白；器官技：伤害抖动 → 旁白；逃：成败掷骰 →（失败时无额外抽取）。
- * 敌人段：（致盲时）打空掷骰 → 伤害抖动 → 旁白。收尾：`rollFace` 的 3 次。
+ * 姿态：旁白；技：（出伤时）伤害抖动 → 每条落地的效果各一次旁白；逃：成败掷骰。
+ * 敌人段：（致盲时）打空掷骰 → 伤害抖动 → 旁白。
+ * ⚠️ **`brace` 那一回合少抽一次**：硬受挡下的那一下走单句旁白（`combatBraceHold`），
+ * 不进变体池。同 M1-P2「被致盲的敌人不抽反击掷骰」那条例外 —— 抽取次数是玩家动作的
+ * 纯函数（同种子同操作仍恒等），但它是个**例外**，写在这里免得下一个人按「恒定次数」推演。
+ * 回合末的流血与反刺**不抽**（它们的旁白也是单句）。收尾：`rollFace` 的 3 次。
  *
  * `over` 非 null 时 `state.combat` 置 null —— 界面要自己累加每次返回的 `roundLog`
  * （战斗进行中也可以读 `state.combat.log` 拿累积日志，但结束那一刻它就没了）。
  *
- * @throws 已死亡、不在战斗中、敌人 id 失效、器官技不存在／未持有／还在冷却、
+ * @throws 已死亡、不在战斗中、敌人 id 失效、技不存在／未持有／还在冷却／**付不起代价**、
  *         或换成当前已在的姿态（那只是白费一回合，界面靠 `combatPreview.stances[].current` 挡住）
  */
 export function combatAct(state: TaleState, act: CombatAct, content: TaleContent): CombatTurn {
@@ -1948,9 +2297,14 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   let blind = current.blind;
   let slow = current.slow;
   let ward = current.ward;
+  let bleed = current.bleed;
+  let thorns = current.thorns;
+  let insight = current.insight;
   const cooldowns: Record<string, number> = { ...current.skillCooldowns };
   let over: CombatTurn["over"] = null;
   let forcedGuard = false;
+  /** [S1] `brace`：这一回合它那一手的伤害归零（只管当下这一下，不留计数器） */
+  let bracing = false;
   const guardIntent = current.intent.kind === "guard";
 
   // — 1. 玩家动作 —
@@ -2006,45 +2360,104 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       break;
     }
     case "skill": {
-      const organ = ownedOrgans(state, content).find((candidate) => candidate.id === act.organId);
-      if (!organ) throw new Error(`combatAct: 未持有器官 ${act.organId}`);
-      const skill = organ.combatSkill;
-      if (!skill) throw new Error(`combatAct: 器官 ${act.organId} 没有战斗技`);
-      const left = Math.max(0, cooldowns[organ.id] ?? 0);
+      const entry = combatSkills(state, content).find(
+        (candidate) => candidate.skillId === act.skillId,
+      );
+      if (!entry) throw new Error(`combatAct: 没有这个技 ${act.skillId}`);
+      const skill = entry.skill;
+      const left = Math.max(0, cooldowns[entry.skillId] ?? 0);
       if (left > 0) throw new Error(`combatAct: ${skill.name}还要等${left}合`);
-      const effect = skill.effect ?? null;
-      if (effect === "heal") {
-        playerHp = Math.min(draft.stats.ti, playerHp + t.combatSkillHealAmount);
-        roundLog.push(
-          render(ENGINE_MESSAGES.combatSkillHit, { skill: skill.name, enemy: enemy.name, dmg: 0 }),
-        );
-        say(COMBAT_MESSAGES.healed);
-      } else {
+      /*
+       * [S1] 代价先付，且付不起就抛错 —— 不做「打个折照样能放」的兜底。
+       * 屏幕上写了「精气 −8」而实际不扣，就是这一批最不该出现的那种谎。
+       */
+      if (!canAfford(skill.cost, playerHp, state)) {
+        throw new Error(`combatAct: ${skill.name}的代价此刻付不起`);
+      }
+      const cost = skill.cost;
+      if (cost?.kind === "hp") {
+        playerHp -= cost.amount;
+        roundLog.push(render(ENGINE_MESSAGES.combatSkillToll, { skill: skill.name, dmg: cost.amount }));
+      } else if (cost?.kind === "essence") {
+        draft.essence = addEssence(draft.essence, { [cost.type]: -cost.amount });
+      }
+
+      const effects = skill.effects ?? [];
+      if (skillDealsDamage(skill, t)) {
         const dmg = rollDamage(
           cursor,
-          draft.stats.meng,
+          skillStatOf(skill, draft.stats),
           t,
-          t.organSkillDamageMul * (t.combatStanceMul[stance]?.out ?? 1),
+          skillDamageMul(skill, t, stance),
         );
         enemyHp -= dmg;
         roundLog.push(
           render(ENGINE_MESSAGES.combatSkillHit, { skill: skill.name, enemy: enemy.name, dmg }),
         );
-        if (enemyHp > 0) {
-          if (effect === "venom") {
-            slow = Math.max(slow, t.combatVenomSlowRounds);
-            say(COMBAT_MESSAGES.venomed);
-          } else if (effect === "stun") {
-            forcedGuard = true;
-            say(COMBAT_MESSAGES.stunned);
-          } else if (effect === "armor") {
+      } else {
+        roundLog.push(render(ENGINE_MESSAGES.combatSkillUse, { skill: skill.name, enemy: enemy.name }));
+      }
+
+      /*
+       * 效果逐条落地。**给自己的效果不看它死没死**（护体、明识、疗愈、硬受、脱身都是自己
+       * 身上的事），**给它的效果只在它还活着时落**（给一具尸体挂迟滞是没有意义的日志噪音）。
+       * 顺序按 `effects` 数组 —— 组合技的两条效果因此有稳定的旁白顺序。
+       */
+      for (const effect of effects) {
+        switch (effect) {
+          case "heal":
+            playerHp = Math.min(draft.stats.ti, playerHp + t.combatSkillHealAmount);
+            say(COMBAT_MESSAGES.healed);
+            break;
+          case "armor":
             ward = Math.max(ward, t.combatWardRounds);
             say(COMBAT_MESSAGES.warded);
-          }
+            break;
+          case "thorns":
+            thorns = Math.max(thorns, t.combatThornsRounds);
+            say(COMBAT_MESSAGES.thorned);
+            break;
+          case "insight":
+            insight = Math.max(insight, t.combatInsightRounds);
+            say(COMBAT_MESSAGES.insighted);
+            break;
+          case "brace":
+            bracing = true;
+            say(COMBAT_MESSAGES.braced);
+            break;
+          case "bolt":
+            // 位移类：不掷骰的遁走。它的价钱是精气（见内容表），所以「必定脱身」不是白拿的
+            over = "fled";
+            say(COMBAT_MESSAGES.bolted);
+            break;
+          case "venom":
+            if (enemyHp > 0) {
+              slow = Math.max(slow, t.combatVenomSlowRounds);
+              say(COMBAT_MESSAGES.venomed);
+            }
+            break;
+          case "bleed":
+            if (enemyHp > 0) {
+              bleed = Math.max(bleed, t.combatBleedRounds);
+              say(COMBAT_MESSAGES.bleeding);
+            }
+            break;
+          case "blind":
+            if (enemyHp > 0) {
+              blind = Math.max(blind, t.combatBlindRounds);
+              say(COMBAT_MESSAGES.blinded);
+            }
+            break;
+          case "stun":
+            if (enemyHp > 0) {
+              forcedGuard = true;
+              say(COMBAT_MESSAGES.stunned);
+            }
+            break;
         }
       }
       // ＋1 是因为本回合末尾统一减一：写 cooldown+1 才让「冷却 3」真的等 3 个回合
-      cooldowns[organ.id] = (skill.cooldown ?? t.combatSkillCooldown) + 1;
+      cooldowns[entry.skillId] = (skill.cooldown ?? t.combatSkillCooldown) + 1;
       break;
     }
     case "flee": {
@@ -2058,8 +2471,14 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     }
   }
 
-  // — 2. 它死了 —
-  if (over === null && enemyHp <= 0) {
+  /**
+   * 取胜的战利品与记账。
+   *
+   * [S1] 抽成闭包是因为**现在有两个地方能打死它**：玩家出手（步骤 2）与回合末的流血
+   * （步骤 5）。两处各写一份的话，「被流血放倒的那头兽」会漏掉精气、饱食、夺命数与
+   * combat 记录 —— 而那正是「妖王」那条道的判据，漏了不会有任何测试变红。
+   */
+  const winSpoils = (): void => {
     over = "win";
     // [2026-08-13] 兽潮之年杀获更厚（`combatWinEssenceMul`）——「难活但杀一头值更多」
     const essenceMul = t.combatWinEssenceMul;
@@ -2088,7 +2507,10 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       text: render(ENGINE_MESSAGES.combatWinRecord, { enemy: enemy.name }),
       refId: enemy.id,
     });
-  }
+  };
+
+  // — 2. 它死了 —
+  if (over === null && enemyHp <= 0) winSpoils();
 
   // — 3. 它按宣告的意图动作（逃跑成功的那一回合它不追）—
   if (over === null) {
@@ -2101,6 +2523,12 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
           // 咬腿把它的退路断了 —— 这条分支是「咬腿」独一份用处的兑现
           say(COMBAT_MESSAGES.fleeBlocked);
         } else {
+          /*
+           * 它走成了。**即使它正流着血、且这一合末就会流干，也照样是 escaped**
+           * （流血在步骤 5 结算，而这里是步骤 3）—— 有意如此：拦逃的工具是**咬腿**
+           * （迟滞），不是「挂个持续伤害等它自己倒下」。若流血能追着跑掉的兽结算，
+           * 「咬腿拦逃」这条 M1-P2 立起来的用处就被一个无关的效果绕开了。
+           */
           over = "escaped";
           say(COMBAT_MESSAGES.enemyFled);
         }
@@ -2111,12 +2539,31 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
           say(COMBAT_MESSAGES.enemyMiss);
         } else {
           const mul = incomingMultiplier(t, current.intent.kind, stance, slow, ward);
-          const dmg = rollDamage(cursor, enemy.meng, t, mul);
+          // [S1] `brace`（硬受）：这一下的伤害归零。抖动照抽 —— 抽取次数不随分支变化
+          const rolled = rollDamage(cursor, enemy.meng, t, mul);
+          const dmg = bracing ? 0 : rolled;
           playerHp -= dmg;
-          say(
-            current.intent.kind === "pounce" ? COMBAT_MESSAGES.enemyPounce : COMBAT_MESSAGES.enemyBite,
-            { dmg },
-          );
+          if (bracing) {
+            roundLog.push(render(ENGINE_MESSAGES.combatBraceHold, { enemy: enemy.name }));
+          } else {
+            say(
+              current.intent.kind === "pounce" ? COMBAT_MESSAGES.enemyPounce : COMBAT_MESSAGES.enemyBite,
+              { dmg },
+            );
+          }
+          /*
+           * [S1] 反刺：**它命中了才扎得着**（硬受挡下的那一下不算 —— 它没碰到你）。
+           * 单句旁白、不抽变体，所以这一段不消耗抽取。
+           */
+          if (thorns > 0 && !bracing && dmg > 0) {
+            enemyHp -= t.combatThornsDamage;
+            roundLog.push(
+              render(ENGINE_MESSAGES.combatThornsPrick, {
+                enemy: enemy.name,
+                dmg: t.combatThornsDamage,
+              }),
+            );
+          }
           if (playerHp <= 0) over = "dead";
         }
         break;
@@ -2124,10 +2571,29 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     }
   }
 
-  // — 5. 计数器各减一（先让这一回合吃满效果，再衰减）—
+  /*
+   * — 4.5／5. 反刺或流血把它放倒 —
+   *
+   * 顺序刻意是「先判我方死、再结算流血」：同一回合两边都归零时**死亡优先**（死了就是死了，
+   * 不存在「我倒下的同时它也失血而亡，于是我赢了」）。流血在回合末结算是它与迟滞的分界：
+   * 它守着不动也照掉。
+   */
+  if (over === null && enemyHp <= 0) winSpoils();
+  if (over === null && bleed > 0) {
+    enemyHp -= t.combatBleedDamage;
+    roundLog.push(
+      render(ENGINE_MESSAGES.combatBleedTick, { enemy: enemy.name, dmg: t.combatBleedDamage }),
+    );
+    if (enemyHp <= 0) winSpoils();
+  }
+
+  // — 6. 计数器各减一（先让这一回合吃满效果，再衰减）—
   blind = Math.max(0, blind - 1);
   slow = Math.max(0, slow - 1);
   ward = Math.max(0, ward - 1);
+  bleed = Math.max(0, bleed - 1);
+  thorns = Math.max(0, thorns - 1);
+  insight = Math.max(0, insight - 1);
   for (const id of Object.keys(cooldowns)) {
     const left = Math.max(0, (cooldowns[id] ?? 0) - 1);
     if (left === 0) delete cooldowns[id];
@@ -2141,7 +2607,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     );
   }
   if (over === null) {
-    // — 6. 下一回合的脸（玩家出手前就看得见）—
+    // — 7. 下一回合的脸（玩家出手前就看得见）—
     const face = rollFace(cursor, enemy, t, { enemyHp, slow, forcedGuard });
     draft.combat = {
       enemyId: current.enemyId,
@@ -2154,6 +2620,9 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       blind,
       slow,
       ward,
+      bleed,
+      thorns,
+      insight,
       skillCooldowns: cooldowns,
       log: [...current.log, ...roundLog],
     };

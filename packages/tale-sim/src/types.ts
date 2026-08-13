@@ -62,11 +62,16 @@ export interface EnemyIntent {
  *
  * 部位／姿态／技能／逃**在同一屏一次点选完成**（计划「既定裁决」第三条：P2 不得增加
  * 每回合的必点次数，不做多级菜单）。所以这是一个扁平联合，不是「先选类型再选参数」。
+ *
+ * ## [S1] `skill` 那一支从 `organId` 换成 `skillId`
+ * 技能不再一定属于某一件器官：**组合技**（`SynergyDef`）由 2〜3 件器官凑齐才出现，
+ * 它没有自己的器官。`skillId` 的取值见 `combatSkills`（器官技＝器官 id，组合技＝
+ * `syn:<synergyId>`）。留 `organId` 会让「这个 id 是器官吗」变成一个要看情况的问题。
  */
 export type CombatAct =
   | { kind: "bite"; part: BodyPart }
   | { kind: "stance"; to: Stance }
-  | { kind: "skill"; organId: string }
+  | { kind: "skill"; skillId: string }
   | { kind: "flee" };
 
 /**
@@ -78,14 +83,127 @@ export type CombatAct =
 export type CombatAct2 = CombatAct;
 
 /**
- * [M1-P2 正本] 器官技的附带效果（`OrganDef.combatSkill.effect`）。
+ * [M1-P2 正本 ＋ S1 扩充] 一个技能的附带效果（`CombatSkillDef.effects`，可多条）。
  *
- * - `venom` 附毒：伤害 ＋ 给敌人挂迟滞（血凝）。
- * - `stun` 顿挫：伤害 ＋ 把敌人下一回合的意图压成 `guard`（它这一下打不出来）。
- * - `heal` 疗愈：回自身血量，不出伤。
- * - `armor` 护体：伤害 ＋ 给自己挂 `ward`（受伤减半若干回合）。
+ * ## 十档，按「它在搏杀里是什么工具」分类
+ * 这一档清单是 S1 的核心约束：12 件器官全部带技，**若十二个技全是「多打几点伤害」，
+ * 技能池就只是一排等价按钮**（那正是 owner 说的「摸不着头脑」）。所以每一档都改变
+ * 一个玩家看得见的量，而不是同一个量的不同大小。
+ *
+ * | 档 | 类型 | 落到哪个字段 |
+ * |---|---|---|
+ * | `venom` 附毒 | 持续·削弱 | `CombatState.slow`（血凝：它出伤打折、逃不掉、扑不起来） |
+ * | `bleed` 流血 | 持续·伤害 | `CombatState.bleed`（每回合末它自己掉血，与出手无关） |
+ * | `stun` 顿挫 | 控制 | 把它**下一回合**的意图压成 `guard`（偷一个回合） |
+ * | `blind` 蒙目 | 控制 | `CombatState.blind`（它多半打空，且不再反击） |
+ * | `armor` 护体 | 防御·持续 | `CombatState.ward`（数合内受伤减半） |
+ * | `thorns` 反刺 | 防御·惩罚 | `CombatState.thorns`（它每命中你一次就自伤，越爱出手越吃亏） |
+ * | `brace` 硬受 | 防御·即时 | **这一回合**它那一手伤害归零（不留计数器 —— 它只挡当下这一下） |
+ * | `bolt` 脱身 | 位移 | 这一回合**必定**遁走（`over: "fled"`），不掷骰 |
+ * | `insight` 明识 | 信息 | `CombatState.insight`（数合内读得出确切意图 —— 洞察类器官的临时替身） |
+ * | `heal` 疗愈 | 恢复 | 回自身血量 |
+ *
+ * `brace` 与 `bolt` 刻意**没有**计数器：两者都在「玩家动作 → 敌人动作」这同一个回合里
+ * 兑现完毕（见 `combatAct` 的回合顺序），留一个恒为 1 的计数器只会多一处要维护的衰减。
  */
-export type CombatSkillEffect = "venom" | "stun" | "heal" | "armor";
+export type CombatSkillEffect =
+  | "venom"
+  | "bleed"
+  | "stun"
+  | "blind"
+  | "armor"
+  | "thorns"
+  | "brace"
+  | "bolt"
+  | "insight"
+  | "heal";
+
+/**
+ * [S1] 一个技能的代价。
+ *
+ * ## 为什么每个技都必须有代价
+ * 只有冷却的技是「转好了就按」——一世蜕四五件器官之后，技能池里永远有一颗好了的，
+ * 于是「用哪个」退化成「谁的冷却先转好」。代价把它变成一道题：
+ * - `hp` 自伤：**现在**就要付，血是这场架的本钱（`combatPreview.roundsToLive` 会当场变短）。
+ * - `essence` 精气：付的是**蜕变的本钱**（精气攒满才能蛰伏）—— 一个跨系统的取舍，
+ *   「这一架赢得漂亮」与「这一世多蜕一件器官」二者不可兼得。
+ *
+ * 付不起时技能**不可用**（`CombatSkillPreview.affordable` 为假，`combatAct` 抛错）——
+ * 不做「打个折照样能放」的兜底：那会让屏幕上写的代价变成一句可以不算数的话。
+ */
+export type CombatSkillCost =
+  | { kind: "hp"; amount: number }
+  | { kind: "essence"; type: EssenceType; amount: number };
+
+/**
+ * [M1-P2 正本 ＋ S1 扩充] 一个搏杀技的定义。
+ *
+ * 器官技（`OrganDef.combatSkill`）与组合技（`SynergyDef.skill`）共用这一份形状 ——
+ * 战斗屏的技能池把两者摆在同一排按钮里，引擎的结算也只有一条路径。
+ */
+export interface CombatSkillDef {
+  name: string;
+  desc: string;
+  /**
+   * [M1-P2 正本] 冷却回合数，缺省 `tuning.combatSkillCooldown`。
+   *
+   * 冷却是这颗按钮**存在的理由**：M0 的器官技是「每回合都能按的更强的战」，于是它把
+   * 别的按钮全废了。有冷却之后「现在用还是留着收官」才是一道题。
+   */
+  cooldown?: number;
+  /**
+   * [S1] 附带效果，可多条（缺省／空数组＝纯伤害）。
+   *
+   * 组合技靠「两条效果同时落地」区别于单件器官技（溃咬＝爆发＋附毒，重甲＝硬受＋反刺）——
+   * 这也是「凑齐两件器官换来的不只是数值」的唯一兑现方式。
+   */
+  effects?: readonly CombatSkillEffect[];
+  /**
+   * [S1] 伤害按哪个属性算，缺省 `meng`。
+   *
+   * `ling` 那一档只有灵性器官用（灵犀的「灵犀一点」）：灵系 build（化灵／登神）猛很低，
+   * 若所有技都按猛算伤害，它们的技能池就只剩控制与防御 —— 而「灵系也该有自己的输出手」
+   * 正是「两种 build 的技能池明显不同」的一半。
+   */
+  stat?: "meng" | "ling";
+  /** [S1] 伤害倍率，缺省 `tuning.organSkillDamageMul`。控制类技压低它，组合技抬高它 */
+  damageMul?: number;
+  /** [S1] 代价，缺省＝无代价（本库的 12 件器官与 10 条组合全部显式写了代价） */
+  cost?: CombatSkillCost;
+}
+
+/**
+ * [S1] 一条**器官组合**（synergy）：2〜3 件器官凑齐即解锁一个新东西。
+ *
+ * ## 两条铁律（计划「统一机制：器官组合表」节）
+ * 1. **对玩家隐藏**：图鉴只显示已知数量与「？」占位，未发现的**不列配方**。发现的那一刻
+ *    有专门的「异变」揭示演出（`fx/synergyReveal.ts`），发现记录进 `Bloodline`（跨世保留），
+ *    于是第二世起玩家可以**主动去凑**已知的组合 —— 那是「摸得着的发展方向」。
+ * 2. **必须自洽**：配方与解锁物的因果关系要一眼说得通（毒腺＋狩齿→溃烂撕咬；雾目＋夜瞳→
+ *    夜猎之眼）。禁止随机拼配 —— 「意料之外」靠隐藏，「情理之中」只能靠因果，
+ *    而后者一旦破了，发现的瞬间就只是「解锁了一个新按钮」。
+ *
+ * `kind` 现在只有 `"skill"`（S1 交付战斗组合技）。S2 会加 `"place"`（探索目的地）——
+ * 加一档时旧行一个字都不用改，这就是这一位存在的理由。
+ */
+export interface SynergyDef {
+  id: string;
+  /** 异变名号：「溃咬」「夜猎之眼」 */
+  name: string;
+  /** 配方：2〜3 件器官的 id，**全部持有**即解锁（顺序无关） */
+  organIds: readonly string[];
+  kind: "skill";
+  /** `kind: "skill"` 的解锁物 */
+  skill: CombatSkillDef;
+  /**
+   * 揭示演出上那一句**因果**：为什么这两件凑一起会是这个。
+   *
+   * 它不是风味字，是「情理之中」的唯一载体 —— 玩家读完这一句应该觉得「本来就该如此」，
+   * 而不是「哦，又解锁了一个」。
+   */
+  reveal: string;
+  desc: string;
+}
 
 /**
  * [M1-P2] 一头敌人的搏杀旁白。
@@ -293,20 +411,13 @@ export interface OrganDef {
   statMods?: Partial<Stats>;
   /** 事件/战斗钩子，如 "night-eye" "venom" "armor" */
   tags: string[];
-  /** 有则搏杀屏多出一颗技能按钮（M0 写的是「第四选项」，P2 起是一颗独立按钮） */
-  combatSkill?: {
-    name: string;
-    desc: string;
-    /**
-     * [M1-P2 正本] 冷却回合数，缺省 `tuning.combatSkillCooldown`。
-     *
-     * 冷却是这颗按钮**存在的理由**：M0 的器官技是「每回合都能按的更强的战」，于是它把
-     * 别的按钮全废了。有冷却之后「现在用还是留着收官」才是一道题。
-     */
-    cooldown?: number;
-    /** [M1-P2 正本] 附带效果，缺省＝纯伤害 */
-    effect?: CombatSkillEffect;
-  };
+  /**
+   * 有则搏杀屏多出一颗技能按钮。
+   *
+   * [S1] **12 件器官全部带技**（此前只有 4 件）：每蜕一件器官就多一个**新动作**，
+   * 而不只是几点属性 —— 这是「一局里积累的东西有用途」的最直接兑现。
+   */
+  combatSkill?: CombatSkillDef;
   desc: string;
 }
 
@@ -532,11 +643,33 @@ export interface ChronicleEntry {
   organCount: number;
 }
 
-/** [正本] 跨世血统资产。持久化（localStorage）归 tale-client。 */
+/**
+ * [正本 ＋ S1 扩充] 跨世血统资产。持久化（localStorage）归 tale-client。
+ *
+ * ## [S1] 为什么图鉴与血脉在这里，而不在 `TaleState`
+ * 「已发现的组合」若记在 `TaleState` 里，每一世重来都要重新发现一遍 —— 那就永远只是
+ * 「意料之外」，成不了「摸得着的发展方向」。记在血统里，第二世起玩家才可能**主动去凑**。
+ * 血统点也终于有了第二个去处（此前只解锁神种，三个种共 13 点花完即永久无处可花）。
+ */
 export interface Bloodline {
   points: number;
   unlockedSeedIds: string[];
   chronicle: ChronicleEntry[];
+  /** [S1] 已发现过的器官组合（`SynergyDef.id`）—— 图鉴的「已知 N/M」与配方由它决定 */
+  knownSynergyIds: string[];
+  /**
+   * [S1] 历代**曾经拥有过**的器官 id —— 「血脉」只能挑已发现过的器官。
+   *
+   * 不用「已知组合里出现过的器官」推：那样第一世蜕出的器官若不属于任何组合，
+   * 就永远买不到，而玩家明明见过它。
+   */
+  knownOrganIds: string[];
+  /**
+   * [S1] 已买下、下一世**起手自带**的器官（`OrganDef.id`）；null ＝ 没买。
+   *
+   * 一次性消费：`createLife` 用掉它之后由客户端清空（钱在买的那一刻就付了）。
+   */
+  boonOrganId: string | null;
 }
 
 /**
@@ -603,7 +736,35 @@ export interface CombatState {
   slow: number;
   /** [M1-P2] 我方护体剩余回合（`armor` 类器官技）：>0 时受伤打折 */
   ward: number;
-  /** [M1-P2] 器官技冷却：`OrganDef.id` → 还要等几回合（0／缺键＝可用） */
+  /**
+   * [S1] 敌人流血剩余回合（`bleed` 类技）：每回合**末**它自己掉 `tuning.combatBleedDamage`。
+   *
+   * 与迟滞（`slow`）刻意分开：迟滞削的是它的**出手**（它守着不动时迟滞一点用没有），
+   * 流血削的是它的**血**（它守着不动照样掉）—— 于是「它爱守」这种敌人有了专门的解法。
+   */
+  bleed: number;
+  /**
+   * [S1] 我方反刺剩余回合（`thorns` 类技）：它每命中我一次就自伤
+   * `tuning.combatThornsDamage`。
+   *
+   * 收益随**它出手的频度**放大（爱扑的穷奇吃亏最大，爱守的玄蟒完全不吃亏）——
+   * 这与致盲「收益随它的伤害放大」是同一类设计：一件工具只在一类局面里最优。
+   */
+  thorns: number;
+  /**
+   * [S1] 我方明识剩余回合（`insight` 类技）：期间**读得出确切意图**。
+   *
+   * 它是 `tuning.combatIntentTags` 那几件洞察器官的**临时替身**：没有灵犀／夜瞳的 build
+   * 可以花一个回合＋一份精气把「似要动手」换成「重击 · 预计受伤 11」。
+   * 只改可见性，**不改任何结算**（同 P2 那条「信息 tag 不改结算」的测试盯着它）。
+   */
+  insight: number;
+  /**
+   * [M1-P2 ＋ S1] 技能冷却：`skillId` → 还要等几回合（0／缺键＝可用）。
+   *
+   * 键是 `combatSkills` 给的 `skillId`（器官技＝器官 id，组合技＝`syn:<id>`），
+   * 不再只是器官 id —— 组合技也要各自冷却。
+   */
   skillCooldowns: Record<string, number>;
   log: string[];
 }
@@ -854,12 +1015,48 @@ export interface TaleTuning {
   /** `armor` 器官技给自己挂的护体回合数与受伤倍率 */
   combatWardRounds: number;
   combatWardDamageMul: number;
-  /** 器官技缺省冷却（`OrganDef.combatSkill.cooldown` 优先） */
+  /** 器官技缺省冷却（`CombatSkillDef.cooldown` 优先） */
   combatSkillCooldown: number;
   /** `heal` 器官技回的血量 */
   combatSkillHealAmount: number;
   /** `venom` 器官技附的迟滞回合数 */
   combatVenomSlowRounds: number;
+
+  // — [S1] 技能池新增的四档效果 —
+  //
+  // 每一档的数都要回答同一个问题：**它凭什么值一个回合＋一份代价**。所以三条持续类的
+  // 「总量」刻意压在「一次咬喉上下」：流血 3 合 ×2 ＝ 6，反刺 3 合 ×2 ＝ 6（若它每合都打），
+  // 而咬喉一口 5〜7。技能不是「更强的咬」，是**在别的局面里更划算的咬**。
+
+  /** `bleed` 流血持续回合数 */
+  combatBleedRounds: number;
+  /** `bleed` 每回合末敌人自己掉的血 */
+  combatBleedDamage: number;
+  /** `thorns` 反刺持续回合数 */
+  combatThornsRounds: number;
+  /** `thorns` 敌人每次命中我方时自伤的血 */
+  combatThornsDamage: number;
+  /** `insight` 明识持续回合数（期间读得出确切意图） */
+  combatInsightRounds: number;
+
+  // — [S1] 血脉（血统点的第二个去处）—
+
+  /**
+   * 「血脉」的价钱：花它让下一世**起手自带**一件已发现过的器官。
+   *
+   * ⚠️ 与别的调参不同，这一项在**转世屏**读（不在一世之内生效），所以天时／出身的
+   * `PremiseTuningDelta` 白名单里没有它 —— 世道改不动跨世资产的价钱。
+   * 一世产 3〜8 点（`bloodlineGain`），所以 4 点 ≈ 一世能买一件，与「解锁神种」并列可选。
+   */
+  bloodlineBoonCost: number;
+  /**
+   * 事件专属器官（`affinity` 为空、蛰伏池里永远开不出来的那些，今天只有龙涎）的血脉价钱。
+   *
+   * 贵一倍：它是那条稀有线的**全部回报**，若与常规器官同价，「垂死应龙」那条线的意义
+   * 就被商店买断了。
+   */
+  bloodlineBoonRareCost: number;
+
   /** 持任一即**读得出敌人的确切意图**（否则只有「似要动手／按兵不动」两档） */
   combatIntentTags: string[];
 

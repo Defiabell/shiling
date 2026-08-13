@@ -6,10 +6,13 @@
 
 import {
   cnNumeral,
+  type CombatSkillDef,
+  type CombatSkillEffect,
   type EndingType,
   type EssenceType,
   type OrganSlot,
   type Season,
+  type TaleTuning,
   type WayGateId,
   type WayId,
 } from "@shiling/tale-sim";
@@ -223,4 +226,56 @@ export function chanceCn(chance: number, zeroLabel = "〇成"): string {
 export function toPercent(ratio: number): number {
   if (!Number.isFinite(ratio)) return 0;
   return Math.round(Math.min(1, Math.max(0, ratio)) * 100);
+}
+
+/**
+ * [S1] 十档技能效果的**短读法** —— 搏杀屏按钮、异变图鉴、器官 chip 共用这一份。
+ *
+ * 为什么必须共用：`CombatSkillEffect` 的值是引擎钩子的英文 id（`venom`／`thorns`），
+ * 而这一屏是楷体古卷。三处各写一份的话，「反刺」哪天在图鉴里就会变成「thorns」——
+ * 那种漂移只有实机读文字时才发现（同 `ORGAN_SLOT_LABELS` 上提的理由）。
+ *
+ * 详情浮层里那一版更长（把 tuning 的数实例化出来），见 `detailVm.SKILL_EFFECT_DETAIL`。
+ * 这里刻意压到 6〜8 字：186px 宽的按钮上，一句「附毒·它数合不得起势」会把那一行从两行
+ * 撑成三行，十来颗按钮就多滚一整行（实机量的）。**信息不减，字数减** —— 完整的账在详情里。
+ */
+export const SKILL_EFFECT_LABELS: Record<CombatSkillEffect, string> = {
+  venom: "附毒·数合不起势",
+  bleed: "流血·每合自损",
+  stun: "顿挫·下合只守",
+  blind: "蒙目·多半打空",
+  armor: "护体·受伤减半",
+  thorns: "反刺·它打你自伤",
+  brace: "硬受·这合免伤",
+  bolt: "必定脱身",
+  insight: "明识·读得出意图",
+  heal: "回血",
+};
+
+/**
+ * [S1] 一个技的账，**按倍率读**：「伤 ×2.6 · 附毒·数合不起势 · 冷却 4 合 · 代价 自伤 3」。
+ *
+ * 两处共用：异变揭示演出与转世屏的图鉴 —— 那两处都**不在战斗中**，算不出真实伤害区间
+ * （`combatPreview` 要求 `state.combat` 非空），所以只能报倍率。
+ *
+ * 与搏杀屏按钮上那一行（`combatVm.skillEffectText`）的分工是**有意的**：按钮在战斗中，
+ * 报的是引擎算好的**真实区间**（「伤 7〜9」）。同一个技在两处读法不同，因为一处有上下文、
+ * 一处没有 —— 若图鉴也写「伤 7〜9」，那就是拿某一世的猛去许诺下一世（界面不许承诺
+ * 引擎不保证的事）。
+ */
+export function skillMulLine(skill: CombatSkillDef, tuning: TaleTuning): string {
+  const mul = skill.damageMul ?? tuning.organSkillDamageMul;
+  const parts: string[] = [
+    mul <= 0 ? "不出伤" : `伤 ×${mul}${skill.stat === "ling" ? "（按灵算）" : ""}`,
+  ];
+  for (const effect of skill.effects ?? []) parts.push(SKILL_EFFECT_LABELS[effect]);
+  parts.push(`冷却 ${skill.cooldown ?? tuning.combatSkillCooldown} 合`);
+  if (skill.cost) {
+    parts.push(
+      skill.cost.kind === "hp"
+        ? `代价 自伤 ${skill.cost.amount}`
+        : `代价 ${ESSENCE_LABELS[skill.cost.type]}之精气 ${skill.cost.amount}`,
+    );
+  }
+  return parts.join(" · ");
 }

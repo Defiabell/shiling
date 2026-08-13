@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": ".", "outDir": "dist", "lib": ["ES2023", "DOM"] },
-  "include": ["src", "test"],
+  "include": ["src", "test", "scripts"],
   "references": [{ "path": "../tale-sim" }]
 }

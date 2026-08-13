@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Bloodline, ChronicleEntry, SeedDef, TaleContent } from "@shiling/tale-sim";
+import { boonCost, type Bloodline, type ChronicleEntry, type SeedDef, type TaleContent } from "@shiling/tale-sim";
 import {
   BLOODLINE_KEY,
   CHRONICLE_CAPACITY,
+  buyBoon,
+  consumeBoon,
   emptyBloodline,
+  noteSynergies,
   loadBloodline,
   parseBloodline,
   recordLife,
@@ -110,7 +113,7 @@ describe("parseBloodline", () => {
 describe("save／load 往返", () => {
   it("写进去再读出来是同一份", () => {
     const storage = new MemoryStorage();
-    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")] };
+    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
     expect(saveBloodline(storage, bloodline)).toBe(true);
     expect(storage.getItem(BLOODLINE_KEY)).toBe(serializeBloodline(bloodline));
     expect(loadBloodline(storage, FIXTURE_CONTENT)).toEqual(bloodline);
@@ -156,7 +159,7 @@ describe("recordLife", () => {
 
 describe("unlockSeed", () => {
   it("点数够 → 扣点并加入已解锁", () => {
-    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [] };
+    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
     const after = unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID);
     expect(after?.points).toBe(1);
     expect(after?.unlockedSeedIds).toContain(PAID_SEED.id);
@@ -164,12 +167,12 @@ describe("unlockSeed", () => {
   });
 
   it("点数不足 → null（调用方据此不扣点、不改状态）", () => {
-    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [] };
+    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
     expect(unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
   });
 
   it("未知 id、免费种、已解锁都返回 null", () => {
-    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [] };
+    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null };
     expect(unlockSeed(rich, "seed-nope", CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, FIXTURE_SEED_ID, CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
@@ -209,5 +212,144 @@ describe("引导链持久化", () => {
       removeItem() {},
     };
     expect(loadGuideDismissed(throwing)).toBe(false);
+  });
+});
+
+/*
+ * ===== S1 图鉴与血脉的持久化 =====
+ *
+ * 这一组守的是「跨世保留」这件事本身：图鉴记在血统里，第二世起玩家才可能**主动去凑**
+ * （若记在 `TaleState` 里，每一世都要重新发现一遍，那就永远只是「意料之外」）。
+ */
+
+describe("noteSynergies", () => {
+  it("记下新发现；已知的一律跳过，且返回同一个引用（调用方据此决定要不要写档）", () => {
+    const base = emptyBloodline(FIXTURE_CONTENT);
+    const first = noteSynergies(base, ["syn-a"]);
+    expect(first.knownSynergyIds).toEqual(["syn-a"]);
+    expect(first).not.toBe(base);
+    const again = noteSynergies(first, ["syn-a"]);
+    expect(again).toBe(first);
+    expect(noteSynergies(first, ["syn-b"]).knownSynergyIds).toEqual(["syn-a", "syn-b"]);
+  });
+});
+
+describe("recordLife 累进 knownOrganIds", () => {
+  it("这一世拥有过的器官进图鉴，重复不叠", () => {
+    let bloodline = emptyBloodline(FIXTURE_CONTENT);
+    bloodline = recordLife(bloodline, 3, entry("甲传"), ["gou-chi", "wu-mu"], FIXTURE_CONTENT);
+    expect(bloodline.knownOrganIds).toEqual(["gou-chi", "wu-mu"]);
+    bloodline = recordLife(bloodline, 3, entry("乙传"), ["gou-chi", "ji-zu"], FIXTURE_CONTENT);
+    expect(bloodline.knownOrganIds).toEqual(["gou-chi", "wu-mu", "ji-zu"]);
+  });
+
+  it("神种器官不进图鉴（它走「解锁神种」那条线，混进血脉等于绕开定价）", () => {
+    const bloodline = recordLife(
+      emptyBloodline(FIXTURE_CONTENT),
+      1,
+      entry("甲传"),
+      ["organ-ling-yun", "gou-chi"],
+      FIXTURE_CONTENT,
+    );
+    expect(bloodline.knownOrganIds).toEqual(["gou-chi"]);
+  });
+});
+
+describe("buyBoon / consumeBoon", () => {
+  const cost = boonCost("gou-chi", FIXTURE_CONTENT);
+
+  function seen(points: number): Bloodline {
+    return { ...emptyBloodline(FIXTURE_CONTENT), points, knownOrganIds: ["gou-chi"] };
+  }
+
+  it("点数够 → 扣点并记下 boonOrganId，不改入参", () => {
+    const before = seen(cost + 2);
+    const after = buyBoon(before, "gou-chi", FIXTURE_CONTENT);
+    expect(after?.points).toBe(2);
+    expect(after?.boonOrganId).toBe("gou-chi");
+    expect(before.boonOrganId).toBeNull();
+  });
+
+  it("点数不足、没见过、内容里没有 → null（调用方据此不扣点、不改状态）", () => {
+    expect(buyBoon(seen(cost - 1), "gou-chi", FIXTURE_CONTENT)).toBeNull();
+    expect(buyBoon({ ...seen(99), knownOrganIds: [] }, "gou-chi", FIXTURE_CONTENT)).toBeNull();
+    // 内容里不存在的 id（脏存档／改过名的旧档）
+    expect(buyBoon(seen(99), "ghost-organ", FIXTURE_CONTENT)).toBeNull();
+  });
+
+  /**
+   * **一世只带一件，且不许改主意** —— 规则只有这一处，界面的置灰是它的镜像。
+   *
+   * 早先这里允许「再买一件换掉前一件、钱不退」而界面把整排锁住：同一条规则两套语义，
+   * 且花钱的那一份更松。两条断言分别钉住「换同一件」与「换另一件」都买不成。
+   */
+  it("这一世已经买过血脉 → 再买（同一件或另一件）都返回 null", () => {
+    const bought = { ...seen(99), boonOrganId: "gou-chi", knownOrganIds: ["gou-chi", "wu-mu"] };
+    expect(buyBoon(bought, "gou-chi", FIXTURE_CONTENT)).toBeNull();
+    expect(buyBoon(bought, "wu-mu", FIXTURE_CONTENT)).toBeNull();
+    // 用掉之后（下一世）才能再买
+    expect(buyBoon(consumeBoon(bought), "wu-mu", FIXTURE_CONTENT)?.boonOrganId).toBe("wu-mu");
+  });
+
+  it("consumeBoon 只清标记、不退钱（钱在买的那一刻就付了）", () => {
+    const bought = buyBoon(seen(cost), "gou-chi", FIXTURE_CONTENT)!;
+    const used = consumeBoon(bought);
+    expect(used.boonOrganId).toBeNull();
+    expect(used.points).toBe(bought.points);
+    // 没买过时是恒等操作
+    const empty = emptyBloodline(FIXTURE_CONTENT);
+    expect(consumeBoon(empty)).toBe(empty);
+  });
+});
+
+describe("存档对账（S1 的三个新键）", () => {
+  it("往返带上图鉴与血脉", () => {
+    const storage = new MemoryStorage();
+    const bloodline: Bloodline = {
+      ...emptyBloodline(FIXTURE_CONTENT),
+      points: 9,
+      knownSynergyIds: [],
+      knownOrganIds: ["gou-chi"],
+      boonOrganId: "gou-chi",
+    };
+    saveBloodline(storage, bloodline);
+    expect(loadBloodline(storage, FIXTURE_CONTENT)).toEqual(bloodline);
+  });
+
+  it("S1 之前的旧档（没有这三个键）退回空 —— 图鉴是发现记录，不该凭空补上", () => {
+    const legacy = JSON.stringify({ points: 5, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [] });
+    const parsed = parseBloodline(legacy, FIXTURE_CONTENT);
+    expect(parsed.points).toBe(5);
+    expect(parsed.knownSynergyIds).toEqual([]);
+    expect(parsed.knownOrganIds).toEqual([]);
+    expect(parsed.boonOrganId).toBeNull();
+  });
+
+  it("悬空的 id 被丢掉：内容改过名的组合／器官不许让图鉴虚高、也不许让降世抛错", () => {
+    const raw = JSON.stringify({
+      points: 3,
+      unlockedSeedIds: [],
+      chronicle: [],
+      knownSynergyIds: ["syn-gone", "syn-gone"],
+      knownOrganIds: ["gou-chi", "organ-gone", "gou-chi"],
+      boonOrganId: "organ-gone",
+    });
+    const parsed = parseBloodline(raw, FIXTURE_CONTENT);
+    // fixture 的 synergies 是空表，所以任何已知组合 id 都对不上账
+    expect(parsed.knownSynergyIds).toEqual([]);
+    expect(parsed.knownOrganIds).toEqual(["gou-chi"]);
+    // boon 指向一件对不上账的器官 → 清掉（否则 createLife 会在降世那一刻抛错）
+    expect(parsed.boonOrganId).toBeNull();
+  });
+
+  it("boon 必须是已发现过的那些之一（存档被手改过也不放行）", () => {
+    const raw = JSON.stringify({
+      points: 3,
+      unlockedSeedIds: [],
+      chronicle: [],
+      knownOrganIds: ["gou-chi"],
+      boonOrganId: "wu-mu",
+    });
+    expect(parseBloodline(raw, FIXTURE_CONTENT).boonOrganId).toBeNull();
   });
 });

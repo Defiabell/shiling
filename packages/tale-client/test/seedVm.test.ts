@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  boonCost,
   createLife,
   rollPremise,
   type Bloodline,
   type ChronicleEntry,
   type SeedDef,
+  type SynergyDef,
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
@@ -12,6 +14,12 @@ import { composeAscendGap } from "../src/model/chronicleVm.js";
 import { WAY_LABELS } from "../src/model/format.js";
 import { buildSeedScreenVm } from "../src/model/seedVm.js";
 import { FIXTURE_CONTENT, FIXTURE_SEED_ID } from "./helpers.js";
+
+/** fixture 的四件器官 id（图鉴与血脉的断言要点名） */
+const ORGAN_GOU_CHI = "gou-chi";
+const ORGAN_WU_MU = "wu-mu";
+const ORGAN_LIN_JIA = "lin-jia";
+const ORGAN_JI_ZU = "ji-zu";
 
 /** 一枚要花血统点的神种（fixture 只有免费种，三态解锁得自己造） */
 const PAID_SEED: SeedDef = {
@@ -37,7 +45,15 @@ const CONTENT: TaleContent = {
 };
 
 function bloodline(patch: Partial<Bloodline> = {}): Bloodline {
-  return { points: 0, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], ...patch };
+  return {
+    points: 0,
+    unlockedSeedIds: [FIXTURE_SEED_ID],
+    chronicle: [],
+    knownSynergyIds: [],
+    knownOrganIds: [],
+    boonOrganId: null,
+    ...patch,
+  };
 }
 
 /**
@@ -54,7 +70,7 @@ function entry(title: string, ending: ChronicleEntry["ending"] = "starve"): Chro
 describe("buildSeedScreenVm", () => {
   it("免费种恒为 unlocked（哪怕存档里没记它）", () => {
     const vm = buildSeedScreenVm(
-      { points: 0, unlockedSeedIds: [], chronicle: [] },
+      bloodline({ unlockedSeedIds: [] }),
       FIXTURE_CONTENT,
       NEXT_SEED,
     );
@@ -168,5 +184,159 @@ describe("buildSeedScreenVm", () => {
     const lastWay = composeAscendGap(last, CONTENT).way;
     expect(advice).toContain("这一世不妨试试");
     expect(advice?.includes(`试试${WAY_LABELS[lastWay]}`)).toBe(false);
+  });
+});
+
+/*
+ * ===== S1 异变图鉴 ＋ 血脉 =====
+ *
+ * 两条铁律各有一条断言：**未发现的不许泄露配方**（连 DOM 上的 id 都不给），
+ * 以及**血脉只卖已发现过的器官**（血统点的第二个去处）。
+ */
+
+const SYN_A: SynergyDef = {
+  id: "syn-a",
+  name: "甲变",
+  organIds: [ORGAN_GOU_CHI, ORGAN_WU_MU],
+  kind: "skill",
+  reveal: "齿与目凑在一处，自有其理。",
+  desc: "甲变之说。",
+  skill: {
+    name: "甲变",
+    desc: "咬定并看清。",
+    effects: ["venom"],
+    damageMul: 2.6,
+    cooldown: 4,
+    cost: { kind: "hp", amount: 3 },
+  },
+};
+
+const SYN_B: SynergyDef = {
+  ...SYN_A,
+  id: "syn-b",
+  name: "乙变",
+  organIds: [ORGAN_LIN_JIA, ORGAN_JI_ZU],
+  reveal: "鳞与足凑在一处，自有其理。",
+};
+
+const CODEX_CONTENT: TaleContent = { ...FIXTURE_CONTENT, synergies: [SYN_A, SYN_B] };
+
+describe("异变图鉴：未发现的一格不许泄露任何配方", () => {
+  it("一条都没发现 → 全是「？」，且行里没有 id、没有配方、没有效果", () => {
+    const vm = buildSeedScreenVm(bloodline(), CODEX_CONTENT, NEXT_SEED);
+    expect(vm.codex.caption).toBe("已知异变 0/2");
+    expect(vm.codex.knownCount).toBe(0);
+    for (const row of vm.codex.rows) {
+      expect(row.known).toBe(false);
+      expect(row.id).toBeNull();
+      expect(row.name).toBe("？");
+      expect(row.recipe).toBe("");
+      expect(row.effect).toBe("");
+    }
+    // 整个 VM 序列化之后也不该出现任何未发现组合的名字或配方器官名
+    const dump = JSON.stringify(vm);
+    expect(dump).not.toContain("甲变");
+    expect(dump).not.toContain("乙变");
+  });
+
+  it("发现过的那一条摊开配方、效果与因果；另一条仍是「？」", () => {
+    const vm = buildSeedScreenVm(
+      bloodline({ knownSynergyIds: [SYN_A.id] }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(vm.codex.caption).toBe("已知异变 1/2");
+    const [first, second] = vm.codex.rows;
+    expect(first?.known).toBe(true);
+    expect(first?.name).toBe("甲变");
+    expect(first?.recipe).toBe("狩齿 ＋ 雾目");
+    expect(first?.effect).toContain("伤 ×2.6");
+    expect(first?.effect).toContain("附毒");
+    expect(first?.effect).toContain("自伤 3");
+    expect(first?.note).toBe(SYN_A.reveal);
+    expect(second?.known).toBe(false);
+    expect(JSON.stringify(vm)).not.toContain("乙变");
+  });
+
+  /**
+   * 顺序恒定（按 `content.synergies`）而不是「已发现的排前面」：位置固定，
+   * 玩家才会记住「第二格还是问号」—— 那一格就是他下一世想去凑的东西。
+   */
+  it("行的顺序恒按内容表，不因发现与否重排", () => {
+    const vm = buildSeedScreenVm(
+      bloodline({ knownSynergyIds: [SYN_B.id] }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(vm.codex.rows[0]?.known).toBe(false);
+    expect(vm.codex.rows[1]?.known).toBe(true);
+  });
+});
+
+describe("血脉：血统点的第二个去处", () => {
+  it("一件器官都没见过 → 不列表，给一句「怎么才能有」", () => {
+    const vm = buildSeedScreenVm(bloodline(), CODEX_CONTENT, NEXT_SEED);
+    expect(vm.codex.boons).toEqual([]);
+    expect(vm.codex.boonEmptyNote).toContain("蜕一件形");
+  });
+
+  it("见过的器官标价，点数够才 affordable（价钱问引擎，界面不写第二份）", () => {
+    const cost = boonCost(ORGAN_GOU_CHI, CODEX_CONTENT);
+    const poor = buildSeedScreenVm(
+      bloodline({ knownOrganIds: [ORGAN_GOU_CHI], points: cost - 1 }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(poor.codex.boons[0]?.cost).toBe(cost);
+    expect(poor.codex.boons[0]?.affordable).toBe(false);
+    // 买不起要写清**还差多少**（同屏神种卡的体例）——「再活一世够不够」是玩家的下一个问题
+    expect(poor.codex.boons[0]?.shortfall).toBe(1);
+    const rich = buildSeedScreenVm(
+      bloodline({ knownOrganIds: [ORGAN_GOU_CHI], points: cost }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(rich.codex.boons[0]?.affordable).toBe(true);
+    expect(rich.codex.boons[0]?.shortfall).toBe(0);
+    // 战技名是买它的主要动机，要报出来
+    expect(rich.codex.boons[0]?.skillName).toBe("撕咬");
+  });
+
+  it("已买下的那一件标成「下一世自带」，并在标题那一行点名", () => {
+    const vm = buildSeedScreenVm(
+      bloodline({ knownOrganIds: [ORGAN_GOU_CHI], boonOrganId: ORGAN_GOU_CHI, points: 20 }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(vm.codex.boons[0]?.chosen).toBe(true);
+    expect(vm.codex.boons[0]?.affordable).toBe(false);
+    expect(vm.codex.chosenBoonName).toBe("狩齿");
+  });
+
+  /**
+   * 买过之后**整排锁住**：`buyBoon` 允许改主意，但改一次要再付一次（已付不退）。
+   * 界面若把别的行显示成「可买」，玩家点第二件时不会预期到那是第二笔钱 ——
+   * 而这一屏上一颗按钮就是一世的积蓄。
+   */
+  it("已经买过血脉之后，别的器官也不许再买（免得第二笔钱花得莫名其妙）", () => {
+    const vm = buildSeedScreenVm(
+      bloodline({
+        knownOrganIds: [ORGAN_GOU_CHI, ORGAN_WU_MU],
+        boonOrganId: ORGAN_GOU_CHI,
+        points: 99,
+      }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(vm.codex.boons.every((boon) => !boon.affordable)).toBe(true);
+  });
+
+  it("最近见过的排在前（图鉴是流水的反序，刚蜕出来的那件最想带）", () => {
+    const vm = buildSeedScreenVm(
+      bloodline({ knownOrganIds: [ORGAN_GOU_CHI, ORGAN_WU_MU], points: 20 }),
+      CODEX_CONTENT,
+      NEXT_SEED,
+    );
+    expect(vm.codex.boons.map((boon) => boon.organId)).toEqual([ORGAN_WU_MU, ORGAN_GOU_CHI]);
   });
 });

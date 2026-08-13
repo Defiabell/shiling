@@ -130,6 +130,26 @@ export const BASELINE_TUNING: TaleTuning = {
   combatSkillCooldown: 3,
   combatSkillHealAmount: 8,
   combatVenomSlowRounds: 3,
+
+  /*
+   * [S1] 四档新效果。三条持续类的**总量**刻意压在「一口咬喉上下」（咬喉一口 5〜7）：
+   *   流血 3 合 × 2 ＝ 6；反刺 3 合 × 2 ＝ 6（且要它每合都命中才收满）。
+   * 技不是「更强的咬」，是**在别的局面里更划算的咬** —— 若总量明显超过咬喉，
+   * 技能池就会变成「谁转好了按谁」，三颗咬击又退化成装饰（同 M1-P2 咬腿那条教训）。
+   *
+   * 明识 3 合：够读完「宣告 → 应对 → 结算」两个完整回合，但读不完一整场架 ——
+   * 它是**买一段知情权**，不是把洞察器官白送。
+   */
+  combatBleedRounds: 3,
+  combatBleedDamage: 2,
+  combatThornsRounds: 3,
+  combatThornsDamage: 2,
+  combatInsightRounds: 3,
+
+  // [S1] 血脉：一世产 3〜8 点血统，4 点 ≈ 一世能买一件；事件专属器官（龙涎）翻倍
+  bloodlineBoonCost: 4,
+  bloodlineBoonRareCost: 8,
+
   combatIntentTags: ["insight", "night-eye"],
 
   /*
