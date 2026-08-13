@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { DESTINATIONS, TALE_CONTENT } from "@shiling/tale-content";
 import { buildDestinationVms, destinationCaption, PERIL_LABELS } from "../src/model/destinationVm.js";
-import { realState, withPatch } from "./helpers.js";
+import { combatState, realState, withPatch } from "./helpers.js";
 
 const CONTENT = TALE_CONTENT;
 
@@ -92,6 +92,18 @@ describe("buildDestinationVms", () => {
   });
 
   /**
+   * 不足一成的那一档不许读成「〇成」—— 那与同一行的「此地有草狐」自相矛盾。
+   * （实机截图抓到的：`chanceCn(0.03)` 在屏幕上长得像「〇成」。）
+   */
+  it("常路那一档写「罕有遇袭（不足一成）」，不写「〇成」", () => {
+    const vm = buildDestinationVms(realState(), CONTENT).find((item) => item.id === FREE.id)!;
+    expect(vm.perilLine).toContain("罕有遇袭");
+    expect(vm.perilLine).not.toContain("〇成");
+    // 仍然是一个可比的量（不是「危险」这种形容词）
+    expect(vm.perilLine).toContain("不足一成");
+  });
+
+  /**
    * 遇袭是**条件概率**（先要这一季没撞上事件），所以措辞恒为「无事则……」。
    * 写成「三成遇袭」就是界面替引擎许了一个它不保证的诺。
    */
@@ -114,6 +126,27 @@ describe("buildDestinationVms", () => {
     const tiers = new Set(DESTINATIONS.map((destination) => destination.peril));
     expect(tiers.size).toBe(3);
     for (const tier of tiers) expect(PERIL_LABELS[tier].length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 死亡／战斗中：整排置灰**且说得出为什么**。
+   *
+   * 这一条是实机 E2E 抓出来的（399 次「置灰却没说为什么」）：死亡之后行动面板仍然渲染，
+   * 而去处的可用性原先只问门槛不问引擎 —— 兽径显示为「可去」，点下去 `performAction` 抛错。
+   */
+  it("已死／战斗中：整排置灰，且每一颗都说得出为什么", () => {
+    const dead = withPatch(realState(), { alive: false });
+    for (const vm of buildDestinationVms(dead, CONTENT)) {
+      expect(vm.enabled, vm.id).toBe(false);
+      expect(vm.disabledReason, vm.id).toBe("已　殁");
+      // 后果照写 —— 原因不许顶掉它
+      expect(vm.chanceLine.length, vm.id).toBeGreaterThan(0);
+    }
+    const fighting = withPatch(realState(), { combat: combatState({ log: [] }) });
+    for (const vm of buildDestinationVms(fighting, CONTENT)) {
+      expect(vm.enabled, vm.id).toBe(false);
+      expect(vm.disabledReason, vm.id).toBe("战事未了");
+    }
   });
 
   it("单件门槛那一处只列一件器官（避免把「需 X」写成「需 X、X」）", () => {

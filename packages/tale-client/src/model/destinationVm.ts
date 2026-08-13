@@ -23,6 +23,7 @@
  */
 
 import {
+  availableActions,
   cnNumeral,
   exploreDestinations,
   organIndex,
@@ -73,12 +74,17 @@ export const PERIL_LABELS: Record<PerilTier, string> = {
  *
  * ⚠️ 遇袭是**条件概率**（先要这一季没撞上事件），所以措辞恒为「无事则……」。
  * 写成「三成遇袭」就是界面替引擎许了一个它不保证的诺（legibility 批次那条 Critical）。
+ *
+ * ⚠️ 不足一成的那一档**不用汉字成数**：`chanceCn(0.03)` 读作「〇成三」，而实机截图上
+ * 它长得像「〇成」—— 一句「此地有草狐」旁边写着「〇成遇袭」是自相矛盾的。
+ * 那一档改写成「罕有遇袭（不足一成）」：仍然是可比的量（比「一成八」小），也不会读成「没有」。
  */
 function perilLine(preview: DestinationPreview): string {
   const label = PERIL_LABELS[preview.def.peril];
   if (preview.ambushChance <= 0 || preview.ambushEnemies.length === 0) {
     return `${label} · 此地无袭`;
   }
+  if (preview.ambushChance < 0.1) return `${label} · 无事则罕有遇袭（不足一成）`;
   return `${label} · 无事则约${chanceCn(preview.ambushChance)}遇袭`;
 }
 
@@ -120,12 +126,26 @@ export function buildDestinationVms(
   state: TaleState,
   content: TaleContent,
 ): DestinationButtonVm[] {
+  /*
+   * **能不能行动这件事一律问引擎**（同 `actionVm` 的第一条）。
+   *
+   * 漏了它是实机 E2E 抓出来的：死亡之后行动面板仍然渲染（中央是死亡旁白），而
+   * `exploreDestinations` 只管门槛 —— 兽径于是显示为「可去」，点下去 `performAction` 抛
+   * 「已死亡，不能行动」。追猎／搏杀两屏侥幸不受影响（它们收掉整个行动面板），
+   * 死亡这一屏没有。界面不许比引擎宽。
+   */
+  const canExplore = availableActions(state, content).includes("explore");
+  const blockedReason = !state.alive ? "已　殁" : state.combat ? "战事未了" : "此刻不可行";
   return exploreDestinations(state, content).map((preview) => ({
     id: preview.def.id,
     name: preview.def.name,
     desc: preview.def.desc,
-    enabled: preview.unlocked,
-    disabledReason: preview.unlocked ? null : lockReason(preview, content),
+    enabled: preview.unlocked && canExplore,
+    disabledReason: !canExplore
+      ? blockedReason
+      : preview.unlocked
+        ? null
+        : lockReason(preview, content),
     chanceLine: `遇事 ${chanceCn(preview.eventChance)}`,
     perilLine: perilLine(preview),
     denizenLine: denizenLine(preview),

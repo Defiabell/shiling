@@ -44,6 +44,11 @@ def snap(page: Page) -> dict:
     return page.evaluate("() => JSON.parse(JSON.stringify(window.__tale.snapshot()))")
 
 
+def life_state(page: Page) -> dict | None:
+    """当前这一世的 state；在标题屏／择神种屏／列传卷轴上可能是 null。"""
+    return snap(page).get("state")
+
+
 def dest_screen(page: Page) -> dict:
     """把行动面板上玩家真的看得见的字抄下来（三颗行动 ＋ 一排去处）。"""
     return page.evaluate(
@@ -149,8 +154,17 @@ def click_first(page: Page, selectors: list[str], wait: int = 300) -> bool:
 
 
 def start_life(page: Page, seed: int, *, organs: list[str] | None = None, reset: bool = True) -> None:
+    """
+    起一世。
+
+    `scenario=0` 关掉 AI 一世一剧本：这份验收要量的是**手写的六个池子**读起来是不是六个
+    地方，混进生成事件就说不清了（第一版没关，收上来的四条里有两条是 `gen-*`）。
+    """
     grant = f"&organs={','.join(organs)}" if organs else ""
-    page.goto(f"{BASE}?seed={seed}{'&reset=1' if reset else ''}{grant}", wait_until="networkidle")
+    page.goto(
+        f"{BASE}?seed={seed}{'&reset=1' if reset else ''}{grant}&scenario=0",
+        wait_until="networkidle",
+    )
     page.wait_for_timeout(300)
     page.click("[data-start]")
     page.wait_for_timeout(320)
@@ -205,18 +219,51 @@ def step_forward(page: Page, violations: list[dict]) -> str:
             buttons[0].click()
             page.wait_for_timeout(300)
             return "event"
-    if page.query_selector("[data-dest]") is not None:
-        audit_dests(dest_screen(page), violations)
     if click_first(page, ["[data-continue]:not([disabled])"], 900):
         return "continue"
     return "idle"
+
+
+def audit_now(page: Page, violations: list[dict]) -> None:
+    """
+    在**玩家真的能动**的那一帧审一次按钮。
+
+    `busy` 那几帧要跳过：演出播放期间整排按钮都被禁用（防连点），此时「置灰却没说为什么」
+    是必然的，而它不是缺陷 —— 那一刻玩家本来就不该点。第一版没跳，收上来 399 条全是这个。
+    """
+    if page.query_selector("[data-dest]") is None:
+        return
+    if snap(page).get("busy"):
+        return
+    audit_dests(dest_screen(page), violations)
+
+
+def play_one_turn(page: Page, dest_id: str, violations: list[dict]) -> str:
+    """
+    **一个明理玩家**的一步：饿了就猎，否则去指定那一处探。
+
+    第一版是「只探不猎」，机器玩家两三岁就饿死 —— 于是深处那几个池子一条都收不到，
+    秘藏（`minYear` 3〜4）更是一次都撞不上。这不是内容够不到，是驱动脚本自己不会玩
+    （P1 那条教训：先怀疑机器玩家）。
+    """
+    state = life_state(page)
+    if state is not None and page.query_selector("[data-dest]") is not None:
+        audit_now(page, violations)
+        if state.get("hunger", 100) <= 45:
+            if click_first(page, ['[data-action="hunt"]:not([disabled])'], 340):
+                return "hunt"
+        if click_first(page, [f'[data-dest="{dest_id}"]:not([disabled])'], 340):
+            return "explore"
+        if click_first(page, ['[data-action="rest"]:not([disabled])'], 340):
+            return "rest"
+    return step_forward(page, violations)
 
 
 def explore_at(page: Page, dest_id: str, violations: list[dict]) -> bool:
     """去某一处探一季（若那颗按钮此刻点不了就返回 False）。"""
     if page.query_selector("[data-dest]") is None:
         return False
-    audit_dests(dest_screen(page), violations)
+    audit_now(page, violations)
     return click_first(page, [f'[data-dest="{dest_id}"]:not([disabled])'], 360)
 
 
@@ -245,7 +292,7 @@ def probe_choice_screen(page: Page, seed: int, out: Path, shots: list[str],
 
 
 def collect_events(page: Page, seed: int, dest_id: str, organs: list[str], want: int,
-                   violations: list[dict], max_turns: int = 260) -> list[dict]:
+                   violations: list[dict], max_turns: int = 90) -> list[dict]:
     """
     在某一处反复探索，把撞上的事件卡全文抄下来。
 
@@ -260,13 +307,10 @@ def collect_events(page: Page, seed: int, dest_id: str, organs: list[str], want:
                 return list(seen.values())
             card = event_card(page)
             if card is not None:
-                snapshot = snap(page)
-                event_id = snapshot.get("pendingEventId")
+                event_id = snap(page).get("pendingEventId")
                 if event_id and event_id not in seen:
                     seen[event_id] = {"id": event_id, **card}
-            if page.query_selector("[data-dest]") is not None and explore_at(page, dest_id, violations):
-                continue
-            if step_forward(page, violations) == "idle":
+            if play_one_turn(page, dest_id, violations) == "idle":
                 break
     return list(seen.values())
 
@@ -316,7 +360,7 @@ def main() -> None:
         treasure: dict | None = None
         for attempt in range(8):
             start_life(page, SEED0 + attempt * 313, organs=[])
-            for _ in range(300):
+            for _ in range(200):
                 found = treasure_overlay(page)
                 if found is not None:
                     page.wait_for_timeout(800)
@@ -324,10 +368,7 @@ def main() -> None:
                     shots.append("treasure-reveal.png")
                     treasure = found
                     break
-                if page.query_selector("[data-dest]") is not None:
-                    if explore_at(page, "dest-shou-jing", violations):
-                        continue
-                if step_forward(page, violations) == "idle":
+                if play_one_turn(page, "dest-shou-jing", violations) == "idle":
                     break
             if treasure:
                 break
@@ -337,7 +378,7 @@ def main() -> None:
         for _ in range(400):
             if page.query_selector(".screen--seed") is not None:
                 break
-            step_forward(page, violations)
+            play_one_turn(page, "dest-shou-jing", violations)
         if page.query_selector(".screen--seed") is not None:
             codex = places_codex(page)
             page.screenshot(path=str(OUT / "codex-places.png"), full_page=True)
