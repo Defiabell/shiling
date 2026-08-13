@@ -128,6 +128,7 @@ export async function callChat(request: ChatRequest): Promise<ChatResponse> {
     stat: {
       ...stat,
       ok: text.length > 0,
+      ...(typeof finish === "string" ? { finishReason: finish } : {}),
       promptTokens: numberOr(data.usage?.prompt_tokens, 0),
       completionTokens: numberOr(data.usage?.completion_tokens, 0),
       reasoningTokens: numberOr(data.usage?.completion_tokens_details?.reasoning_tokens, 0),

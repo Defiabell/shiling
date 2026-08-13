@@ -8,6 +8,7 @@
 
 import { TaleApp } from "./app.js";
 import { historianConfig } from "./ai/historian.js";
+import { scenarioConfig } from "./ai/scenario.js";
 import { BLOODLINE_KEY, browserStorage } from "./persist/bloodline.js";
 import { GUIDE_KEY } from "./persist/guide.js";
 
@@ -49,10 +50,17 @@ if (!root) throw new Error("main: 找不到 #app 挂载点");
  */
 const ai = historianConfig(globalThis.location.search, import.meta.env.DEV);
 
+/*
+ * [P2 一世一剧本] 同样在这里算一次：dev 才开，`?scenario=0`（或 `?ai=0`）强制关，
+ * `?scenariomodel=litellm/<名>` 换模型。生产构建没有 `/ai/chat`，开着也只会四次 404。
+ */
+const scenario = scenarioConfig(globalThis.location.search, import.meta.env.DEV);
+
 const app = new TaleApp(root, {
   ...(seed === undefined ? {} : { seed }),
   ...(grantOrganIds.length > 0 ? { grantOrganIds } : {}),
   ai,
+  scenario,
 });
 app.start();
 

@@ -25,8 +25,16 @@ import type { Plugin } from "vite";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_BASE = "https://aigw.meshy.team/v1";
-/** 网关的可观测头，原样透给浏览器 —— 成本就在其中一条里（body 里没有）。 */
+/**
+ * 网关的可观测头，原样透给浏览器 —— 成本与**缓存命中**都只在头里（body 里没有）。
+ *
+ * `x-litellm-cache-key` 这一条是 2026-08-13 补的，补之前踩过一次：一世一剧本的实机
+ * 第二次跑同一个种子时，四发请求在 3s 内全部返回、内容与成本分毫不差 —— 那是网关缓存命中，
+ * 而浏览器这边 `cacheHit` 全是 false，因为**判据那一条头没被透过来**。
+ * 差一点据此把「实机生成只要 3s」写进报告（P1 差点据此把 sonnet 选进生产，同一个坑）。
+ */
 const RELAYED_HEADERS = [
+  "x-litellm-cache-key",
   "x-litellm-response-cost",
   "x-litellm-call-id",
   "x-litellm-model-api-base",
@@ -88,10 +96,13 @@ async function loadCredentials(): Promise<Credentials | null> {
   }
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, signal?: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    // 客户端在**请求体还没收完**时就走了：不接这根线的话这个 Promise 永不落定，
+    // 外层那个 async IIFE 连同 req/res 闭包一起挂着不回收（窗口很窄，但代价是零）
+    signal?.addEventListener("abort", () => rejectPromise(new Error("客户端已断开")), { once: true });
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       // 史官的请求体只有几 KB；上限存在是为了别让一个写错的循环把 dev server 撑爆
@@ -156,8 +167,25 @@ export function aigwPlugin(options: AigwPluginOptions = {}): Plugin {
             sendJson(res, 503, { error: "aigw-key-missing" });
             return;
           }
+          /*
+           * 浏览器放弃这一发（预算到点、玩家关页面）时，**上游那一发也要停**。
+           *
+           * 不接这根线的后果是实测出来的：一世一剧本四批并行，超时被丢掉的那两批
+           * 仍在网关那边跑着，把配额占给了下一世的请求 —— 于是「上一世超时」会传染成
+           * 「下一世更慢」，而日志里两件事看着毫无关系。
+           *
+           * ⚠️ 监听的是 **`res` 的 close 而不是 `req` 的**：`IncomingMessage` 的 `close`
+           * 在**请求体读完**那一刻就会触发（不是客户端断开），挂在它上面等于每一发都当场
+           * 自我 abort —— 实测的表现是整条链路静默吊死（上游被掐，响应又因为
+           * `aborted` 守卫而永远不写）。`res` 的 close ＋ `writableFinished` 才是
+           * 「客户端先走了」的正确判据。
+           */
+          const abort = new AbortController();
+          res.on("close", () => {
+            if (!res.writableFinished) abort.abort();
+          });
           try {
-            const body = await readBody(req);
+            const body = await readBody(req, abort.signal);
             const upstream = await fetch(`${creds.baseUrl}/chat/completions`, {
               method: "POST",
               headers: {
@@ -165,6 +193,7 @@ export function aigwPlugin(options: AigwPluginOptions = {}): Plugin {
                 authorization: `Bearer ${creds.key}`,
               },
               body,
+              signal: abort.signal,
             });
             for (const name of RELAYED_HEADERS) {
               const value = upstream.headers.get(name);
@@ -175,6 +204,8 @@ export function aigwPlugin(options: AigwPluginOptions = {}): Plugin {
             res.setHeader("content-type", upstream.headers.get("content-type") ?? "application/json");
             res.end(text);
           } catch (error) {
+            // 客户端自己先走了：响应已经没人收，再写只会 ERR_STREAM_WRITE_AFTER_END
+            if (res.writableEnded || abort.signal.aborted) return;
             // 上游的错误消息可能带 URL 与请求内容，但绝不含 key（key 只在 header 里）
             sendJson(res, 502, { error: "aigw-upstream", detail: String(error).slice(0, 300) });
           }

@@ -29,6 +29,71 @@ export {
   type DraftLimits,
   type ParseResult,
 } from "./validate.js";
+
+// — P2 一世一剧本（降世时批量生成本世专属事件池）—
+export {
+  assembleEvent,
+  buildSlots,
+  combatableEnemies,
+  gateableTags,
+  mergeEffects,
+  midpointDraft,
+  organsWithTag,
+  type SlotContext,
+} from "./scenario/slots.js";
+export {
+  SCENARIO_SYSTEM_PROMPT,
+  buildScenarioMessages,
+  premiseBlock,
+  retryScenarioMessages,
+  slotBlock,
+  styleAnchor,
+  styleAnchors as scenarioStyleAnchors,
+  writtenDigest,
+  type ScenarioPromptInput,
+} from "./scenario/prompt.js";
+export {
+  SCENARIO_COPY_SPAN,
+  SCENARIO_LIMITS,
+  auditEvent,
+  dominancePairs,
+  parseScenarioReply,
+  validateEventDraft,
+  type DraftLimits as ScenarioDraftLimits,
+  type ScenarioParseResult,
+  type ValidateContext,
+} from "./scenario/validate.js";
+export {
+  SCENARIO_PACK_VERSION,
+  catalogNouns,
+  generateScenario,
+  type ScenarioInput,
+} from "./scenario/generate.js";
+export {
+  ACTION_LABELS,
+  BUDGET_KEYS,
+  DEFAULT_SCENARIO_OPTIONS,
+  GENERATED_ID_PREFIX,
+  SLOT_COUNT,
+  type BatchStat,
+  type BudgetKey,
+  type BudgetRange,
+  type ChoiceDraft,
+  type ChoiceSpec,
+  type EffectBudget,
+  type EventDraft,
+  type FixedEffects,
+  type OutcomeDraft,
+  type OutcomeSpec,
+  type PremiseEcho,
+  type ScenarioOptions,
+  type ScenarioPack,
+  type ScenarioResult,
+  type ScenarioTelemetry,
+  type SlotSpec,
+  type TradeoffKind,
+} from "./scenario/types.js";
+
 export {
   DEFAULT_HISTORIAN_OPTIONS,
   type CallStat,

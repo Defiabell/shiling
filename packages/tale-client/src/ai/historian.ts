@@ -89,20 +89,29 @@ export async function requestChronicle(
 }
 
 /**
- * 把这一世的账（token／耗时／成本／回落原因）送去 dev server 落盘。
+ * 把一条账送去 dev server 落盘。
  *
  * 发完不等、失败不管：遥测挂掉绝不能影响玩家看列传。用 `keepalive` 是因为这条请求
  * 恰好发在切屏那一刻，页面若被刷新，普通 fetch 会被中断。
+ *
+ * `kind` 区分这一行是哪一批的账（`chronicle` 列传／`scenario` 一世一剧本）——
+ * 两批共用同一个 jsonl，报告按这个字段分开统计。中间件那边刻意**不解析**这个 body
+ * （见 `vite-aigw.ts`：遥测的第一纪律是「挂了也绝不能影响玩家」），所以分流在读的那一头做。
  */
-export function reportTelemetry(telemetry: HistorianTelemetry): void {
+export function postTelemetry(kind: string, payload: unknown): void {
   try {
     void fetch(AI_TELEMETRY_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ at: new Date().toISOString(), ...telemetry }),
+      body: JSON.stringify({ at: new Date().toISOString(), kind, ...(payload as object) }),
       keepalive: true,
     }).catch(() => undefined);
   } catch {
     /* 遥测是可选项 */
   }
+}
+
+/** 一世一篇列传的账。 */
+export function reportTelemetry(telemetry: HistorianTelemetry): void {
+  postTelemetry("chronicle", telemetry);
 }

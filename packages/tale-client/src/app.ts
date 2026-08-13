@@ -31,7 +31,7 @@ import {
   type WayId,
 } from "@shiling/tale-sim";
 
-import { CONTENT, USING_FIXTURE_CONTENT } from "./content.js";
+import { CONTENT, USING_FIXTURE_CONTENT, clearInjectedEvents, injectedEvents, setInjectedEvents } from "./content.js";
 import { el, nextFrame } from "./dom.js";
 import { endingArt, eventArt, portraitArt } from "./art/assets.js";
 import { buildActionVms } from "./model/actionVm.js";
@@ -45,10 +45,17 @@ import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type Log
 import { buildSeedScreenVm } from "./model/seedVm.js";
 import {
   historianConfig,
+  postTelemetry,
   reportTelemetry,
   requestChronicle,
   type HistorianConfig,
 } from "./ai/historian.js";
+import {
+  requestScenario,
+  scenarioCacheKey,
+  scenarioConfig,
+  type ScenarioConfig,
+} from "./ai/scenario.js";
 import type { HistorianResult } from "@shiling/tale-ai";
 import { buildStalkVm, type StalkActId } from "./model/stalkVm.js";
 import { buildStatusVm } from "./model/statusVm.js";
@@ -101,6 +108,11 @@ export interface AppOptions {
    * app.ts 因此不必认识 vite 的 env，测试里也能直接关掉它（缺省即关）。
    */
   ai?: HistorianConfig;
+  /**
+   * [P2 一世一剧本] 降世时批量生成本世专属事件池的配置。同 `ai`：由 main.ts 算好传进来，
+   * 缺省即关（测试与任何非 dev 入口都不该在开局路径上发网络请求）。
+   */
+  scenario?: ScenarioConfig;
 }
 
 export class TaleApp {
@@ -142,6 +154,17 @@ export class TaleApp {
   private lastHistorian: HistorianResult | null = null;
   /** AI 史官的开关与模型（`?ai=0` 关、`?aimodel=` 换），一局定一次 */
   private readonly aiConfig: HistorianConfig;
+  /** [P2] 一世一剧本的开关与模型（`?scenario=0` 关、`?scenariomodel=` 换） */
+  private readonly scenarioConfig: ScenarioConfig;
+  /**
+   * [P2] 这一世的生成情况 —— **只给 `debugSnapshot` 与日志用**，玩法一个字都不读它。
+   *
+   * `injected` 是已经进池子的条数（分批到齐，所以它会在一世之内往上走）。
+   */
+  private scenarioInfo: { source: "ai" | "cache" | "none" | "pending"; injected: number } = {
+    source: "none",
+    injected: 0,
+  };
 
   // — 「看得懂」批次：详情浮层与引导链的界面状态（都不进引擎，也不影响任何结算） —
 
@@ -184,6 +207,7 @@ export class TaleApp {
     this.grantOrganIds = options.grantOrganIds ?? [];
     // 缺省关：没显式给配置的调用方（测试、任何非 dev 入口）不该在死亡路径上发网络请求
     this.aiConfig = options.ai ?? historianConfig("", false);
+    this.scenarioConfig = options.scenario ?? scenarioConfig("", false);
     this.bloodline = loadBloodline(this.storage, CONTENT);
     this.lifeIndex = this.bloodline.chronicle.length;
     this.guideDismissed = loadGuideDismissed(this.storage);
@@ -272,6 +296,11 @@ export class TaleApp {
     // 同一 baseSeed 下每一世换个数：既可复现，又不会世世雷同。
     const seedNum = this.nextSeedNum();
     this.lifeIndex += 1;
+    /*
+     * [P2] 上一世的剧本到此为止。**必须在 `createLife` 之前清掉** —— 那一份是上一世的
+     * 天时／出身生出来的，留着就等于「每一局几乎都一样」，只是这次重复的是 AI 写的那一半。
+     */
+    clearInjectedEvents();
     const born = createLife(seedNum, seedId, CONTENT);
     // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
     const state =
@@ -296,6 +325,17 @@ export class TaleApp {
       clearTimeout(this.guideHideTimer);
       this.guideHideTimer = null;
     }
+    /*
+     * [P2 一世一剧本] 降世那一刻起跑，**不 await**。
+     *
+     * 玩家这边照常进降世屏、照常按第一个行动 —— 头几个回合抽的是手写池。生成分四批并行，
+     * 每批落定就热注入（幼年那一批排在最前，见 `generateScenario` 的排序），
+     * 于是「先用手写池开局，生成好了再热注入」这件事对玩家是无感的。
+     *
+     * 起跑之前先试缓存：同一个种子 ＋ 同一枚神种＝同一局，读到就同步注入、一个请求都不发
+     * （架构红线 1：同一局重放必须完全一致）。
+     */
+    this.startScenario(state, seedNum, seedId);
     const birth = state.records.find((record) => record.kind === "birth");
     this.appendLog(state.year, state.season, [{ text: birth?.text ?? "", tone: "omen" }]);
     /*
@@ -332,6 +372,40 @@ export class TaleApp {
     };
     this.screen = "play";
     this.renderPlayScreen();
+  }
+
+  /**
+   * [P2] 起一次剧本生成，并把落定的每一批热注入事件池。
+   *
+   * **永不 await、永不抛错**：这个方法返回时玩家已经可以开打了。
+   *
+   * 陈旧世的守卫（`this.lifeIndex === token`）非有不可：一世可能在几十秒内就结束
+   * （饿殍最短四五岁），而生成要一两分钟。没有这一位，上一世的剧本会在下一世开局之后
+   * 才落地并注入 —— 那正是「同一局重放必须一致」要挡的东西，只是方向反了。
+   *
+   * 同一个判据要**同时递给 `isStale`**：注入停了而落盘没停，等于把玩家没见过的那几批
+   * 补进上一局的存档（重放读到的就不是当时玩的那一份），还会把更新的一局挤出缓存。
+   */
+  private startScenario(state: TaleState, seedNum: number, seedId: string): void {
+    const token = this.lifeIndex;
+    this.scenarioInfo = { source: this.scenarioConfig.enabled ? "pending" : "none", injected: 0 };
+    void requestScenario({
+      state,
+      content: CONTENT,
+      config: this.scenarioConfig,
+      cacheKey: scenarioCacheKey(seedNum, seedId),
+      storage: this.storage,
+      isStale: () => this.lifeIndex !== token,
+      onEvents: (events) => {
+        if (this.lifeIndex !== token) return;
+        setInjectedEvents(events);
+        this.scenarioInfo = { ...this.scenarioInfo, injected: injectedEvents().length };
+      },
+    }).then((outcome) => {
+      if (this.lifeIndex !== token) return;
+      this.scenarioInfo = { source: outcome.source, injected: injectedEvents().length };
+      if (outcome.telemetry) postTelemetry("scenario", outcome.telemetry);
+    });
   }
 
   /**
@@ -909,6 +983,19 @@ export class TaleApp {
       totalMs: number | null;
       costUsd: number | null;
     };
+    /**
+     * [P2] 这一世的剧本生成情况。E2E 靠它判「注进去了几条」「是新生成的还是读的缓存」——
+     * 光看屏幕分不出来（那正是这一批该有的样子：生成事件与手写事件在卡片上长得一模一样）。
+     *
+     * `injectedIds` 让「同一种子重放两次是否逐字一致」这一问可以机械比对。
+     */
+    scenario: {
+      enabled: boolean;
+      model: string;
+      source: "ai" | "cache" | "none" | "pending";
+      injected: number;
+      injectedIds: string[];
+    };
   } {
     const state = this.state;
     return {
@@ -926,6 +1013,13 @@ export class TaleApp {
         fallbackReason: this.lastHistorian?.telemetry.fallbackReason ?? null,
         totalMs: this.lastHistorian?.telemetry.totalMs ?? null,
         costUsd: this.lastHistorian?.telemetry.costUsd ?? null,
+      },
+      scenario: {
+        enabled: this.scenarioConfig.enabled,
+        model: this.scenarioConfig.model,
+        source: this.scenarioInfo.source,
+        injected: this.scenarioInfo.injected,
+        injectedIds: injectedEvents().map((event) => event.id),
       },
       // 只读：不推进 guideIndex（推进只在渲染那一条路上发生），照实报当前那一步
       guide: state && !this.guideDismissed ? buildGuideVm(state, CONTENT, this.guideIndex) : null,

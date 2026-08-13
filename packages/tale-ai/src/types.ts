@@ -118,6 +118,13 @@ export interface CallStat {
   costUsd: number | null;
   /** `x-litellm-call-id`，报障用 */
   callId: string | null;
+  /**
+   * 模型自己说的收尾方式（`stop`／`length`／…）。
+   *
+   * **`length` ＝ 被 `max_tokens` 截断**，而截断的回复在别处与成功毫无区别：HTTP 200、
+   * `content` 非空、`ok` 为真。不记这一位，日志里就分不出「写跑题了」与「写到一半没额度了」。
+   */
+  finishReason?: string;
   /** HTTP 状态；网络层失败为 0 */
   status: number;
   ok: boolean;

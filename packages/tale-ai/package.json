@@ -6,7 +6,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lab": "node --import ../gen/src/tsResolveHook.mjs scripts/historian-lab.ts"
+    "lab": "node --import ../gen/src/tsResolveHook.mjs scripts/historian-lab.ts",
+    "scenario": "node --import ../gen/src/tsResolveHook.mjs scripts/scenario-lab.ts",
+    "audit-pack": "node --import ../gen/src/tsResolveHook.mjs scripts/audit-pack.ts"
   },
   "dependencies": {
     "@shiling/tale-sim": "workspace:*"

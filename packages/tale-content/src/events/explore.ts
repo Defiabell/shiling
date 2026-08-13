@@ -643,8 +643,14 @@ export const EXPLORE_EVENTS: readonly TaleEvent[] = [
         outcomes: [
           {
             weight: 1,
+            /*
+             * [2026-08-13 修] 鳞精气 6 → 14。原值下这个选项被「止步不前」（鳞 8、灵 1）
+             * **严格占优**：吃了萤反而拿得更少，还倒赔二德 —— 它看着像抉择，其实没人会点。
+             * 这条是 P2 的占优检测器在手写 51 条上跑出来的唯一一条（`scenarioValidate.test.ts`
+             * 拿手写内容当校准集，那一条断言现在恒为空）。改成「多拿鳞、赔德行」才是取舍。
+             */
             text: "萤在舌上碎了，青光在腮帮里亮了一下。这一夜再没有第二只飞起来。",
-            effects: { essence: { lin: 6 }, stats: { de: -2 } },
+            effects: { essence: { lin: 14 }, stats: { de: -2 } },
           },
         ],
       },
