@@ -51,7 +51,7 @@ export const BASELINE_TUNING: TaleTuning = {
    * 复算工具：`pnpm -C packages/gen balance -- --lives 500`。
    */
   explorePeril: {
-    calm: { ambushChance: 0.06, travelCost: 0, eventMul: 1 },
+    calm: { ambushChance: 0.03, travelCost: 0, eventMul: 1 },
     wary: { ambushChance: 0.18, travelCost: 6, eventMul: 1.15 },
     grim: { ambushChance: 0.32, travelCost: 12, eventMul: 1.3 },
   },

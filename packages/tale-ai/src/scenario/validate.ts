@@ -10,6 +10,7 @@
  * | ③ 长度与标点纪律 | 一句话交差、写成小说、半角标点、正文里的阿拉伯数字 |
  * | ④ 与手写事件去重 | 「又一条捡腐肉」 |
  * | ⑤ 前提呼应（母题词） | 「今年天时不好」这种放之四海皆准的句子 |
+ * | ⑦ [S2] 地方景物（去处景物词） | 「你在林子里走着」这种六处都成立的句子 |
  * | ⑥ 具名专名与杀生一致性 | 白泽跑到生成事件里；文案写了吃活物而骨架没记这条命 |
  *
  * 每条问题都是**能直接递回给模型的人话**（重试就靠它们，同 P1 的做法）。
@@ -235,6 +236,10 @@ function fingerprintOf(choice: EventChoice): string {
     for (const flag of effects.addFlags ?? []) parts.push(`af:${flag}@${share}`);
     for (const flag of effects.removeFlags ?? []) parts.push(`rf:${flag}@${share}`);
     if (effects.addOrganId !== undefined) parts.push(`og:${effects.addOrganId}@${share}`);
+    // [S2] 秘藏进指纹：拿到一处秘藏与拿不到是**两种不同的东西**，把它们放进同一个
+    // 数值向量里比大小，会把「掘出来（＋秘藏）」判成严格占优于「盖回去（＋德）」——
+    // 而后者恰恰是这一批刻意留的那个出口（同 `startCombat`／`takesLife` 的理由）
+    if (effects.findTreasureId !== undefined) parts.push(`tr:${effects.findTreasureId}@${share}`);
     if (effects.die !== undefined) parts.push(`die:${effects.die}@${share}`);
     if (effects.devourDivine === true) parts.push(`dv@${share}`);
     takesLife += share * (effects.takesLife ?? 0);
@@ -340,6 +345,14 @@ export function auditEvent(event: TaleEvent, content: TaleContent): string[] {
       if (effects.way !== undefined) problems.push(`抉择${index + 1}写了 way，生成事件不许发放成道。`);
       if (effects.devourDivine === true) {
         problems.push(`抉择${index + 1}写了 devourDivine，生成事件不许发放登神门槛。`);
+      }
+      /*
+       * [S2] 秘藏同理：一处的秘藏是「到过才知道」的那件东西，图鉴按它计数，
+       * 而生成事件是这一局临时长出来的 —— 让它发秘藏，等于让 AI 有权改跨世图鉴的分母。
+       * 结构上它本来就填不了（骨架的 `fixed` 里没有这个字段），这一条是第二把锁。
+       */
+      if (effects.findTreasureId !== undefined) {
+        problems.push(`抉择${index + 1}写了 findTreasureId，生成事件不许发放秘藏。`);
       }
     }
   }
@@ -477,6 +490,25 @@ export function validateEventDraft(
     if (!hit) {
       problems.push(
         `${where}正文没有呼应这一世的${slot.echo.kind === "sky" ? "天时" : "出身"}「${slot.echo.name}」—— 要写出它的一个具体情节，正文里至少出现下列字词之一：${slot.echo.keywords.join("、")}。`,
+      );
+    }
+  }
+
+  /*
+   * — ⑦ [S2] 地方景物 —
+   *
+   * 与⑤同一种闸门、同一个理由：「写出该地的具体景物」若只靠 prompt 叮嘱，拿回来的是
+   * 「你在林中走着」这种六处都成立的句子。S2 的验收标准恰恰是「那一处读起来是不是
+   * 另一个地方」，所以这一条必须是**可判定**的性质，而不是一句愿望。
+   *
+   * 与⑤的一处不同：这条只对**探索槽位**生效（`slot.place` 非空）。狩猎／休憩／季候那些
+   * 槽位与去处无关，硬要求它们写出某处的景物只会逼模型硬凑。
+   */
+  if (slot.place && slot.place.scenery.length > 0) {
+    const hit = slot.place.scenery.some((word) => draft.body.includes(word));
+    if (!hit) {
+      problems.push(
+        `${where}正文没有写出「${slot.place.name}」的景物 —— 要写别处写不出来的那种细节，正文里至少出现下列字词之一：${slot.place.scenery.join("、")}。`,
       );
     }
   }

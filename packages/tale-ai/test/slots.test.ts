@@ -18,6 +18,7 @@ import {
   combatableEnemies,
   gateableTags,
   midpointDraft,
+  slotBlock,
 } from "../src/index.js";
 
 const CONTENT = TALE_CONTENT;
@@ -180,5 +181,81 @@ describe("拼成的事件本身合法（id 白名单终审）", () => {
     (first.effects as Record<string, number>)["lifespan"] = 9;
     const event = assembleEvent(slot, draft);
     expect(event.choices[0]?.outcomes[0]?.effects.lifespan).toBeUndefined();
+  });
+});
+
+/*
+ * [S2] 生成事件要知道自己属于哪一处。
+ *
+ * 这一段钉的是「独立事件池」在**生成侧**也成立：漏了归属的一条生成事件会在六处
+ * 全部出现，而那正是这一批要消灭的「换皮」。三条各自守一段链路：
+ * 骨架（`place` 与 `trigger.destinations` 一致）→ prompt（景物词递进去）→
+ * 校验（正文不写景就打回）。
+ */
+describe("[S2] 探索槽位的去处归属", () => {
+  const state = createLife(20260814, SEED_CHANG_TAI, CONTENT);
+
+  it("每条探索槽位都带 place，且 trigger.destinations 与它一致", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    const explores = slots.filter((slot) => slot.trigger.actions?.includes("explore"));
+    expect(explores.length).toBeGreaterThan(0);
+    for (const slot of explores) {
+      expect(slot.place, slot.id).toBeDefined();
+      expect(slot.trigger.destinations, slot.id).toEqual([slot.place?.id]);
+    }
+  });
+
+  it("非探索槽位**不带** place，也不声明去处（那类写的是季候，不是地方）", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    for (const slot of slots) {
+      if (slot.trigger.actions?.includes("explore")) continue;
+      expect(slot.place, slot.id).toBeUndefined();
+      expect(slot.trigger.destinations, slot.id).toBeUndefined();
+    }
+  });
+
+  /** 六条探索槽位铺开六处：玩家这一世无论开出哪一处，那儿都有一条专属剧本。 */
+  it("六条探索槽位分属六处，一处不重", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    const places = slots
+      .filter((slot) => slot.place !== undefined)
+      .map((slot) => slot.place?.id ?? "");
+    expect(places.length).toBe(CONTENT.destinations.length);
+    expect(new Set(places).size).toBe(CONTENT.destinations.length);
+  });
+
+  it("place 里的景物词与兽名取自内容（不是手抄）", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    const slot = slots.find((item) => item.place !== undefined)!;
+    const destination = CONTENT.destinations.find((item) => item.id === slot.place?.id)!;
+    expect(slot.place?.scenery).toEqual(destination.scenery);
+    expect(slot.place?.name).toBe(destination.name);
+    const names = destination.denizens.map(
+      (denizen) => CONTENT.enemies.find((enemy) => enemy.id === denizen.enemyId)?.name ?? "",
+    );
+    expect(slot.place?.denizenNames).toEqual(names);
+  });
+
+  it("prompt 里递了地方、地貌与景物词（模型看不到 id）", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    const slot = slots.find((item) => item.place !== undefined)!;
+    const block = slotBlock(slot);
+    expect(block).toContain(slot.place?.name ?? "");
+    expect(block).toContain(slot.place?.desc ?? "");
+    expect(block).toContain(slot.place?.scenery[0] ?? "");
+    expect(block).not.toContain(slot.place?.id ?? "@@none@@");
+  });
+
+  it("同一个种子掷出的去处分派恒定（生成包重放要读到同一副骨架）", () => {
+    const a = buildSlots(state, CONTENT).slots.map((slot) => slot.place?.id ?? null);
+    const b = buildSlots(state, CONTENT).slots.map((slot) => slot.place?.id ?? null);
+    expect(a).toEqual(b);
+  });
+
+  it("中值草稿自带景物词（不然它过不了自己那道闸门）", () => {
+    const { slots } = buildSlots(state, CONTENT);
+    const slot = slots.find((item) => item.place !== undefined)!;
+    const draft = midpointDraft(slot);
+    expect(slot.place?.scenery.some((word) => draft.body.includes(word))).toBe(true);
   });
 });

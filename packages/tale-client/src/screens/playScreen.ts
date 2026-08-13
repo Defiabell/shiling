@@ -12,6 +12,7 @@
 import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import type { ActionButtonVm } from "../model/actionVm.js";
+import type { DestinationButtonVm } from "../model/destinationVm.js";
 import type { CombatActionVm, CombatVm } from "../model/combatVm.js";
 import type { DetailSel, DetailVm } from "../model/detailVm.js";
 import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
@@ -55,6 +56,10 @@ export interface PlayProps {
   status: StatusVm;
   center: CenterVm;
   actions: ActionButtonVm[];
+  /** [S2] 探索去处（含未开启的，顺序恒按内容表） */
+  destinations: DestinationButtonVm[];
+  /** [S2] 去处那一排的小标题：「往哪走 · 可去三／六处 · 这一世已至二处」 */
+  destinationCaption: string;
   log: LogLineVm[];
   freshLogIds: ReadonlySet<number>;
   /** 演出播放中：所有按钮禁用，避免连点打穿引擎的「先结算再行动」纪律 */
@@ -64,6 +69,8 @@ export interface PlayProps {
   /** 首世引导链的当前一步；null ＝ 已跳过／已看完 */
   guide: GuideVm | null;
   onAction(id: ActionId): void;
+  /** [S2] 去某一处探索 —— 它**就是**这一季的行动（不是二级菜单里的一步） */
+  onExplore(destinationId: string): void;
   onChoice(idx: number): void;
   onCombat(act: CombatAct): void;
   onStalk(act: StalkActId): void;
@@ -828,32 +835,86 @@ function stalkCard(stalk: StalkVm, key: string, props: PlayProps): HTMLElement {
 }
 
 function actionBar(props: PlayProps): HTMLElement {
-  return el(
-    "footer",
-    { class: "actions" },
-    props.actions.map((action, index) =>
-      el(
-        "button",
-        {
-          class: `act${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}`,
-          attrs: {
-            type: "button",
-            disabled: !action.enabled || props.busy,
-            "data-action": action.id,
+  return el("footer", { class: "actions" }, [
+    el(
+      "div",
+      { class: "actions__row" },
+      props.actions.map((action, index) =>
+        el(
+          "button",
+          {
+            class: `act${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}`,
+            attrs: {
+              type: "button",
+              disabled: !action.enabled || props.busy,
+              "data-action": action.id,
+            },
+            title: action.disabledReason ?? action.hint,
+            on: { click: () => props.onAction(action.id) },
           },
-          title: action.disabledReason ?? action.hint,
-          on: { click: () => props.onAction(action.id) },
-        },
-        [
-          el("span", { class: "act__seal", text: action.glyph }),
-          el("span", { class: "act__text" }, [
-            el("b", {}, [el("span", { text: action.label }), el("kbd", { text: String(index + 1) })]),
-            el("em", { text: action.disabledReason ?? action.hint }),
-          ]),
-        ],
+          [
+            el("span", { class: "act__seal", text: action.glyph }),
+            el("span", { class: "act__text" }, [
+              el("b", {}, [el("span", { text: action.label }), el("kbd", { text: String(index + 1) })]),
+              el("em", { text: action.disabledReason ?? action.hint }),
+            ]),
+          ],
+        ),
       ),
     ),
-  );
+    destinationBar(props),
+  ]);
+}
+
+/**
+ * [S2] 去处那一排 —— 「探索」这一季的全部内容。
+ *
+ * 每颗按钮四行恒在（地貌／遇事／风险＋此地有什么／路费），未开启的**后果照写、
+ * 原因另起一行**（`dest__lock`）—— 与 S1 技能池那一条同解：只写「尚不得其门」的按钮，
+ * 玩家既不知道那儿是什么，也就没法决定「要不要为它去凑一件浮鳔」。
+ *
+ * 键盘编号从 4 起（1／2／3 归上面那三颗行动）。
+ */
+function destinationBar(props: PlayProps): HTMLElement {
+  const offset = props.actions.length;
+  return el("div", { class: "dests" }, [
+    el("div", { class: "dests__title", text: props.destinationCaption }),
+    el(
+      "div",
+      { class: "dests__grid" },
+      props.destinations.map((dest, index) =>
+        el(
+          "button",
+          {
+            class: `dest dest--${dest.peril}${dest.enabled ? "" : " is-locked"}${dest.visited ? " is-visited" : ""}`,
+            attrs: {
+              type: "button",
+              disabled: !dest.enabled || props.busy,
+              "data-dest": dest.id,
+            },
+            title: dest.disabledReason ?? dest.desc,
+            on: { click: () => props.onExplore(dest.id) },
+          },
+          [
+            el("span", { class: "dest__head" }, [
+              el("b", { text: dest.name }),
+              dest.treasureFound ? el("i", { class: "dest__seal", text: "秘" }) : null,
+              dest.visited && !dest.treasureFound ? el("i", { class: "dest__mark", text: "已至" }) : null,
+              el("kbd", { text: String(offset + index + 1) }),
+            ]),
+            el("em", { class: "dest__desc", text: dest.desc }),
+            el("span", { class: "dest__facts" }, [
+              el("i", { text: dest.chanceLine }),
+              el("i", { text: dest.perilLine }),
+              dest.denizenLine ? el("i", { class: "dest__foe", text: dest.denizenLine }) : null,
+              el("i", { text: dest.costLine }),
+            ]),
+            dest.disabledReason ? el("i", { class: "dest__lock", text: dest.disabledReason }) : null,
+          ],
+        ),
+      ),
+    ),
+  ]);
 }
 
 /**

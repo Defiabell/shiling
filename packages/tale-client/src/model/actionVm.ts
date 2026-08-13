@@ -1,9 +1,15 @@
 /**
  * 底部行动面板视图模型（纯）。
  *
- * 四个行动恒定显示（不可用时置灰并说明原因），而不是「不可用就不画」——
+ * 行动恒定显示（不可用时置灰并说明原因），而不是「不可用就不画」——
  * 「蛰伏」是玩家攒精气的目标，藏起来就没有目标感了。可用性一律问引擎的
  * `availableActions`，界面不复刻「任一精气 ≥ 阈值」这条规则。
+ *
+ * ## [S2] 「探索」不在这一排里
+ * 它拆成了**一排去处按钮**（`destinationVm.ts`）：点哪一处就是这一季的探索。
+ * 拆开而不是「先点探索再选去处」是纪律要求 —— **不得增加每回合必点次数**
+ * （M1 的裁决，S1 的技能池也照这条办）。所以这一排只剩狩猎／休憩／蛰伏三颗，
+ * 去处那一排与它们平级，一次点击落定一季。
  */
 
 import {
@@ -48,6 +54,8 @@ function actionHint(id: ActionId, state: TaleState, content: TaleContent): strin
     case "hunt":
       return `追猎一头猎物　得手 +${t.huntFoodGain} 饱食，另得那一型精气`;
     case "explore":
+      // [S2] 这一支已无生产调用点（探索走去处那一排）。留着是因为 `ActionId` 是封闭联合，
+      // 少一支 TS 就不给穷尽检查了 —— 而穷尽检查正是「将来加第五个行动别忘了写提示」的守卫
       return `深入青丘　遇事的机会是别处的 ${t.exploreEventBonus} 倍（抉择才长灵与德）`;
     case "rest":
       return `敛息养神　+${t.restHungerGain} 饱食，病可自愈`;
@@ -56,7 +64,12 @@ function actionHint(id: ActionId, state: TaleState, content: TaleContent): strin
   }
 }
 
-const ACTION_ORDER: readonly ActionId[] = ["hunt", "explore", "rest", "dormant"];
+/**
+ * [S2] 面板上这一排的顺序 —— **探索不在其中**（它是去处那一排）。
+ *
+ * 键盘 1／2／3 对应这三颗；去处那一排从 4 起（见 `app.onKey`）。
+ */
+const ACTION_ORDER: readonly ActionId[] = ["hunt", "rest", "dormant"];
 
 export function buildActionVms(state: TaleState, content: TaleContent): ActionButtonVm[] {
   const available = new Set(availableActions(state, content));

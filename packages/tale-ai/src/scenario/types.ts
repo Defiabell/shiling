@@ -177,7 +177,29 @@ export interface SlotSpec {
   echo: PremiseEcho;
   /** 场景母题：给 AI 一个具体的切入角，避免十六条都写成「你在林子里走」 */
   motif: string;
+  /**
+   * [S2] 这一条属于哪一处去处（只有探索槽位有；`trigger.destinations` 是它的机制面）。
+   *
+   * 存在的理由与 `PremiseEcho.keywords` 逐字相同：「写出该地的具体景物」若只写在 prompt 里，
+   * 拿回来的会是「你在林子里走着」这种放在六处都成立的句子 —— 而 S2 的验收标准恰恰是
+   * 「那一处读起来是不是另一个地方」。`scenery` 是**机械判据**：正文里必须至少出现其中
+   * 一个词，否则打回（`validate.ts` 的第七道闸门）。
+   */
+  place?: SlotPlace;
   choices: ChoiceSpec[];
+}
+
+/** [S2] 槽位所属的那一处去处（进 prompt 的人话 ＋ 校验用的景物词）。 */
+export interface SlotPlace {
+  /** `DestinationDef.id` */
+  id: string;
+  name: string;
+  /** 一句地貌（原样取自内容，进 prompt） */
+  desc: string;
+  /** 此地的兽（进 prompt：「这儿有可能撞上玄蟒」——写景时用得着） */
+  denizenNames: string[];
+  /** **机械判据**：正文里至少要出现其中一个词 */
+  scenery: readonly string[];
 }
 
 // ===== AI 交回来的草稿 =====

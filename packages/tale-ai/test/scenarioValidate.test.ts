@@ -371,3 +371,74 @@ describe("① id 白名单终审（auditEvent 在校验里也跑一遍）", () =
     expect(check(draftOf(), broken).some((p) => p.includes("不存在的敌人"))).toBe(true);
   });
 });
+
+/*
+ * [S2] 第七道闸门：地方景物。
+ *
+ * 与「前提呼应」是同一种闸门 —— 「写出该地的具体景物」若只靠 prompt 叮嘱，拿回来的会是
+ * 「你在林子里走着」这种六处都成立的句子，而 S2 的验收标准恰恰是「那一处读起来是不是
+ * 另一个地方」。
+ */
+describe("[S2] 地方景物闸门", () => {
+  const placed = SLOTS.find((slot) => slot.place !== undefined)!;
+  const unplaced = SLOTS.find((slot) => slot.place === undefined)!;
+
+  /** 只换正文的一份草稿（别的字段照中值稿，好让这一组只测景物这一条）。 */
+  function bodyCheck(slot: SlotSpec, body: string): string[] {
+    return check({ ...midpointDraft(slot), title: "无名之地", body }, slot);
+  }
+
+  /**
+   * 一段**六处的景物词一个都不沾**的正文。
+   *
+   * 下面那条自检不是凑数：六张景物表加起来四十来个字，随手写一句「你在林子里走」就会
+   * 撞上兽径的「林」—— 这条测试就会变成绿色的谎（它「通过」了，但闸门根本没被触发）。
+   */
+  const NEUTRAL_BODY =
+    "你走了一整日，什么也没遇见。日头偏西时你停下来，回头望了望，又接着往前去了。";
+
+  it("（自检）那段中性正文确实不沾六处的任何景物词", () => {
+    for (const destination of CONTENT.destinations) {
+      for (const word of destination.scenery) {
+        expect(NEUTRAL_BODY.includes(word), `中性正文撞上了「${word}」`).toBe(false);
+      }
+    }
+  });
+
+  it("探索槽位的正文没写此地景物 → 打回，且报出该写哪些词", () => {
+    const problems = bodyCheck(placed, NEUTRAL_BODY);
+    expect(problems.some((problem) => problem.includes("的景物"))).toBe(true);
+    expect(problems.join("")).toContain(placed.place?.scenery[0] ?? "");
+  });
+
+  it("写了其中任意一个景物词就放行", () => {
+    for (const word of placed.place?.scenery ?? []) {
+      const problems = bodyCheck(placed, `你走了半日，路上只有${word}，别的什么也没有，天黑才回。`);
+      expect(problems.some((problem) => problem.includes("的景物")), word).toBe(false);
+    }
+  });
+
+  it("非探索槽位不受这条约束（那类写的是季候，不是地方）", () => {
+    const problems = bodyCheck(unplaced, NEUTRAL_BODY);
+    expect(problems.some((problem) => problem.includes("的景物"))).toBe(false);
+  });
+
+  it("生成事件不许发放秘藏（结构上填不了，这是第二把锁）", () => {
+    const event = assembleEvent(placed, midpointDraft(placed));
+    const tampered: TaleEvent = {
+      ...event,
+      choices: event.choices.map((choice, index) =>
+        index === 0
+          ? {
+              ...choice,
+              outcomes: choice.outcomes.map((outcome) => ({
+                ...outcome,
+                effects: { ...outcome.effects, findTreasureId: CONTENT.destinations[0]?.treasure.id },
+              })),
+            }
+          : choice,
+      ),
+    };
+    expect(auditEvent(tampered, CONTENT).join("")).toContain("findTreasureId");
+  });
+});

@@ -9,7 +9,14 @@ import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
 import { seedArt } from "../art/assets.js";
 import { ENDING_LABELS, formatCountCn, formatYearCn } from "../model/format.js";
-import type { BoonRowVm, CodexVm, SeedCardVm, SeedScreenVm, SynergyRowVm } from "../model/seedVm.js";
+import type {
+  BoonRowVm,
+  CodexVm,
+  PlaceRowVm,
+  SeedCardVm,
+  SeedScreenVm,
+  SynergyRowVm,
+} from "../model/seedVm.js";
 import type { EndingType } from "@shiling/tale-sim";
 
 export interface SeedProps {
@@ -166,6 +173,43 @@ function boonRow(row: BoonRowVm, props: SeedProps): HTMLElement {
  * 而那是选完神种之后的问题。血统点此前只能解锁神种（三枚共 13 点，花完永久无处可花），
  * 这一段就是它的第二个去处。
  */
+/**
+ * [S2] 「山川」那一段的一行。
+ *
+ * 与异变那一行的分工：这里**名号与门槛恒可见**（欲望展示位 —— 知道幽潭要什么才会去凑），
+ * 而**秘藏未得则只渲染一个「？」**：不给 id、不给名字，devtools 里也搜不出来
+ * （同 S1 图鉴那条铁律 —— devtools 是玩家伸手就能开的东西）。
+ */
+function placeRow(row: PlaceRowVm): HTMLElement {
+  return el(
+    "li",
+    {
+      class: `codex__row place__row${row.visited ? " is-known" : " is-unvisited"}`,
+      attrs: { "data-place": row.id },
+    },
+    [
+      el("div", { class: "codex__head" }, [
+        el("span", { class: `codex__seal place__seal${row.treasureKnown ? " is-found" : ""}`, text: "地" }),
+        el("b", { class: "codex__name", text: row.name }),
+        el("span", { class: "codex__recipe", text: row.gate }),
+        row.visited ? el("em", { class: "place__been", text: "已至" }) : null,
+      ]),
+      el("em", { class: "codex__effect", text: row.desc }),
+      el(
+        "p",
+        {
+          class: `codex__note place__treasure${row.treasureKnown ? " is-found" : ""}`,
+          attrs: { "data-treasure": row.treasureKnown ? "known" : "unknown" },
+        },
+        [
+          el("b", { text: `秘藏 · ${row.treasureName}` }),
+          el("span", { text: `　${row.treasureNote}` }),
+        ],
+      ),
+    ],
+  );
+}
+
 function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
   return el("section", { class: "seed__codex", attrs: { "data-codex": "1" } }, [
     el("div", { class: "seed__codex-head" }, [
@@ -190,6 +234,22 @@ function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
       codex.boonEmptyNote !== null
         ? el("p", { class: "seed__boon-empty", text: codex.boonEmptyNote })
         : el("ul", { class: "boon__list" }, codex.boons.map((row) => boonRow(row, props))),
+    ]),
+    /*
+     * [S2] 山川：去处与秘藏。摆在血脉**之后**是因为它回答的是同一个问题的下一半 ——
+     * 血脉是「这一世带什么」，山川是「带上它能去哪儿、那儿还有什么没拿到」。
+     * S3 的「图录」（花血统点直通某处秘境）会长在这一段里。
+     */
+    el("div", { class: "seed__places" }, [
+      el("div", { class: "seed__boon-head" }, [
+        el("h3", { text: "山　川" }),
+        el("span", { attrs: { "data-place-count": "1" }, text: codex.placeCaption }),
+      ]),
+      el("p", {
+        class: "seed__boon-empty",
+        text: "去处的门槛写在明处 —— 凑齐了才进得去。而每一处藏着什么，只有到过才知道。",
+      }),
+      el("ul", { class: "codex__list" }, codex.places.map(placeRow)),
     ]),
   ]);
 }

@@ -6,6 +6,7 @@ import {
   buyBoon,
   consumeBoon,
   emptyBloodline,
+  noteExploration,
   noteSynergies,
   loadBloodline,
   parseBloodline,
@@ -17,6 +18,7 @@ import {
 } from "../src/persist/bloodline.js";
 import { GUIDE_KEY, loadGuideDismissed, saveGuideDismissed } from "../src/persist/guide.js";
 import { FIXTURE_CONTENT, FIXTURE_SEED_ID } from "./helpers.js";
+import { TALE_CONTENT } from "@shiling/tale-content";
 
 /** 内存 Storage —— 单测不需要 jsdom。 */
 class MemoryStorage implements StorageLike {
@@ -351,5 +353,73 @@ describe("存档对账（S1 的三个新键）", () => {
       boonOrganId: "wu-mu",
     });
     expect(parseBloodline(raw, FIXTURE_CONTENT).boonOrganId).toBeNull();
+  });
+});
+
+/*
+ * [S2] 图鉴的另外两格：去过哪儿、得过什么秘藏。
+ *
+ * 与 `noteSynergies` 同一套约定（集合、只增、没有新东西就返回同一个引用），
+ * 所以这里除了正常路径，重点钉三件容易漏的事：**幂等**（每一步都调，不能每回合写盘）、
+ * **旧档降级**（S2 之前的存档没有这两个键 → 退回空，而不是崩）、**悬空 id 丢弃**。
+ */
+describe("[S2] noteExploration 与去处／秘藏的存档", () => {
+  const PLACE = TALE_CONTENT.destinations[0]!;
+  const PLACE2 = TALE_CONTENT.destinations[1]!;
+
+  function fresh(): Bloodline {
+    return emptyBloodline(TALE_CONTENT);
+  }
+
+  it("记下新去处与新秘藏", () => {
+    const next = noteExploration(fresh(), [PLACE.id], [PLACE.treasure.id]);
+    expect(next.knownDestinationIds).toEqual([PLACE.id]);
+    expect(next.foundTreasureIds).toEqual([PLACE.treasure.id]);
+  });
+
+  it("已知的一律跳过，且**引用相等**（调用方据此决定要不要写盘）", () => {
+    const once = noteExploration(fresh(), [PLACE.id], [PLACE.treasure.id]);
+    const again = noteExploration(once, [PLACE.id], [PLACE.treasure.id]);
+    expect(again).toBe(once);
+  });
+
+  it("只有一半是新的也照收", () => {
+    const once = noteExploration(fresh(), [PLACE.id], []);
+    const again = noteExploration(once, [PLACE.id, PLACE2.id], [PLACE.treasure.id]);
+    expect(again.knownDestinationIds).toEqual([PLACE.id, PLACE2.id]);
+    expect(again.foundTreasureIds).toEqual([PLACE.treasure.id]);
+  });
+
+  it("不改动入参（纯函数）", () => {
+    const before = fresh();
+    noteExploration(before, [PLACE.id], [PLACE.treasure.id]);
+    expect(before.knownDestinationIds).toEqual([]);
+    expect(before.foundTreasureIds).toEqual([]);
+  });
+
+  it("存档往返：两个新键写得进也读得出", () => {
+    const storage = new MemoryStorage();
+    const bloodline = noteExploration(fresh(), [PLACE.id], [PLACE.treasure.id]);
+    expect(saveBloodline(storage, bloodline)).toBe(true);
+    expect(loadBloodline(storage, TALE_CONTENT)).toEqual(bloodline);
+  });
+
+  it("旧档（S2 之前，没有这两个键）降级成空，而不是崩", () => {
+    const parsed = parseBloodline(JSON.stringify({ points: 5 }), TALE_CONTENT);
+    expect(parsed.knownDestinationIds).toEqual([]);
+    expect(parsed.foundTreasureIds).toEqual([]);
+    expect(parsed.points).toBe(5);
+  });
+
+  it("悬空 id 丢弃（内容改名后「已至之地 4/6」不许虚高）", () => {
+    const parsed = parseBloodline(
+      JSON.stringify({
+        knownDestinationIds: [PLACE.id, "dest-gone", 42],
+        foundTreasureIds: ["treasure-gone", PLACE.treasure.id],
+      }),
+      TALE_CONTENT,
+    );
+    expect(parsed.knownDestinationIds).toEqual([PLACE.id]);
+    expect(parsed.foundTreasureIds).toEqual([PLACE.treasure.id]);
   });
 });

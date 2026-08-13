@@ -850,3 +850,186 @@ describe("S1 器官组合表（异变）", () => {
     }
   });
 });
+
+// ===== 6. [S2] 探索去处（门槛公开、风险单调、事件池归属、秘藏各一） =====
+
+describe("探索去处（S2）", () => {
+  const DEST_IDS = new Set(DESTINATIONS.map((destination) => destination.id));
+  const TREASURE_IDS = new Set(DESTINATIONS.map((destination) => destination.treasure.id));
+
+  it("六处，id 唯一，且**恰有一处无门槛**（否则探索按钮可能整排是灰的）", () => {
+    expect(DESTINATIONS.length).toBe(6);
+    expect(DEST_IDS.size).toBe(DESTINATIONS.length);
+    const free = DESTINATIONS.filter((destination) => destination.requiresOrganIds.length === 0);
+    expect(free.map((destination) => destination.id)).toEqual([DESTINATIONS[0]?.id]);
+  });
+
+  it("门槛引用真实器官，且 1〜2 件（三件的门槛在实测里几乎开不出来）", () => {
+    for (const destination of DESTINATIONS) {
+      expect(destination.requiresOrganIds.length, destination.id).toBeLessThanOrEqual(2);
+      for (const id of destination.requiresOrganIds) {
+        expect(ORGAN_IDS.has(id), `${destination.id} 门槛引用了不存在的器官 ${id}`).toBe(true);
+      }
+      // 神种器官不许当门槛：人人都有，等于没门槛
+      expect(SEED_ORGAN_IDS.has(destination.requiresOrganIds[0] ?? ""), destination.id).toBe(false);
+    }
+  });
+
+  /**
+   * **每一型精气都要在某处门口有一只脚**（这一节是数值，不是文风）。
+   *
+   * 蛰伏开奖按 `affinity × 该型精气` 加权，所以一世拿到的器官大概率同属一两个型。
+   * 若某一型的玩家连一处去处的门槛都沾不上，「探索有方向」这件事对他就不存在。
+   *
+   * 判据是**弱形**（门槛里**至少有一件**对该型 affinity ≥ 0.2），不是「整副门槛同型」：
+   * 穴系（夜瞳／鳞甲／穴爪）实测就够不着强形 —— 幽潭要一件鳞系的浮鳔、秘窟要一件鳞系的
+   * 雾目。那**是设计**：穴系是「深处」那条线，它离两处双件门槛各只差一件，而那一件正是
+   * 「我这一世要去凑什么」。强形会逼着把某处的门槛改成同型，而那会让六处的门槛挤在两型上。
+   */
+  it("四型精气各在某处门口有一只脚（affinity ≥ 0.2）", () => {
+    const organById = new Map(ORGANS.map((organ) => [organ.id, organ] as const));
+    for (const type of ESSENCE_TYPES) {
+      const reachable = DESTINATIONS.filter((destination) =>
+        destination.requiresOrganIds.some(
+          (id) => (organById.get(id)?.affinity[type] ?? 0) >= 0.2,
+        ),
+      );
+      expect(reachable.length, `${type} 型一处去处的门槛都沾不上`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  /**
+   * **三处单件门槛要落在三个不同的精气型上**（那是「第一世就开得出一处新地方」的下限）。
+   *
+   * 若三处单件门槛全挂在足系上，非足系的玩家第一世一处新地方都开不出来 ——
+   * 而 S2 的成败恰恰在于「第一次看见一处新去处」那一刻。
+   */
+  it("三处单件门槛分属三个不同的精气型", () => {
+    const organById = new Map(ORGANS.map((organ) => [organ.id, organ] as const));
+    const singles = DESTINATIONS.filter(
+      (destination) => destination.requiresOrganIds.length === 1,
+    );
+    expect(singles.length).toBe(3);
+    const mainTypes = singles.map((destination) => {
+      const organ = organById.get(destination.requiresOrganIds[0] ?? "");
+      const entries = Object.entries(organ?.affinity ?? {}) as [string, number][];
+      return entries.sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+    });
+    expect(new Set(mainTypes).size, `三处单件门槛的主亲和：${mainTypes.join("、")}`).toBe(3);
+  });
+
+  it("兽名真实存在；除常路外每处都有兽（没有兽的「险地」不成其为险）", () => {
+    for (const destination of DESTINATIONS) {
+      for (const denizen of destination.denizens) {
+        expect(ENEMY_IDS.has(denizen.enemyId), `${destination.id} 的 ${denizen.enemyId}`).toBe(true);
+        expect(denizen.weight, `${destination.id}`).toBeGreaterThan(0);
+      }
+      if (destination.peril !== "calm") {
+        expect(destination.denizens.length, `${destination.id} 是险地却无兽`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  /**
+   * 三档风险必须**单调**：越险越贵、事越密、越容易遇袭。
+   *
+   * 一处「更险但收益不变」的去处不是取舍，是陷阱 —— 而这一批的全部主张就是
+   * 「往哪走」是一道**算得清**的题。
+   */
+  it("三档风险的数单调（越险越贵、事越密、越容易遇袭）", () => {
+    const { calm, wary, grim } = TUNING.explorePeril ?? TALE_CONTENT.tuning.explorePeril;
+    expect(calm.ambushChance).toBeLessThan(wary.ambushChance);
+    expect(wary.ambushChance).toBeLessThan(grim.ambushChance);
+    expect(calm.travelCost).toBeLessThan(wary.travelCost);
+    expect(wary.travelCost).toBeLessThan(grim.travelCost);
+    expect(calm.eventMul).toBeLessThan(wary.eventMul);
+    expect(wary.eventMul).toBeLessThan(grim.eventMul);
+  });
+
+  it("每处一件秘藏，id 唯一，因果与说明都不是占位", () => {
+    expect(TREASURE_IDS.size).toBe(DESTINATIONS.length);
+    for (const destination of DESTINATIONS) {
+      const treasure = destination.treasure;
+      expect(charCount(treasure.name), treasure.id).toBeGreaterThanOrEqual(2);
+      expect(charCount(treasure.reveal), treasure.id).toBeGreaterThanOrEqual(10);
+      expect(charCount(treasure.desc), treasure.id).toBeGreaterThanOrEqual(10);
+      expect(treasure.reveal, treasure.id).not.toContain("TODO");
+    }
+  });
+
+  it("景物词每处 ≥5 个且互不重复（它是 AI 生成事件的机械判据）", () => {
+    const seen = new Map<string, string>();
+    for (const destination of DESTINATIONS) {
+      expect(destination.scenery.length, destination.id).toBeGreaterThanOrEqual(5);
+      for (const word of destination.scenery) {
+        const owner = seen.get(word);
+        expect(owner, `景物词「${word}」同时属于 ${owner} 与 ${destination.id}`).toBeUndefined();
+        seen.set(word, destination.id);
+      }
+    }
+  });
+
+  /**
+   * **每一条探索事件都必须声明去处**，且每处都要有事件可撞。
+   *
+   * 漏声明的那一条会在六处全部出现 —— 那就是换皮而不是新世界，而且不会有别的测试变红
+   * （它照样入池、照样能玩）。这一条正是这一批「独立事件池」的判据。
+   */
+  it("探索事件全部声明了去处，去处 id 真实存在", () => {
+    for (const event of EXPLORE_EVENTS) {
+      const destinations = event.trigger.destinations ?? [];
+      expect(destinations.length, `${event.id} 没有声明去处`).toBeGreaterThan(0);
+      for (const id of destinations) {
+        expect(DEST_IDS.has(id), `${event.id} 声明了不存在的去处 ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it("不限行动的事件**不许**声明去处（那类写的是天气与时令，不是地方）", () => {
+    for (const event of EVENTS) {
+      if (event.trigger.actions !== undefined) continue;
+      expect(event.trigger.destinations, `${event.id}`).toBeUndefined();
+    }
+  });
+
+  it("每处至少 6 条事件（少于这个数，那一处读起来就是同一批事件换了名字）", () => {
+    for (const destination of DESTINATIONS) {
+      const pool = EXPLORE_EVENTS.filter((event) =>
+        (event.trigger.destinations ?? []).includes(destination.id),
+      );
+      expect(pool.length, `${destination.id} 只有 ${pool.length} 条事件`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  /** 秘藏必须真的有一条事件发得出来，否则图鉴上那一格永远是「？」。 */
+  it("每件秘藏都有恰好一条事件发得出来，且那条事件属于它自己那一处", () => {
+    for (const destination of DESTINATIONS) {
+      const givers = EXPLORE_EVENTS.filter((event) =>
+        event.choices.some((choice) =>
+          choice.outcomes.some(
+            (outcome) => outcome.effects.findTreasureId === destination.treasure.id,
+          ),
+        ),
+      );
+      expect(givers.length, `${destination.treasure.id} 的出处`).toBeGreaterThanOrEqual(1);
+      for (const giver of givers) {
+        expect(
+          (giver.trigger.destinations ?? []).includes(destination.id),
+          `${giver.id} 发的是 ${destination.id} 的秘藏，却不在那一处的池子里`,
+        ).toBe(true);
+        // 秘藏不该是第一季就撞上的东西（那样它只是一件装备）
+        expect(giver.trigger.once, `${giver.id} 的秘藏事件不是 once`).toBe(true);
+      }
+    }
+  });
+
+  it("`findTreasureId` 只许引用真实秘藏", () => {
+    for (const event of EVENTS) {
+      for (const outcome of allOutcomes(event)) {
+        const id = outcome.effects.findTreasureId;
+        if (id === undefined) continue;
+        expect(TREASURE_IDS.has(id), `${event.id} 引用了不存在的秘藏 ${id}`).toBe(true);
+      }
+    }
+  });
+});

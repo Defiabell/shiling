@@ -79,7 +79,7 @@ export const PLACE_EVENTS: readonly TaleEvent[] = [
       destinations: [DEST_SHOU_JING],
       minYear: 4,
       once: true,
-      weight: 34,
+      weight: 26,
       tags: [EV_WONDER],
     },
     title: "旧径重踏",

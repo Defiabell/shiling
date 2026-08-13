@@ -31,13 +31,19 @@ const BODIES = [
   "泥里陷着一样东西，形状规整得不像山里长出来的。你用鼻子把它拱出来一半，它比看上去沉得多，也比看上去凉得多，凉到牙根。",
 ];
 
-/** 按骨架编一份**能过闸门**的回复（标题与正文逐槽不同，正文带上该槽的母题词）。 */
+/**
+ * 按骨架编一份**能过闸门**的回复（标题与正文逐槽不同，正文带上该槽的母题词）。
+ *
+ * [S2] 探索槽位还要带上那一处的景物词（闸门⑦）—— 与母题词同样单独缀一句，
+ * 不能并成一段公共尾巴（那会撞上批内去重的十二字判据）。
+ */
 function replyFor(slots: readonly SlotSpec[]): string {
   const titles = ["涸痕", "残窝", "枯堆", "无风", "白石", "宽痕", "闷响", "泥物"];
   return JSON.stringify({
     events: slots.map((slot) => {
       const base = midpointDraft(slot);
       const keyword = slot.echo.keywords[0] ?? "";
+      const scenery = slot.place?.scenery[0] ?? "";
       // 用槽位序号取标题与正文，两批之间也不会撞
       const index = Number.parseInt(slot.id.slice(slot.id.lastIndexOf("-") + 1), 10) - 1;
       return {
@@ -45,7 +51,7 @@ function replyFor(slots: readonly SlotSpec[]): string {
         title: titles[index % titles.length] ?? "无题",
         // 母题词单独缀一句：**不能带一段公共尾巴**，否则八条正文两两都撞十二字以上，
         // 会被批内去重挡掉（第一版就是这么写的，看着像编排坏了）
-        body: `${BODIES[index % BODIES.length] ?? ""}${keyword}。`,
+        body: `${BODIES[index % BODIES.length] ?? ""}${keyword}${scenery}。`,
         choices: base.choices.map((choice, choiceIdx) => ({
           label: ["探爪取之", "伏而不动", "退开让路", "缓步而前"][choiceIdx] ?? "远远绕开",
           outcomes: choice.outcomes.map((outcome, outcomeIdx) => ({
@@ -259,7 +265,7 @@ describe("跨批去重", () => {
           return {
             id: slot.id,
             title: "同一个题",
-            body: `${BODIES[index % BODIES.length] ?? ""}${slot.echo.keywords[0] ?? ""}。`,
+            body: `${BODIES[index % BODIES.length] ?? ""}${slot.echo.keywords[0] ?? ""}${slot.place?.scenery[0] ?? ""}。`,
             choices: base.choices.map((choice, choiceIdx) => ({
               label: ["探爪取之", "伏而不动", "退开让路", "缓步而前"][choiceIdx] ?? "远远绕开",
               outcomes: choice.outcomes.map((outcome) => ({
@@ -290,8 +296,8 @@ describe("跨批去重", () => {
             title: `第${"一二三四五六七八九十"[order - 1] ?? "零"}题`,
             body:
               index === 0
-                ? `${BODIES[0]}${slot.echo.keywords[0] ?? ""}。`
-                : `${BODIES[(order % 6) + 1] ?? ""}${slot.echo.keywords[0] ?? ""}。`,
+                ? `${BODIES[0]}${slot.echo.keywords[0] ?? ""}${slot.place?.scenery[0] ?? ""}。`
+                : `${BODIES[(order % 6) + 1] ?? ""}${slot.echo.keywords[0] ?? ""}${slot.place?.scenery[0] ?? ""}。`,
             choices: base.choices.map((choice, choiceIdx) => ({
               label: ["探爪取之", "伏而不动", "退开让路", "缓步而前"][choiceIdx] ?? "远远绕开",
               outcomes: choice.outcomes.map((outcome, outcomeIdx) => ({

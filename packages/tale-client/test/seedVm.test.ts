@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TALE_CONTENT } from "@shiling/tale-content";
 import {
   boonCost,
   createLife,
@@ -43,6 +44,22 @@ const CONTENT: TaleContent = {
   ...FIXTURE_CONTENT,
   seeds: [...FIXTURE_CONTENT.seeds, PAID_SEED],
 };
+
+/** [S2] 真内容 ＋ 一份空图鉴 —— 山川那一段测的是与真去处表的对账。 */
+const TALE_REAL = TALE_CONTENT;
+
+function realBloodline(): Bloodline {
+  return {
+    points: 0,
+    unlockedSeedIds: TALE_REAL.seeds.filter((seed) => seed.cost <= 0).map((seed) => seed.id),
+    chronicle: [],
+    knownSynergyIds: [],
+    knownOrganIds: [],
+    boonOrganId: null,
+    knownDestinationIds: [],
+    foundTreasureIds: [],
+  };
+}
 
 function bloodline(patch: Partial<Bloodline> = {}): Bloodline {
   return {
@@ -340,5 +357,85 @@ describe("血脉：血统点的第二个去处", () => {
       NEXT_SEED,
     );
     expect(vm.codex.boons.map((boon) => boon.organId)).toEqual([ORGAN_WU_MU, ORGAN_GOU_CHI]);
+  });
+});
+
+/*
+ * [S2] 山川图鉴：去处与秘藏。
+ *
+ * 信息分配与异变图鉴**刚好相反**，而这正是最容易在下一次改动里被抹平的地方，所以逐条钉：
+ * 去处的名号与门槛**恒可见**（欲望展示位），秘藏的名号**未得则恒为「？」**（意料之外）。
+ */
+describe("[S2] 山川图鉴", () => {
+  const PLACE = TALE_REAL.destinations[0]!;
+  const DEEP = TALE_REAL.destinations[TALE_REAL.destinations.length - 1]!;
+
+  function realVm(patch: Partial<Bloodline> = {}) {
+    return buildSeedScreenVm(
+      { ...realBloodline(), ...patch },
+      TALE_REAL,
+      1234,
+      null,
+    ).codex;
+  }
+
+  it("六处全在，顺序恒按内容表，门槛与名号恒可见", () => {
+    const codex = realVm();
+    expect(codex.places.map((row) => row.id)).toEqual(
+      TALE_REAL.destinations.map((destination) => destination.id),
+    );
+    for (const row of codex.places) {
+      expect(row.name.length).toBeGreaterThan(0);
+      expect(row.gate.length).toBeGreaterThan(0);
+      expect(row.desc.length).toBeGreaterThan(0);
+    }
+    // 无门槛那一处要写成人话，而不是一个空字符串
+    expect(codex.places[0]?.gate).toContain("无门槛");
+  });
+
+  it("门槛列的是**器官名**（玩家据它去凑），不是 id", () => {
+    const row = realVm().places.find((item) => item.id === DEEP.id)!;
+    for (const id of DEEP.requiresOrganIds) {
+      const name = TALE_REAL.organs.find((organ) => organ.id === id)?.name ?? "";
+      expect(row.gate).toContain(name);
+      expect(row.gate).not.toContain(id);
+    }
+  });
+
+  /** 与 S1 异变图鉴的铁律逐字同解：**未得的秘藏连名字都不许进 VM**。 */
+  it("未得的秘藏恒为「？」，且序列化之后也搜不到它的名字", () => {
+    const codex = realVm();
+    for (const row of codex.places) {
+      expect(row.treasureKnown).toBe(false);
+      expect(row.treasureName).toBe("？");
+    }
+    const serialized = JSON.stringify(codex.places);
+    for (const destination of TALE_REAL.destinations) {
+      expect(serialized, `${destination.treasure.id} 的名字漏进了 VM`).not.toContain(
+        destination.treasure.name,
+      );
+    }
+  });
+
+  it("得过的秘藏摊开名号与说明", () => {
+    const codex = realVm({ foundTreasureIds: [PLACE.treasure.id] });
+    const row = codex.places.find((item) => item.id === PLACE.id)!;
+    expect(row.treasureKnown).toBe(true);
+    expect(row.treasureName).toBe(PLACE.treasure.name);
+    expect(row.treasureNote).toBe(PLACE.treasure.desc);
+  });
+
+  it("到过的标 visited（没到过的不标）", () => {
+    const codex = realVm({ knownDestinationIds: [PLACE.id] });
+    expect(codex.places.find((item) => item.id === PLACE.id)?.visited).toBe(true);
+    expect(codex.places.find((item) => item.id === DEEP.id)?.visited).toBe(false);
+  });
+
+  it("小标题报两个计数（已至之地 N/M · 秘藏 N/M）", () => {
+    const codex = realVm({
+      knownDestinationIds: [PLACE.id, DEEP.id],
+      foundTreasureIds: [PLACE.treasure.id],
+    });
+    expect(codex.placeCaption).toBe(`已至之地 2/6 · 秘藏 1/6`);
   });
 });

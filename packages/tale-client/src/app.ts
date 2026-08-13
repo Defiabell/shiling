@@ -24,11 +24,13 @@ import {
   stalkAct,
   waysProgress,
   type ActionId,
+  type ActionOptions,
   type ChronicleEntry,
   type CombatAct,
   type SynergyDef,
   type TaleEvent,
   type TaleState,
+  type TreasureDef,
   type WayId,
 } from "@shiling/tale-sim";
 
@@ -36,6 +38,7 @@ import { CONTENT, USING_FIXTURE_CONTENT, clearInjectedEvents, injectedEvents, se
 import { el, nextFrame } from "./dom.js";
 import { endingArt, eventArt, portraitArt } from "./art/assets.js";
 import { buildActionVms } from "./model/actionVm.js";
+import { buildDestinationVms, destinationCaption } from "./model/destinationVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm } from "./model/combatVm.js";
 import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
@@ -65,6 +68,7 @@ import { playCinematic } from "./fx/cinematic.js";
 import { playInkBlot } from "./fx/inkBlot.js";
 import { playMoltReveal } from "./fx/moltReveal.js";
 import { playSynergyReveal } from "./fx/synergyReveal.js";
+import { playTreasureReveal } from "./fx/treasureReveal.js";
 import { installMotionClass } from "./fx/motion.js";
 import { ESSENCE_RGB, createParticleLayer, type ParticleLayer } from "./fx/particles.js";
 import { renderChronicle } from "./screens/chronicleScreen.js";
@@ -76,6 +80,7 @@ import {
   loadBloodline,
   buyBoon,
   consumeBoon,
+  noteExploration,
   noteSynergies,
   recordLife,
   saveBloodline,
@@ -504,12 +509,19 @@ export class TaleApp {
     return death ? [death.text] : [];
   }
 
-  async doAction(action: ActionId): Promise<void> {
+  /**
+   * 一次行动。
+   *
+   * [S2] `options` 只对探索有意义（去哪一处），而**探索必须给** ——
+   * 引擎对「没给去处的 explore」直接抛错，界面这一层不做兜底：兜底会让一个漏传去处的
+   * 调用点静默退回 S2 之前的行为（`safely` 会把抛错变成一行提示，那是我们要的信号）。
+   */
+  async doAction(action: ActionId, options?: ActionOptions): Promise<void> {
     const prev = this.state;
     if (!prev || this.busy || this.pendingEvent || prev.combat || !prev.alive) return;
     this.busy = true;
 
-    const result = performAction(prev, action, CONTENT);
+    const result = performAction(prev, action, CONTENT, options);
     const next = result.state;
     this.commit(next);
     this.pendingEvent = result.pendingEvent;
@@ -557,6 +569,9 @@ export class TaleApp {
     if (result.moltResult) await playMoltReveal(this.overlayHost, result.moltResult, CONTENT);
     // 异变排在蜕变开奖**之后**：先看清蜕出了什么，再看它与身上旧器官凑出了什么
     await this.revealSynergies(result.newSynergies);
+    // [S2] 到过的地方每一步都记（不是死亡时才结算）—— 一世打到一半刷新，去过的不该白去
+    this.noteVisited(next);
+    await this.revealTreasures(result.newTreasures);
 
     this.busy = false;
     this.renderPlayScreen();
@@ -593,6 +608,9 @@ export class TaleApp {
     this.showDelta(prev, next, 0);
     // 事件送的器官（「垂死应龙」那一类）也可能凑齐一条组合 —— 两条获得器官的路径都要接住
     await this.revealSynergies(result.newSynergies);
+    // [S2] 秘藏只从抉择这条路来（挂在某个结果分支的 `findTreasureId` 上）
+    this.noteVisited(next);
+    await this.revealTreasures(result.newTreasures);
 
     this.busy = false;
     this.renderPlayScreen();
@@ -615,6 +633,44 @@ export class TaleApp {
         saveBloodline(this.storage, this.bloodline);
       }
       await playSynergyReveal(this.overlayHost, synergy, CONTENT, first);
+    }
+  }
+
+  /**
+   * [S2] 把「这一世到过哪儿」抄进跨世图鉴（幂等，没有新地方就不写盘）。
+   *
+   * 每一步之后都调，而不是死亡结算时一次收：一世打到一半刷新页面，去过的地方不该白去。
+   * `noteExploration` 没有新东西时返回同一个引用，所以写盘不会每回合都发生。
+   *
+   * **只记去处，不记秘藏** —— 秘藏由 `revealTreasures` 逐件记，因为它要在写档**之前**
+   * 读一次「这是不是头一回」（同 `revealSynergies` 的形状）。两处分开是为了让那个顺序
+   * 由结构保证，而不是靠调用者记得先播后记。
+   */
+  private noteVisited(state: TaleState): void {
+    const next = noteExploration(this.bloodline, state.visitedDestinationIds, []);
+    if (next === this.bloodline) return;
+    this.bloodline = next;
+    saveBloodline(this.storage, this.bloodline);
+  }
+
+  /**
+   * [S2] 播「秘藏」揭示，并把它记进图鉴（跨世持久化）。
+   *
+   * 与 `revealSynergies` 逐字同形：引擎报的是「这一步新得到的秘藏」（它不认识 `Bloodline`），
+   * **是否是头一次**由图鉴判 —— 而判据必须在写档**之前**取，所以记与播都在这一个循环里。
+   */
+  private async revealTreasures(treasures: readonly TreasureDef[]): Promise<void> {
+    if (treasures.length === 0) return;
+    for (const treasure of treasures) {
+      const first = !this.bloodline.foundTreasureIds.includes(treasure.id);
+      const next = noteExploration(this.bloodline, [], [treasure.id]);
+      if (next !== this.bloodline) {
+        this.bloodline = next;
+        saveBloodline(this.storage, this.bloodline);
+      }
+      const place = CONTENT.destinations.find((item) => item.treasure.id === treasure.id);
+      if (!place) continue;
+      await playTreasureReveal(this.overlayHost, treasure, place, first);
     }
   }
 
@@ -900,10 +956,22 @@ export class TaleApp {
             disabledReason: blocked ? "先了此事" : action.disabledReason,
           };
         }),
+        destinations: buildDestinationVms(state, CONTENT).map((dest) => {
+          // 与行动面板同一条纪律：未结算的事件卡在场时整排压住
+          const blocked = this.pendingEvent !== null || this.center.kind === "event";
+          return {
+            ...dest,
+            enabled: dest.enabled && !blocked,
+            disabledReason: blocked ? "先了此事" : dest.disabledReason,
+          };
+        }),
+        destinationCaption: destinationCaption(buildDestinationVms(state, CONTENT)),
         log: recentLogVm(this.log),
         freshLogIds: this.freshLogIds,
         busy: this.busy,
         onAction: (id) => void this.safely(() => this.doAction(id)),
+        onExplore: (destinationId) =>
+          void this.safely(() => this.doAction("explore", { destinationId })),
         onChoice: (idx) => void this.safely(() => this.doChoice(idx)),
         onCombat: (act) => void this.safely(() => this.doCombat(act)),
         onStalk: (act) => void this.safely(() => this.doStalk(act)),
@@ -993,18 +1061,32 @@ export class TaleApp {
       this.setDetail(null);
       return;
     }
+    /*
+     * [S2] 数字键的上限从 4 提到 9：行动面板现在是「三颗行动 ＋ 六处去处」，
+     * 1〜3 归行动、4〜9 归去处（编号与按钮上印的 `kbd` 逐一对应，见 `destinationBar`）。
+     * 战斗／追猎／事件三屏照旧只用前几个 —— 越界时 `buttons[i]` 为 undefined，自然无事发生。
+     */
     const digit = Number.parseInt(event.key, 10);
-    if (Number.isInteger(digit) && digit >= 1 && digit <= 4) {
-      const selector =
-        this.center.kind === "combat"
-          ? `[data-combat]`
-          : this.center.kind === "stalk"
-            ? `[data-stalk]`
-            : this.center.kind === "event"
-              ? `[data-choice]`
-              : `[data-action]`;
-      const buttons = this.screenHost.querySelectorAll<HTMLButtonElement>(selector);
-      const button = buttons[digit - 1];
+    if (Number.isInteger(digit) && digit >= 1 && digit <= 9) {
+      if (this.center.kind === "combat" || this.center.kind === "stalk" || this.center.kind === "event") {
+        const selector =
+          this.center.kind === "combat"
+            ? `[data-combat]`
+            : this.center.kind === "stalk"
+              ? `[data-stalk]`
+              : `[data-choice]`;
+        const buttons = this.screenHost.querySelectorAll<HTMLButtonElement>(selector);
+        const button = buttons[digit - 1];
+        if (button && !button.disabled) {
+          event.preventDefault();
+          button.click();
+        }
+        return;
+      }
+      const actions = this.screenHost.querySelectorAll<HTMLButtonElement>(`[data-action]`);
+      const dests = this.screenHost.querySelectorAll<HTMLButtonElement>(`[data-dest]`);
+      const button =
+        digit <= actions.length ? actions[digit - 1] : dests[digit - 1 - actions.length];
       if (button && !button.disabled) {
         event.preventDefault();
         button.click();

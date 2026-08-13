@@ -716,3 +716,126 @@
 .synergy__confirm {
   margin-top: 18px;
 }
+
+/* ==========================================================================
+   S2 秘藏揭示（在某一处摸到那件只有到过才知道的东西）
+   ==========================================================================
+   与异变（`.synergy`）是同一条设计的两半，所以结构逐行同形，只换两样：
+   - **色**：异变是朱砂（不属于任何精气型），秘藏是赭金 —— 它是从地里挖出来的东西。
+     两种揭示在余光里就该分得出来是哪一种。
+   - **多一段「地方」**：秘藏先亮的是**你走到的那个地方**（名号 ＋ 地貌），
+     而异变先亮的是你攒的那几件器官。两者都在说「这是你自己做成的事」。
+   ========================================================================== */
+
+.treasure__fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.treasure__card {
+  position: relative;
+  width: min(520px, 92vw);
+  padding: 26px 30px 28px;
+  text-align: center;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.36), var(--sh-2);
+  backdrop-filter: blur(16px);
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 520ms var(--ease),
+    transform 520ms var(--ease);
+}
+
+.treasure__card.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+.treasure__kicker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  color: var(--gold-soft);
+}
+
+.treasure__seal {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  background: rgba(198, 154, 78, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.52);
+  font-family: var(--kai);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+/* 先亮地方：玩家第一眼看到的是自己走到的那个地方 */
+.treasure__place {
+  margin-top: 18px;
+}
+
+.treasure__placeName {
+  display: block;
+  font-family: var(--kai);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  color: var(--cyan);
+}
+
+.treasure__placeDesc {
+  display: block;
+  margin-top: 6px;
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--txt-4);
+}
+
+/* 因果排在名号之前：先懂道理，再知道它叫什么 */
+.treasure__reveal {
+  margin: 14px 0 0;
+  font-family: var(--kai);
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--txt-2);
+}
+
+.treasure__name {
+  margin-top: 16px;
+  font-family: var(--kai);
+  font-size: 30px;
+  letter-spacing: 0.18em;
+  color: var(--gold-soft);
+  text-shadow: 0 0 26px rgba(198, 154, 78, 0.45);
+}
+
+.treasure__desc {
+  margin: 10px 0 0;
+  font-family: var(--kai);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--txt-2);
+}
+
+.treasure__foot {
+  margin: 14px 0 0;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--txt-3);
+}
+
+.treasure__confirm {
+  margin-top: 18px;
+}

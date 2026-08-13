@@ -28,6 +28,7 @@ import {
   type RngCursor,
   type Season,
   type TaleContent,
+  type DestinationDef,
   type TaleEvent,
   type TaleState,
 } from "@shiling/tale-sim";
@@ -40,6 +41,7 @@ import {
   type EffectBudget,
   type OutcomeSpec,
   type PremiseEcho,
+  type SlotPlace,
   type SlotSpec,
   type TradeoffKind,
 } from "./types.js";
@@ -126,6 +128,18 @@ interface SlotBlueprint {
   /** 优先呼应哪一半前提；`none` ＝ 这一条只讲青丘本身 */
   echo: PremiseEcho["kind"];
 }
+
+/**
+ * [S2] 六条探索槽位怎么分给六处去处 —— **手排的一一对应，不是掷骰**。
+ *
+ * 掷骰会掷出「六条全落在兽径」这种分布，而这一批的判据是「每一处读起来都是另一个地方」；
+ * 六条一一铺开，玩家这一世无论开出哪一处，那儿都有一条专属剧本等着。
+ *
+ * 下标就是 `content.destinations` 的下标（内容表由浅入深排）。若内容侧的去处少于六处，
+ * `destinationForSlot` 会取模回绕 —— 少一处不该让某条槽位没有归属（那样它就变回
+ * 「哪儿都能撞上」的通用文案）。
+ */
+const EXPLORE_SLOT_PLACES: readonly number[] = [0, 1, 2, 3, 4, 5];
 
 const BLUEPRINTS: readonly SlotBlueprint[] = [
   // — 狩猎 5 条：这一池的主题是「饱腹的代价」，所以贪／险占多数 —
@@ -371,10 +385,19 @@ export function buildSlots(state: TaleState, content: TaleContent, count = SLOT_
   const usedMotifs = new Set<string>();
   const usedIllustrations = new Set<string>();
   const slots: SlotSpec[] = [];
+  // [S2] 探索槽位按出现顺序领去处（第 n 条探索槽位 → `EXPLORE_SLOT_PLACES[n]`）
+  let exploreSeen = 0;
 
   for (let index = 0; index < count; index += 1) {
     const blueprint = BLUEPRINTS[index % BLUEPRINTS.length];
     if (blueprint === undefined) break;
+    let place: SlotPlace | null = null;
+    if (blueprint.action === "explore" && content.destinations.length > 0) {
+      const wanted = EXPLORE_SLOT_PLACES[exploreSeen % EXPLORE_SLOT_PLACES.length] ?? 0;
+      const destination = content.destinations[wanted % content.destinations.length];
+      if (destination) place = placeOf(destination, content);
+      exploreSeen += 1;
+    }
     const echo = echoFor(blueprint.echo, sky, origin);
     const motifs = MOTIFS[blueprint.action] ?? MOTIFS.any;
     const motif = pickUnusedMotif(motifs, usedMotifs, cursor);
@@ -424,12 +447,18 @@ export function buildSlots(state: TaleState, content: TaleContent, count = SLOT_
          * 永远乘不上的 tag，而那种失效不会有任何测试变红（同 `eventTags.ts` 的头注）。
          */
         ...(echoTags(echo, sky, origin).length > 0 ? { tags: echoTags(echo, sky, origin) } : {}),
+        /*
+         * [S2] 探索事件**必须**声明去处（内容侧的 schema 测试对手写事件钉着同一条）。
+         * 少了它，一条生成事件会在六处全部出现 —— 那就是换皮，不是新世界。
+         */
+        ...(place === null ? {} : { destinations: [place.id] }),
       },
       illustration,
       actionLabel: blueprint.action === "any" ? "任意行动之后（季候本身的事）" : ACTION_LABELS[blueprint.action],
       timing: `${age.label}${blueprint.seasons ? `，只在${blueprint.seasons.map((s) => "春夏秋冬"[s]).join("／")}` : ""}`,
       echo,
       motif: motif.text,
+      ...(place === null ? {} : { place }),
       choices,
     });
   }
@@ -440,6 +469,22 @@ export function buildSlots(state: TaleState, content: TaleContent, count = SLOT_
     writtenBodies: content.events.map((event) => event.body),
     sky,
     origin,
+  };
+}
+
+/**
+ * [S2] 把一处去处翻成槽位用的 `SlotPlace`（人话进 prompt，景物词进校验）。
+ */
+function placeOf(destination: DestinationDef, content: TaleContent): SlotPlace {
+  const byId = new Map(content.enemies.map((enemy) => [enemy.id, enemy.name] as const));
+  return {
+    id: destination.id,
+    name: destination.name,
+    desc: destination.desc,
+    denizenNames: destination.denizens
+      .map((denizen) => byId.get(denizen.enemyId))
+      .filter((name): name is string => name !== undefined),
+    scenery: destination.scenery,
   };
 }
 
@@ -706,10 +751,16 @@ export function midpointDraft(slot: SlotSpec): {
   body: string;
   choices: { label: string; outcomes: { text: string; effects: Partial<Record<BudgetKey, number>> }[] }[];
 } {
+  /*
+   * [S2] 占位正文里塞一个此地的景物词：中值草稿要能**通过代码自己的那几道闸门**
+   * （地方景物那一条是可判定的性质，见 `validate.ts` ⑦）。少了它，`--draw` 与
+   * 单测里的探索槽位会被自己的校验打回 —— 那不是模型的错，是占位稿不合规。
+   */
+  const scenery = slot.place?.scenery[0] ?? "";
   return {
     id: slot.id,
     title: `占位${slot.id.slice(-2)}`,
-    body: `〔占位正文〕${slot.motif}`,
+    body: `〔占位正文〕${slot.motif}${scenery.length > 0 ? `（${scenery}）` : ""}`,
     choices: slot.choices.map((choice, index) => ({
       label: `占位选项${index + 1}`,
       outcomes: choice.outcomes.map((outcome, outcomeIdx) => {

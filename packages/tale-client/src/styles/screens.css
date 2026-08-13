@@ -1425,10 +1425,26 @@
 
 /* — 底部行动面板 — */
 
+/*
+ * [S2] 行动面板变成两段：上一段是三颗行动（猎／息／蛰），下一段是六处去处。
+ *
+ * 为什么不做成「先点探索、再选去处」：M1 的裁决**不得增加每回合必点次数**（S1 的技能池
+ * 也照这条办）。所以两段平级，点哪一颗都是这一季落定的那一次点击。
+ *
+ * 纵向预算（1440×900 实测）：行动一行 66px ＋ 去处标题 20px ＋ 去处两行 2×86px ＝ 258px，
+ * 舞台仍有 400px 以上 —— 事件卡（正文 60〜150 字 ＋三四颗抉择）量到 380px 上下，不挤。
+ * 矮屏（≤860px）把两段的内边距各压一档，见文件末尾的响应式段。
+ */
 .actions {
   grid-area: acts;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.actions__row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1526,6 +1542,142 @@
   background: radial-gradient(circle at 34% 28%, #f0c274, #b8792a 78%);
   color: #2a1c08;
 }
+
+/* — [S2] 探索去处：一排「往哪走」 — */
+
+.dests {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dests__title {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: var(--txt-4);
+  padding-left: 2px;
+}
+
+/*
+ * 三列 auto-fit：1440 宽下站三列 × 两行（六处全露）；窄屏自动降到两列。
+ * 与搏杀屏那次的教训同解 —— 列数写死会在别的视口把末尾几颗顶出卡片外。
+ */
+.dests__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: 8px;
+}
+
+.dest {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 13px 10px;
+  text-align: left;
+  border-radius: var(--r);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--hair), var(--sh-1);
+  backdrop-filter: blur(12px);
+  transition:
+    background var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.dest:hover:not([disabled]) {
+  background: rgba(36, 44, 57, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.38), 0 0 28px -12px rgba(232, 180, 95, 0.55);
+  transform: translateY(-2px);
+}
+
+.dest__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.dest__head b {
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: var(--txt);
+}
+
+.dest__head kbd {
+  margin-left: auto;
+}
+
+/* 已得此地秘藏：赭金小印（与秘藏演出同色） */
+.dest__seal {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: #2a1c08;
+  background: radial-gradient(circle at 34% 28%, #d9ab63, #b6883e 78%);
+}
+
+.dest__mark {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--txt-4);
+}
+
+.dest__desc {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--txt-4);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/*
+ * 三到四项事实（遇事／风险／此地有什么／路费）—— **四项恒在**，与 S1 技能池同一条纪律：
+ * 只写「尚不得其门」的按钮，玩家既不知道那儿是什么，也就没法决定要不要为它去凑一件浮鳔。
+ */
+.dest__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.dest__facts i {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--txt-3);
+}
+
+.dest__foe {
+  color: rgba(217, 118, 92, 0.92) !important;
+}
+
+/* 未开启的原因**另起一行**，后果照写（S1 那条：原因不许顶掉后果） */
+.dest__lock {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--gold-soft);
+  margin-top: 1px;
+}
+
+.dest.is-locked {
+  opacity: 0.5;
+}
+
+/* 三档风险各一条左边线：颜色是唯一一处「不读字也看得出深浅」的提示 */
+.dest--calm { border-left: 2px solid rgba(150, 200, 160, 0.5); }
+.dest--wary { border-left: 2px solid rgba(232, 180, 95, 0.55); }
+.dest--grim { border-left: 2px solid rgba(217, 86, 58, 0.6); }
 
 /* ==========================================================================
    神种选择
@@ -2523,7 +2675,7 @@
 }
 
 @media (max-width: 720px) {
-  .actions,
+  .actions__row,
   .combat__acts,
   .stalk__acts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3277,4 +3429,47 @@
   line-height: 1.6;
   color: var(--cinnabar-lt);
   opacity: 0.85;
+}
+
+/* — [S2] 山川图鉴（转世屏）：去处与秘藏 — */
+
+.seed__places {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--hair);
+}
+
+.place__seal {
+  background: rgba(198, 154, 78, 0.14) !important;
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.42) !important;
+  color: var(--gold-soft);
+}
+
+/* 得过此地秘藏：印章实心（一眼看得出这一处「拿全了」） */
+.place__seal.is-found {
+  background: radial-gradient(circle at 34% 28%, #d9ab63, #b6883e 78%) !important;
+  color: #2a1c08;
+}
+
+.place__been {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--txt-4);
+  margin-left: auto;
+}
+
+/* 没去过的那几行压暗 —— 它们是「还没走到的地方」，不该与已至的等重 */
+.place__row.is-unvisited {
+  opacity: 0.62;
+}
+
+.place__treasure b {
+  font-weight: 400;
+  color: var(--txt-3);
+}
+
+.place__treasure.is-found b {
+  color: var(--gold-soft);
 }

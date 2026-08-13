@@ -92,6 +92,29 @@ export interface SynergyRowVm {
   note: string;
 }
 
+/**
+ * [S2] 「山川图鉴」的一行 —— 一处去处 ＋ 它的秘藏。
+ *
+ * 与异变图鉴的**信息分配刚好相反**（`destinations.ts` 头注的那张表）：
+ * 去处的名号与门槛**恒可见**（那是欲望展示位：知道幽潭要鳞甲＋浮鳔才会去凑），
+ * 秘藏的名号**未得则恒为「？」**（那是「意料之外」的全部本钱）。
+ */
+export interface PlaceRowVm {
+  id: string;
+  name: string;
+  desc: string;
+  /** 门槛那一句：「无门槛」／「需 鳞甲、浮鳔」 —— 恒可见 */
+  gate: string;
+  /** 历代到过 */
+  visited: boolean;
+  /** 历代得过此地秘藏 */
+  treasureKnown: boolean;
+  /** 已得＝「渊心珠」；未得恒为「？」 */
+  treasureName: string;
+  /** 已得＝`TreasureDef.desc`；未得＝一句「此地必有一物，未得其详」 */
+  treasureNote: string;
+}
+
 /** [S1] 「血脉」商店的一行：一件已发现过的器官，标价、买不买得起、买没买。 */
 export interface BoonRowVm {
   organId: string;
@@ -131,6 +154,10 @@ export interface CodexVm {
   chosenBoonName: string | null;
   /** 一件都还没见过时的那句话（不留空白区） */
   boonEmptyNote: string | null;
+  /** [S2] 山川图鉴：六处去处 ＋ 各自的秘藏 */
+  places: PlaceRowVm[];
+  /** 「已至之地 3/6 · 秘藏 1/6」 */
+  placeCaption: string;
 }
 
 export interface SeedScreenVm {
@@ -262,6 +289,26 @@ function buildCodexVm(bloodline: Bloodline, content: TaleContent): CodexVm {
       };
     });
   const chosen = boons.find((boon) => boon.chosen);
+  const visited = new Set(bloodline.knownDestinationIds);
+  const found = new Set(bloodline.foundTreasureIds);
+  const places: PlaceRowVm[] = content.destinations.map((destination) => {
+    const gate =
+      destination.requiresOrganIds.length === 0
+        ? "无门槛 —— 何时都去得"
+        : `需 ${destination.requiresOrganIds.map((id) => organName(content, id)).join("、")}`;
+    const treasureKnown = found.has(destination.treasure.id);
+    return {
+      id: destination.id,
+      name: destination.name,
+      desc: destination.desc,
+      gate,
+      visited: visited.has(destination.id),
+      treasureKnown,
+      // 未得的秘藏**只渲染一个「？」**：不给 id、不给名字，DOM 里也读不出来（同 S1 图鉴的铁律）
+      treasureName: treasureKnown ? destination.treasure.name : "？",
+      treasureNote: treasureKnown ? destination.treasure.desc : "此地必有一物，未得其详。",
+    };
+  });
   return {
     knownCount: known.size,
     total: content.synergies.length,
@@ -273,6 +320,8 @@ function buildCodexVm(bloodline: Bloodline, content: TaleContent): CodexVm {
       boons.length > 0
         ? null
         : "还没有蜕出过任何器官 —— 活过一世、蜕一件形，这里就有东西可带了。",
+    places,
+    placeCaption: `已至之地 ${visited.size}/${places.length} · 秘藏 ${found.size}/${places.length}`,
   };
 }
 

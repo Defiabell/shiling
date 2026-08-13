@@ -163,6 +163,22 @@ export function slotBlock(slot: SlotSpec): string {
     `场合：${slot.actionLabel}　时机：${slot.timing}`,
     `母题（必须落在这个切入角上）：${slot.motif}`,
   ];
+  /*
+   * [S2] 这一条属于哪一处 —— 排在母题之后、前提之前，因为**先有地方，才有那地方的事**。
+   *
+   * 三行都是必要的：地貌给写景的材料，兽名给「这儿可能撞上什么」（写景时用得着，
+   * 而它是真的会发生的事 —— 引擎在此地的遇袭表里摇的就是它们），景物词是**机械判据**
+   * （同前提母题词那一条：只靠 prompt 叮嘱换来的会是「你在林子里走着」）。
+   */
+  if (slot.place) {
+    lines.push(
+      `**这一条发生在「${slot.place.name}」**：${slot.place.desc}`,
+      slot.place.denizenNames.length > 0
+        ? `　此地出没的：${slot.place.denizenNames.join("、")}（写景时可用，不必非写不可）`
+        : `　此地无凶兽 —— 它是青丘最太平的一处`,
+      `　正文要写出**这一处的具体景物**（别处写不出来的那种），至少出现下列字词之一：${slot.place.scenery.join("、")}`,
+    );
+  }
   if (slot.echo.kind !== "none") {
     lines.push(
       `**必须呼应这一世的${slot.echo.kind === "sky" ? "天时" : "出身"}「${slot.echo.name}」**：${slot.echo.brief}`,
