@@ -43,6 +43,13 @@ import { buildEventCardVm, type EventCardVm } from "./model/eventVm.js";
 import { advanceGuide, buildGuideVm, guideSnapshot, type GuideVm } from "./model/guideVm.js";
 import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type LogTone } from "./model/logVm.js";
 import { buildSeedScreenVm } from "./model/seedVm.js";
+import {
+  historianConfig,
+  reportTelemetry,
+  requestChronicle,
+  type HistorianConfig,
+} from "./ai/historian.js";
+import type { HistorianResult } from "@shiling/tale-ai";
 import { buildStalkVm, type StalkActId } from "./model/stalkVm.js";
 import { buildStatusVm } from "./model/statusVm.js";
 import { createFloaterHost, spawnFloaters } from "./fx/floaters.js";
@@ -89,6 +96,11 @@ export interface AppOptions {
    * 没有它就只能拿引擎数字讲，拿不到同一场追猎的两张对照截图。
    */
   grantOrganIds?: readonly string[];
+  /**
+   * [P1] AI 史官的配置。由 main.ts 从 URL ＋ `import.meta.env.DEV` 算出来传进来 ——
+   * app.ts 因此不必认识 vite 的 env，测试里也能直接关掉它（缺省即关）。
+   */
+  ai?: HistorianConfig;
 }
 
 export class TaleApp {
@@ -119,6 +131,17 @@ export class TaleApp {
    * `ChronicleEntry` 只有岁数与器官数，算不出差距报告（同 `buildChronicleVm` 要 state 的理由）。
    */
   private lastLife: TaleState | null = null;
+  /**
+   * [P1 AI 史官] 这一世的作传任务 —— **死亡那一刻就起跑**，`endLife` 到时候只是取货。
+   *
+   * 存 Promise 而不是结果：整段死亡演出（墨渍 ＋ 结局图 ＝ 5.6s）正是它的工期，
+   * 而它自带 6s 总预算与静默回落，所以这里既不需要超时逻辑，也不需要 try／catch。
+   */
+  private chronicleTask: Promise<HistorianResult | null> | null = null;
+  /** 上一次作传的结果（只给 `debugSnapshot` 用 —— 玩法不读它） */
+  private lastHistorian: HistorianResult | null = null;
+  /** AI 史官的开关与模型（`?ai=0` 关、`?aimodel=` 换），一局定一次 */
+  private readonly aiConfig: HistorianConfig;
 
   // — 「看得懂」批次：详情浮层与引导链的界面状态（都不进引擎，也不影响任何结算） —
 
@@ -159,6 +182,8 @@ export class TaleApp {
     this.storage = options.storage === undefined ? browserStorage() : options.storage;
     this.baseSeed = options.seed ?? (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
     this.grantOrganIds = options.grantOrganIds ?? [];
+    // 缺省关：没显式给配置的调用方（测试、任何非 dev 入口）不该在死亡路径上发网络请求
+    this.aiConfig = options.ai ?? historianConfig("", false);
     this.bloodline = loadBloodline(this.storage, CONTENT);
     this.lifeIndex = this.bloodline.chronicle.length;
     this.guideDismissed = loadGuideDismissed(this.storage);
@@ -255,6 +280,8 @@ export class TaleApp {
         : born;
     this.state = state;
     this.pendingEvent = null;
+    // 上一世的作传任务到这里必然已经取过货；置空是为了让 `commit` 认得出「新的一世」
+    this.chronicleTask = null;
     this.log = emptyLog();
     // 引导链按「世」重来：上一世没走完（多半是早死）说明这条链还没讲通。走完过的那份
     // 已经持久化在 guideDismissed 里，不会回来。
@@ -335,6 +362,27 @@ export class TaleApp {
   }
 
   /**
+   * 落定引擎返回的新状态 —— 顺带**在死亡那一刻就把 AI 史官叫起来**。
+   *
+   * 为什么起点是这里而不是 `endLife`：死后玩家还要读完最后那句旁白、再按一次「瞑目」，
+   * 之后才是墨渍（1.2s）与结局演出（4.4s）。把调用提到状态落定的那一刻，
+   * 等于把整段阅读时间也算进预算 —— 实机上玩家不可能等到史官（预算 6s，演出已 5.6s）。
+   *
+   * 四条死亡入口（行动／抉择／追猎／搏杀）都经由这一个方法落状态，所以这件事只写一次。
+   */
+  private commit(next: TaleState): void {
+    this.state = next;
+    if (!next.alive && next.ending !== null && this.chronicleTask === null) {
+      this.chronicleTask = requestChronicle(next, CONTENT, this.aiConfig, this.lifeKey());
+    }
+  }
+
+  /** 遥测归拢用：同一世的多次尝试落同一个 key（不进 prompt，只进日志）。 */
+  private lifeKey(): string {
+    return `${this.baseSeed}:${this.lifeIndex}`;
+  }
+
+  /**
    * 死亡那句旁白 —— 引擎只把它写进 `records`，**不进 `notices` 也不进 `roundLog`**。
    *
    * 不捞出来的后果是实测出来的：寿终那一回合，玩家看到的最后一张卡是「蜷于石隙间敛息养神。」
@@ -355,7 +403,7 @@ export class TaleApp {
 
     const result = performAction(prev, action, CONTENT);
     const next = result.state;
-    this.state = next;
+    this.commit(next);
     this.pendingEvent = result.pendingEvent;
     // 蛰伏开奖成功过一次（引导链第二步的判据；事件送的器官不算，见字段注释）
     if (result.moltResult) this.dormantMolted = true;
@@ -414,7 +462,7 @@ export class TaleApp {
 
     const result = resolveChoice(prev, event, idx, CONTENT);
     const next = result.state;
-    this.state = next;
+    this.commit(next);
     this.pendingEvent = null;
     const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
@@ -451,7 +499,7 @@ export class TaleApp {
 
     const turn = stalkAct(prev, act, CONTENT);
     const next = turn.state;
-    this.state = next;
+    this.commit(next);
     const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
       ...turn.roundLog.map((text) => ({ text, tone: stalkTone(act, turn.over) })),
@@ -488,7 +536,7 @@ export class TaleApp {
 
     const turn = combatAct(prev, act, CONTENT);
     const next = turn.state;
-    this.state = next;
+    this.commit(next);
     const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
       ...turn.roundLog.map((text) => ({ text, tone: "combat" as LogTone })),
@@ -572,7 +620,18 @@ export class TaleApp {
       this.overlayHost,
     );
 
-    const entry: ChronicleEntry = composeChronicle(state, CONTENT);
+    /*
+     * [P1 AI 史官] 取货。任务在**死亡那一刻**就起跑了（见 `commit`），到这里已经跑了
+     * 玩家读旁白的时间 ＋ 墨渍 1.2s ＋ 结局演出 4.4s，所以这个 await 实测恒为 0 等待；
+     * 万一没跑完，`writeChronicle` 自带 6s 总预算会自己收摊回落模板版 —— 两头都不会干等。
+     *
+     * 拿不到 AI 版（关掉、无 key、超时、校验打回）就走模板版：这条回落路径与 M0 的行为
+     * 逐字相同，卷轴那边分不出这一篇是谁写的（结构与 `praisePrefix` 都由代码定）。
+     */
+    const drafted = await (this.chronicleTask ?? Promise.resolve(null));
+    this.lastHistorian = drafted;
+    if (drafted) reportTelemetry(drafted.telemetry);
+    const entry: ChronicleEntry = drafted?.entry ?? composeChronicle(state, CONTENT);
     const gain = bloodlineGain(state, CONTENT);
     this.bloodline = recordLife(this.bloodline, gain, entry);
     saveBloodline(this.storage, this.bloodline);
@@ -838,6 +897,18 @@ export class TaleApp {
     detail: string | null;
     /** 引导链：第几步／那两句话／有没有走完。验收第三问就查它 */
     guide: { step: number; total: number; text: string; hint: string; complete: boolean } | null;
+    /**
+     * [P1] 这一世的列传是谁写的。E2E 靠它区分「AI 版」与「静默回落的模板版」——
+     * 光看屏幕上的字分不出来（两版结构一样，那正是回落该有的样子）。
+     */
+    ai: {
+      enabled: boolean;
+      model: string;
+      source: "ai" | "template" | null;
+      fallbackReason: string | null;
+      totalMs: number | null;
+      costUsd: number | null;
+    };
   } {
     const state = this.state;
     return {
@@ -848,6 +919,14 @@ export class TaleApp {
       bloodline: this.bloodline,
       pendingEventId: this.pendingEvent?.id ?? null,
       detail: this.detail === null ? null : detailKey(this.detail),
+      ai: {
+        enabled: this.aiConfig.enabled,
+        model: this.aiConfig.model,
+        source: this.lastHistorian?.source ?? null,
+        fallbackReason: this.lastHistorian?.telemetry.fallbackReason ?? null,
+        totalMs: this.lastHistorian?.telemetry.totalMs ?? null,
+        costUsd: this.lastHistorian?.telemetry.costUsd ?? null,
+      },
       // 只读：不推进 guideIndex（推进只在渲染那一条路上发生），照实报当前那一步
       guide: state && !this.guideDismissed ? buildGuideVm(state, CONTENT, this.guideIndex) : null,
     };

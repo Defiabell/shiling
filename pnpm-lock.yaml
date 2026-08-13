@@ -51,8 +51,21 @@ importers:
         specifier: workspace:*
         version: link:../content
 
+  packages/tale-ai:
+    dependencies:
+      '@shiling/tale-sim':
+        specifier: workspace:*
+        version: link:../tale-sim
+    devDependencies:
+      '@shiling/tale-content':
+        specifier: workspace:*
+        version: link:../tale-content
+
   packages/tale-client:
     dependencies:
+      '@shiling/tale-ai':
+        specifier: workspace:*
+        version: link:../tale-ai
       '@shiling/tale-content':
         specifier: workspace:*
         version: link:../tale-content
@@ -60,6 +73,9 @@ importers:
         specifier: workspace:*
         version: link:../tale-sim
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
       vite:
         specifier: ^5.4.0
         version: 5.4.21(@types/node@22.20.1)

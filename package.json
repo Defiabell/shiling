@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -b packages/sim packages/content packages/client packages/tale-sim packages/tale-content packages/tale-client",
+    "typecheck": "tsc -b packages/sim packages/content packages/client packages/tale-sim packages/tale-content packages/tale-ai packages/tale-client",
     "dev": "pnpm --filter @shiling/client dev",
     "dev:tale": "pnpm --filter @shiling/tale-client dev"
   },

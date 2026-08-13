@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+# AI 史官的本地遥测日志（每世 token／耗时／成本），不入库
+.ai-log/

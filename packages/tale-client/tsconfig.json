@@ -1,5 +1,6 @@
 { "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": ".", "outDir": "dist",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"] },
-  "include": ["src", "test"],
-  "references": [{ "path": "../tale-sim" }, { "path": "../tale-content" }] }
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"] },
+  "include": ["src", "test", "vite-aigw.ts", "vite.config.ts"],
+  "references": [{ "path": "../tale-sim" }, { "path": "../tale-content" }, { "path": "../tale-ai" }] }
