@@ -257,7 +257,7 @@ export const BASELINE_TUNING: TaleTuning = {
    * 的兑现，也是**这一场**打得好的回报，还给不带任何洞察的 build 留了一条笨办法。
    */
   weaknessDamageMul: 1.6,
-  weaknessRevealRounds: 4,
+  weaknessRevealRounds: 5,
   weaknessRevealPerLing: 16,
   weaknessRevealHits: 2,
 

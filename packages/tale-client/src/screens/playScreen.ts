@@ -773,13 +773,16 @@ function woundRow(wounds: WoundVm[]): HTMLElement {
       el(
         "b",
         {
-          class: `enc__wound${wound.stacks > 0 ? " is-hurt" : ""}${wound.landmark ? " is-landmark" : ""}`,
+          class: `enc__wound${wound.stacks > 0 ? " is-hurt" : ""}${wound.landmark ? " is-landmark" : ""}${
+            wound.neverWounds ? " is-inert" : ""
+          }`,
           title: wound.hint,
           attrs: { "data-wound": wound.part },
         },
         [
           el("span", { class: "enc__wound-zi", text: wound.label }),
-          el("em", { text: `${wound.stacks}／${wound.cap}` }),
+          // 不留伤的那一格不画「0／3」—— 一个永远停在 0 的计数器只会让人以为自己没打中
+          el("em", { text: wound.neverWounds ? "不留伤" : `${wound.stacks}／${wound.cap}` }),
         ],
       ),
     ),

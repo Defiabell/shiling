@@ -45,12 +45,20 @@ export interface MomentumVm {
   hot: boolean;
 }
 
-/** 一处部位伤 —— 「腿 ②　它再也走不掉」。 */
+/**
+ * 一处部位伤 —— 「腿 ②　它再也走不掉」。
+ *
+ * **咬喉那一格恒为 0**（`woundOf("throat")` 返回 null：咬喉是爆发那一档，不留整场伤）。
+ * 它照样上屏，而且说明里必须**明说它不留伤** —— 三格并排才看得出「哪两条是能经营的线」，
+ * 而一格默默停在 0 又不解释，玩家只会以为自己没打中。
+ */
 export interface WoundVm {
   part: BodyPart;
   label: string;
   stacks: number;
   cap: number;
+  /** 这一处**根本不累积**（咬喉）—— 界面据此把它排成一枚说明牌而不是一个计数器 */
+  neverWounds: boolean;
   /** 已触发那条一劳永逸的效果（断腿／废眼） */
   landmark: boolean;
   hint: string;
@@ -105,7 +113,9 @@ const WOUND_META: Record<BodyPart, { label: string; landmark: string; plain: str
   throat: {
     label: "喉",
     landmark: "",
-    plain: "咬开的喉口每合自己淌血。",
+    // ⚠️ 这一句 code-reviewer 抓过一次：原文写「咬开的喉口每合自己淌血」，而引擎从不给喉记伤
+    // （`woundOf` 对 throat 返回 null）—— 一句屏幕上恒在、却永远不会发生的承诺
+    plain: "咬喉不留整场伤 —— 那一档是爆发（×1.6），一口就是一口。",
   },
   leg: {
     label: "腿",
@@ -147,6 +157,7 @@ function woundVmsOf(preview: EncounterPreview): WoundVm[] {
       label: meta.label,
       stacks,
       cap: preview.woundCap,
+      neverWounds: part === "throat",
       landmark,
       hint: landmark ? meta.landmark : meta.plain,
     };

@@ -463,6 +463,28 @@ describe("数量与分布", () => {
     expect(withWeakness).toBeLessThan(ENEMIES.length);
   });
 
+  /*
+   * [M2-B1] **弱点必须真的能成为最优的一咬** —— 否则屏幕上那句「破绽在此」是空话。
+   *
+   * 这条是实机抄屏抓出来的：第一版把穴鼠与草狐的弱点放在眼上，而扑眼的部位倍率只有 0.35，
+   * 乘上弱点的 1.6 才 0.56 —— 连「咬喉被护住」的 0.8 都不到。于是识破之后推荐链照旧咬喉，
+   * 玩家花几合试出来的那个「破绽」一次都用不上。这类失效**不会有任何别的测试变红**
+   * （弱点照样识破、伤害照样翻倍，只是翻完还是最差的一手），所以只能在这里钉住。
+   */
+  it("[M2-B1] 弱点所在的部位必须打得过一记被护住的咬喉（否则「破绽在此」是空话）", () => {
+    const floor = TUNING.combatBiteMul.throat * TUNING.combatGuardDamageMul;
+    for (const enemy of ENEMIES) {
+      const weakness = enemy.weakness;
+      if (!weakness) continue;
+      const found = TUNING.combatBiteMul[weakness.part] * TUNING.weaknessDamageMul;
+      expect(
+        found,
+        `${enemy.id} 的弱点在「${weakness.part}」：识破后倍率 ${found.toFixed(2)}，` +
+          `连一记被护住的咬喉（${floor.toFixed(2)}）都打不过 —— 这个破绽永远不会被采用`,
+      ).toBeGreaterThan(floor);
+    }
+  });
+
   it("追猎旁白：猎物表四头必须写全，每槽 ≥2 条变体且占位合法", () => {
     const SLOTS = ["begin", "creep", "circle", "wait", "stir", "catch", "miss", "escape"] as const;
     const KNOWN_VARS = /\{\{(enemy|steps)\}\}/g;

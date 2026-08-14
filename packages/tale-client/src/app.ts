@@ -573,6 +573,7 @@ export class TaleApp {
       ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
 
+    const encounterCenter = result.pendingEvent ? null : this.encounterCenter(next);
     if (result.pendingEvent) {
       const card = buildEventCardVm(next, result.pendingEvent, CONTENT);
       this.noteOrganGate(card);
@@ -581,10 +582,10 @@ export class TaleApp {
         key: `event:${result.pendingEvent.id}:${next.rngState}`,
         card,
       };
-    } else if (this.encounterCenter(next)) {
+    } else if (encounterCenter !== null) {
       // 起追：这一季**尚未收束**（引擎把季推进推迟到接近阶段的终局），所以这里不放 continue
       // 按钮，也不能再走 doAction —— 屏幕切到遭遇全屏，下一步只能是 doStalk／doCombat。
-      this.center = this.encounterCenter(next)!;
+      this.center = encounterCenter;
     } else {
       this.center = {
         kind: "narration",
@@ -768,8 +769,9 @@ export class TaleApp {
      * 所以这里**照样是遭遇屏**（换的只有中段）—— 玩家不必按一次「迎敌」才看到对手，
      * 而刚刚那四息的日志、势与部位伤都还在原地。
      */
-    if (this.encounterCenter(next)) {
-      this.center = this.encounterCenter(next)!;
+    const encounterCenter = this.encounterCenter(next);
+    if (encounterCenter !== null) {
+      this.center = encounterCenter;
     } else {
       const title = STALK_END_TITLES[turn.over ?? "escaped"];
       this.center = {
@@ -802,8 +804,9 @@ export class TaleApp {
       ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
 
-    if (turn.over === null && this.encounterCenter(next)) {
-      this.center = this.encounterCenter(next)!;
+    const encounterCenter = turn.over === null ? this.encounterCenter(next) : null;
+    if (encounterCenter !== null) {
+      this.center = encounterCenter;
     } else {
       const title = COMBAT_END_TITLES[turn.over ?? "dead"];
       this.center = {

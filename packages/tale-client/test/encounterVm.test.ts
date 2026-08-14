@@ -77,6 +77,15 @@ describe("[M2-B1] 势条：读得出「攒到几点、还差几点」", () => {
 });
 
 describe("[M2-B1] 部位伤牌：断腿／废眼那两件一劳永逸的事要看得出已经成了", () => {
+  it("[M2-B1] 咬喉那一格明说「不留伤」（它是爆发那一档）—— 不许再挂一句永远不会发生的承诺", () => {
+    const vm = buildEncounterChromeVm(fightingState(realState(), { enemyId: "ye-zhi" }), CONTENT);
+    const throat = vm.wounds.find((wound) => wound.part === "throat");
+    expect(throat?.neverWounds).toBe(true);
+    expect(throat?.hint).toContain("不留整场伤");
+    // 反证：另两处是真的会累积的，所以它们不许被标成「不留伤」
+    expect(vm.wounds.filter((wound) => wound.neverWounds).map((wound) => wound.part)).toEqual(["throat"]);
+  });
+
   it("没伤时不标记，有伤时写层数", () => {
     const clean = buildEncounterChromeVm(fightingState(realState(), { enemyId: "ye-zhi" }), CONTENT);
     expect(clean.wounds.every((wound) => wound.stacks === 0 && !wound.landmark)).toBe(true);

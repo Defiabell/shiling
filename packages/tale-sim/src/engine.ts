@@ -3729,7 +3729,8 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       const { dmg, crit } = strike(draft.stats.meng, finisherMultiplier(t, stance, spent));
       enemyHp -= dmg;
       openHit = true;
-      if (act.kind === "finisher" && weakPart !== null) weaknessHits += 0;
+      // 决杀**不推进「咬中同一处几次」那条识破路径**：它无视守备、也不挑部位，
+      // 那一记谈不上「在试它哪儿软」—— 弱点仍要靠三颗咬击或看满几合去识破。
       say(COMBAT_MESSAGES.finisher, { dmg });
       if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
       break;
