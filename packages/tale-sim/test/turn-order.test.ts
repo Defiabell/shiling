@@ -5,6 +5,8 @@ import {
   resolveChoice,
   stalkAct,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   EVENT_SPROUT,
@@ -69,18 +71,18 @@ describe("回合结算顺序：季推进", () => {
     const quiet = contentWithoutEvents();
     const life = createLife(13, FIXTURE_SEED_ID, quiet);
     const started = performAction(life, "hunt", quiet).state;
-    expect(started.stalk).not.toBeNull();
+    expect(approachOf(started)).not.toBeNull();
     expect(started.season).toBe(life.season);
     expect(started.hunger).toBe(life.hunger);
 
     // 一路潜行到收束（体力预算决定它必然收）
     let state = started;
     let guard = 0;
-    while (state.stalk && guard < 20) {
+    while (approachOf(state) && guard < 20) {
       state = stalkAct(state, "creep", quiet).state;
       guard += 1;
     }
-    expect(state.stalk).toBeNull();
+    expect(approachOf(state)).toBeNull();
     expect(state.season).toBe(1);
     expect(state.year).toBe(life.year);
     // 全程只扣了一季的饱食（收益另算：这一路只潜行没扑，必然空手）
@@ -123,13 +125,13 @@ describe("回合结算顺序：事件抽取", () => {
   it("起追的那一季不抽事件（事件与追猎二选一）", () => {
     const quiet = contentWithoutEvents();
     const started = performAction(createLife(13, FIXTURE_SEED_ID, quiet), "hunt", quiet);
-    expect(started.state.stalk).not.toBeNull();
+    expect(approachOf(started.state)).not.toBeNull();
     expect(started.pendingEvent).toBeNull();
 
     const busy = makeContent({ tuning: { eventChanceBase: 1 } });
     const drawn = performAction(createLife(13, FIXTURE_SEED_ID, busy), "hunt", busy);
     expect(drawn.pendingEvent).not.toBeNull();
-    expect(drawn.state.stalk).toBeNull();
+    expect(approachOf(drawn.state)).toBeNull();
   });
 
   it("once 事件在**结算后**才进 firedOnceIds，之后不再入池", () => {
@@ -145,7 +147,7 @@ describe("回合结算顺序：事件抽取", () => {
     // 抽出但未结算 → 还没烧掉
     expect(first.state.firedOnceIds).toEqual([]);
     const resolved = resolveChoice(first.state, first.pendingEvent!, 1, content).state;
-    expect(resolved.combat).toBeNull();
+    expect(clashOf(resolved)).toBeNull();
     expect(resolved.firedOnceIds).toEqual([first.pendingEvent!.id]);
     expect(performAction(resolved, "hunt", content).pendingEvent).toBeNull();
   });

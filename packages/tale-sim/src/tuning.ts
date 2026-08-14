@@ -133,6 +133,8 @@ export const BASELINE_TUNING: TaleTuning = {
   combatDamageMengDivisor: 8,
   combatDamageJitter: 1,
   combatWinHungerGain: 18,
+  // [M2-B1] 一头打赢的兽也是几季的口粮（尸体没有拖回穴里那么完整，所以打个七折）
+  combatWinSurplusMul: 0.7,
   combatWinEssenceMul: 1,
   fleeBase: 0.5,
   fleePerLingDiff: 0.005,
@@ -193,6 +195,87 @@ export const BASELINE_TUNING: TaleTuning = {
   combatThornsRounds: 3,
   combatThornsDamage: 2,
   combatInsightRounds: 3,
+
+  /*
+   * [M2-B1] 势。一场架 5〜10 合，自涨 1／合、乘隙 +1、没挨伤 +1 —— 打得好的一场大约
+   * 每合净涨 1.7 点，于是「攒两合发一记 2 点的技」与「攒四合发一记决杀」是两条真的能排
+   * 出来的节奏，而不是「转好了就按」。上限 4＋floor(灵/18) 压着上界：灵 54 的化灵 build
+   * 上限 7，猛系 build 通常只有 4〜5 —— 灵性 build 攒得起更大的一手，这是它的可见回报。
+   *
+   * 起手势 floor(灵/14)：一个灵 28 的 build 开场就有 2 点，够在第一合发一记控制技；
+   * 被扑个正着（探索遇袭）扣 2 —— 那正是「它先动了手」在数值上的样子。
+   */
+  encounterMomentumBase: 4,
+  encounterMomentumMaxPerLing: 18,
+  encounterMomentumStartPerLing: 14,
+  encounterAmbushMomentumPenalty: 2,
+  // 接近阶段的成果结转：警觉压得越低（潜得越隐蔽）才失手，转交锋时手上越有势
+  encounterApproachMomentumPerAlert: 26,
+  encounterMomentumPerRound: 1,
+  encounterMomentumOpenGuard: 1,
+  encounterMomentumUnhurt: 1,
+  encounterSkillMomentumCost: 2,
+  /*
+   * 决杀：4 点势起，倍率 1.4 + 0.22×势 —— 攒到 6 点是 2.72 倍，比咬喉（1.6）重七成，
+   * 且**无视守备减伤**。它是「势」这一位存在的证明：一记攒出来的大招，而不是又一颗按钮。
+   */
+  encounterFinisherMomentum: 4,
+  encounterFinisherMul: 1.4,
+  encounterFinisherPerMomentum: 0.22,
+
+  /*
+   * [M2-B1] 部位伤整场累积。三层封顶是防「一手通吃」的闸门（M1-P2 实测：可无限续的迟滞
+   * 让只咬腿一手对岩羊胜率 99.5%）。三层腿伤 ＝ 它出伤只剩 0.86³ ≈ 0.64、扑的权重只剩
+   * 0.65³ ≈ 0.27，且**第一层就再也逃不掉**；三层眼伤 ＝ 它六成打空，两层起不再反击。
+   * **咬喉不留伤** —— 那一档是爆发（×1.6），若它还白拿一条持续线，三颗咬击就又退化成
+   * 「挑伤害最高那颗」。
+   * 每一层都要一个回合去咬，而咬腿咬眼的伤害只有 0.7／0.35 —— 经营这两条线的价钱就是
+   * 「这几合我没在放血」，于是「什么时候转回收官」才是一道题。
+   */
+  woundCap: 3,
+  woundLegDamageMul: 0.86,
+  woundLegPounceMul: 0.65,
+  // 1 层就封死「逃」：M1-P2 的「咬腿拦逃」是全库最好读的一条机制，不该退化成「咬两口才拦得住」
+  woundLegNoFleeAt: 1,
+  woundEyeMissChance: 0.2,
+  woundEyeNoCounterAt: 2,
+
+  /*
+   * [M2-B1] 弱点。三条识破路径的相对早晚是刻意的：图鉴知识（花过血统点的）开场就知道，
+   * 灵性高的第 2 合看出来，谁都可以靠「咬中该处两次」试出来 —— 于是它既是**跨世积累**
+   * 的兑现，也是**这一场**打得好的回报，还给不带任何洞察的 build 留了一条笨办法。
+   */
+  weaknessDamageMul: 1.6,
+  weaknessRevealRounds: 4,
+  weaknessRevealPerLing: 16,
+  weaknessRevealHits: 2,
+
+  /*
+   * [M2-B1] 四属性的落点，逐条都上屏（客户端的「四相」盘）。
+   *
+   * 体 ×1.6 是把交锋血量从寿数公式里解耦出来的那一步：拉长回合数需要更厚的血，而
+   * `lifespanMax = 16 + floor(ti/10)` 不该跟着动。体 26 → 42 血，正好扛得住 5〜10 合。
+   * 每 14 点体减 1 点受伤：体 26 减 1、体 42 减 3 —— 数小是有意的，它是**看得见的**加成，
+   * 不是隐形的免伤墙。
+   *
+   * 德此前在搏杀屏上一个字都读不到（只在事件门槛里）。三条落点合起来就是「气运」：
+   * 闪避（整下躲开）、暴击、以及**凶兽也敬三分**（抬高它的退意权重）。德 44 的归山 build
+   * ＝ 闪避 17.6%、暴击 8.8%、它的逃意翻倍 —— 一个德高的兽打架不靠硬，靠「它不太想跟你打」。
+   *
+   * **没有「敌人出伤倍率」这个旋钮**：中途试过（0.62〜1.0 各扫过一遍 500 世），到 1.0 时
+   * 四条护栏与回合数分布与 0.9 几乎一样（战死 28.4% vs 26.2%、每场 6.2 vs 6.3 合）——
+   * 也就是说「一场架 5〜10 合」这件事已经由**双方血量**决定完了（敌人 ×1.8、我方 ×1.6），
+   * 那个倍率只是一个不影响结论的旋钮。留着它比删掉危险（下一个人会去调它，然后困惑于
+   * 为什么护栏不动），所以删了。要调敌人的疼痛感，动 `combatIntentDamageMul` 或内容的 meng。
+   */
+  combatHpPerTi: 1.6,
+  combatToughnessPerTi: 14,
+  combatDodgePerDe: 0.004,
+  combatDodgeMax: 0.3,
+  combatCritPerDe: 0.002,
+  combatCritMax: 0.25,
+  combatCritMul: 1.5,
+  combatEnemyFleePerDe: 0.02,
 
   // [S1] 血脉：一世产 3〜8 点血统，4 点 ≈ 一世能买一件；事件专属器官（龙涎）翻倍
   bloodlineBoonCost: 4,

@@ -31,6 +31,7 @@ import {
   type PerilTier,
   type TaleContent,
   type TaleState,
+  clashOf,
 } from "@shiling/tale-sim";
 import { chanceCn } from "./format.js";
 
@@ -144,7 +145,7 @@ export function buildDestinationVms(
    * 死亡这一屏没有。界面不许比引擎宽。
    */
   const canExplore = availableActions(state, content).includes("explore");
-  const blockedReason = !state.alive ? "已　殁" : state.combat ? "战事未了" : "此刻不可行";
+  const blockedReason = !state.alive ? "已　殁" : clashOf(state) ? "战事未了" : "此刻不可行";
   return exploreDestinations(state, content).map((preview) => ({
     id: preview.def.id,
     name: preview.def.name,

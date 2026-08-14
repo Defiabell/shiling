@@ -17,7 +17,8 @@ import {
   stalkPreview,
   type StalkAct,
   type StalkPreview,
-  type StalkState,
+  type WindDir,
+  type ApproachState,
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
@@ -135,13 +136,13 @@ export const CHANCE_BANDS: readonly { max: number; label: string }[] = [
   { max: 1, label: "十拿九稳" },
 ];
 
-const WIND_LABELS: Record<StalkState["wind"], string> = {
+const WIND_LABELS: Record<WindDir, string> = {
   into: "逆风",
   cross: "侧风",
   with: "顺风",
 };
 
-const WIND_HINTS: Record<StalkState["wind"], string> = {
+const WIND_HINTS: Record<WindDir, string> = {
   into: "风自它来 —— 气味吹向自己，潜行的动静只涨一半。",
   cross: "风横着走 —— 潜行的动静照常。",
   with: "风把你的气味直送过去 —— 潜行的动静翻倍。",
@@ -175,7 +176,7 @@ function signed(value: number): string {
  * 也就是说：**跟着界面的提示打，就是当前最好的打法**，这正是「信息可见」要达成的事。
  * 实验台里那套打法是这条链的镜像，改这里就要同步改那边（那边有注释指回来）。
  */
-export function recommendStalkAct(stalk: StalkState, preview: StalkPreview): StalkActId {
+export function recommendStalkAct(stalk: ApproachState, preview: StalkPreview): StalkActId {
   // 最后一动：不扑就是空手而归
   if (preview.staminaLeft <= 1) return "pounce";
   // 先买逆风：读不出风向时也推荐（绕一圈能把不确定变成确定，此后每一步的动静都只涨一半）
@@ -188,12 +189,13 @@ export function recommendStalkAct(stalk: StalkState, preview: StalkPreview): Sta
 
 export function buildStalkVm(
   state: TaleState,
-  stalk: StalkState,
+  stalk: ApproachState,
   content: TaleContent,
 ): StalkVm {
   const t = lifeTuning(state, content);
   const preview = stalkPreview(state, content);
-  const prey = content.enemies.find((candidate) => candidate.id === stalk.preyId);
+  const preyId = state.encounter?.enemyId ?? "";
+  const prey = content.enemies.find((candidate) => candidate.id === preyId);
   const startDistance = prey?.startDistance ?? t.stalkStartDistance;
 
   const alertExact = preview.alertVisible;
@@ -327,7 +329,7 @@ export function buildStalkVm(
   ];
 
   return {
-    preyName: prey?.name ?? stalk.preyId,
+    preyName: prey?.name ?? preyId,
     preyDesc: prey?.desc ?? "",
     preyBadge: preview.retaliates ? "会反扑" : null,
     preyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
@@ -348,6 +350,6 @@ export function buildStalkVm(
     pounceChance: preview.pounceChance,
     pounceHopeless: hopeless,
     actions,
-    log: stalk.log,
+    log: state.encounter?.log ?? [],
   };
 }

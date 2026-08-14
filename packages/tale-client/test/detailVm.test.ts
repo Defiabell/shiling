@@ -33,7 +33,7 @@ import {
   statGates,
   tagEffects,
 } from "../src/model/detailVm.js";
-import { FIXTURE_CONTENT, newState, realState, withPatch } from "./helpers.js";
+import { FIXTURE_CONTENT, newState, realState, withPatch, fightingState } from "./helpers.js";
 
 /**
  * [2026-08-13] 期望值一律按**这一世生效的调参**算，不按 `TALE_CONTENT.tuning`。
@@ -74,49 +74,43 @@ describe("与引擎对账：客户端唯一两处复算", () => {
         },
       },
     };
-    const state = withPatch(newState(), {
-      combat: {
-        enemyId: "ye-zhi",
-        enemyHp: 6,
-        playerHp: 20,
-        round: 0,
-        stance: "square" as const,
-        // 护后腿 ＋ 这一合常规咬 → 咬喉既没被护住、也不吃守势那一档
-        guardPart: "leg" as const,
-        intent: { kind: "bite" as const, text: "" },
-        blind: 0,
-        slow: 0,
-        ward: 0,
-        bleed: 0,
-        thorns: 0,
-        insight: 0,
-        skillCooldowns: {},
-        log: [],
-      },
+    const state = fightingState(newState(), {
+      enemyId: "ye-zhi",
+      enemyHp: 6,
+      playerHp: 20,
+      round: 0,
+      stance: "square" as const,
+      // 护后腿 ＋ 这一合常规咬 → 咬喉既没被护住、也不吃守势那一档
+      guardPart: "leg" as const,
+      intent: { kind: "bite" as const, text: "" },
+      blind: 0,
+      slow: 0,
+      ward: 0,
+      bleed: 0,
+      thorns: 0,
+      insight: 0,
+      skillCooldowns: {},
     });
     const throat = combatPreview(state, content).bites.find((bite) => bite.part === "throat");
     expect(throat?.damage.mid).toBe(baseBiteDamage(state.stats.meng, content.tuning));
   });
 
   it("遁走成算 ＝ combatPreview.fleeChance（未致盲时）", () => {
-    const state = withPatch(newState(), {
-      combat: {
-        enemyId: "ye-zhi",
-        enemyHp: 6,
-        playerHp: 20,
-        round: 0,
-        stance: "square" as const,
-        guardPart: "leg" as const,
-        intent: { kind: "bite" as const, text: "" },
-        blind: 0,
-        slow: 0,
-        ward: 0,
-        bleed: 0,
-        thorns: 0,
-        insight: 0,
-        skillCooldowns: {},
-        log: [],
-      },
+    const state = fightingState(newState(), {
+      enemyId: "ye-zhi",
+      enemyHp: 6,
+      playerHp: 20,
+      round: 0,
+      stance: "square" as const,
+      guardPart: "leg" as const,
+      intent: { kind: "bite" as const, text: "" },
+      blind: 0,
+      slow: 0,
+      ward: 0,
+      bleed: 0,
+      thorns: 0,
+      insight: 0,
+      skillCooldowns: {},
     });
     const enemy = FIXTURE_CONTENT.enemies.find((candidate) => candidate.id === "ye-zhi")!;
     expect(combatPreview(state, FIXTURE_CONTENT).fleeChance).toBeCloseTo(

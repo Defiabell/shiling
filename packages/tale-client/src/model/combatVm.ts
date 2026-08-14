@@ -34,12 +34,13 @@ import {
   type CombatPreview,
   type CombatSkillCost,
   type CombatSkillPreview,
-  type CombatState,
+  type ClashState,
   type DamageRange,
   type EnemyDef,
   type Stance,
   type TaleContent,
   type TaleState,
+  clashOf,
 } from "@shiling/tale-sim";
 import { ESSENCE_LABELS, SKILL_EFFECT_LABELS } from "./format.js";
 import { enemyArt } from "../art/assets.js";
@@ -79,7 +80,7 @@ export interface CombatActionVm {
   highlight: boolean;
   enabled: boolean;
   disabledReason: string | null;
-  group: "bite" | "stance" | "skill" | "flee";
+  group: "bite" | "stance" | "skill" | "finisher" | "flee";
   /**
    * [S1] 这一手是**组合技**（异变）—— 界面给它一枚朱砂「异」印。
    *
@@ -138,7 +139,7 @@ export interface CombatVm {
   outlook: string;
   /** 撑不住两合了 */
   outlookHot: boolean;
-  /** 引擎累积的回合日志（战斗结束那一刻 state.combat 会被置 null，届时由调用方保留副本） */
+  /** 引擎累积的回合日志（战斗结束那一刻 clashOf(state) 会被置 null，届时由调用方保留副本） */
   log: string[];
   actions: CombatActionVm[];
 }
@@ -148,6 +149,9 @@ const PART_ACT: Record<BodyPart, { glyph: string; label: string; hint: string }>
   leg: { glyph: "腿", label: "咬腿", hint: "伤轻，但它会慢下来 —— 也走不掉。" },
   eye: { glyph: "眼", label: "扑眼", hint: "几乎不伤，但它会有几合看不见你。" },
 };
+
+/** [M2-B1] 部位伤在按钮上的一字读法（「腿伤 1 → 2」）。 */
+const WOUND_ZI: Record<BodyPart, string> = { throat: "喉", leg: "腿", eye: "眼" };
 
 const STANCE_META: Record<Stance, { glyph: string; label: string }> = {
   low: { glyph: "伏", label: "伏低" },
@@ -204,6 +208,8 @@ export function combatActId(act: CombatAct): CombatActId {
       return `stance:${act.to}`;
     case "skill":
       return `skill:${act.skillId}`;
+    case "finisher":
+      return "finisher";
     case "flee":
       return "flee";
   }
@@ -251,29 +257,40 @@ function skillEffectText(skill: CombatSkillPreview): string {
   ];
   for (const effect of skill.effects) parts.push(SKILL_EFFECT_LABELS[effect]);
   parts.push(`冷却 ${skill.cooldown} 合`);
+  // [M2-B1] 势是第三样价钱，与冷却、代价并排 —— 三样都写清才知道「现在按还是攒两合」
+  if (skill.momentumCost > 0) parts.push(`耗势 ${skill.momentumCost}`);
   if (skill.cost) parts.push(costText(skill.cost));
   return parts.join(" · ");
 }
 
 export function buildCombatVm(
   state: TaleState,
-  combat: CombatState,
+  combat: ClashState,
   content: TaleContent,
 ): CombatVm {
+  const enemyId = state.encounter?.enemyId ?? "";
   const enemy: EnemyDef | undefined = content.enemies.find(
-    (candidate) => candidate.id === combat.enemyId,
+    (candidate) => candidate.id === enemyId,
   );
   const preview = combatPreview(state, content);
   const enemyHpMax = enemy?.hp ?? Math.max(1, combat.enemyHp);
-  const playerHpMax = Math.max(1, state.stats.ti);
+  // [M2-B1] 血上限来自引擎（体 × combatHpPerTi），界面不再把 `stats.ti` 当血上限用
+  const playerHpMax = Math.max(1, preview.playerHpMax);
   const known = preview.intentKnown;
   const recommended = recommendCombatActId(preview);
 
   const bites: CombatActionVm[] = preview.bites.map((bite) => {
     const meta = PART_ACT[bite.part];
     const parts = [`伤 ${damageText(bite.damage)}`];
-    if (bite.rider === "slow") parts.push(`它迟滞 ${bite.riderRounds} 合`);
-    if (bite.rider === "blind") parts.push(`它盲 ${bite.riderRounds} 合`);
+    /*
+     * [M2-B1] 附带那一栏从「它盲 2 合」换成**这一咬留下的第几层伤**。
+     *
+     * 分别不只是措辞：M1-P2 那两句说的是「买两个回合」，而现在说的是「这条线经营到哪一步」。
+     * 满了就明说满了 —— 那正是「该换回收官」的信号（没有它，玩家会一直咬同一处）。
+     */
+    if (bite.woundLands) parts.push(`${WOUND_ZI[bite.part]}伤 ${bite.woundStacks} → ${bite.woundStacks + 1}`);
+    else if (bite.woundStacks > 0) parts.push(`${WOUND_ZI[bite.part]}伤已满 ${bite.woundStacks}`);
+    parts.push(`势 +${bite.momentumGain}`);
     /*
      * 受伤那一栏只在读得出意图时给数 —— 给了就等于把意图告诉玩家（0 ＝ 它在守或要走）。
      * 读不出时改说定性的那半句，仍然有用：「它会看不见你」这件事与意图无关。
@@ -292,15 +309,17 @@ export function buildCombatVm(
       glyph: meta.glyph,
       label: meta.label,
       effect: parts.join(" · "),
-      warning: bite.stopsFlee
-        ? "拦住它 —— 不然这顿肉就没了。"
-        : bite.guarded
-          ? `它正护着${BODY_PART_NAMES[bite.part]}：伤减半${
-              bite.counterChance > 0
-                ? `，${chanceCn(bite.counterChance)}会被反咬（${damageText(bite.counterDamage)}）`
-                : ""
-            }`
-          : null,
+      warning: bite.weakPoint
+        ? `破绽在此：伤 ×1.6，护也护不住。`
+        : bite.stopsFlee
+          ? "拦住它 —— 不然这顿肉就没了。"
+          : bite.guarded
+            ? `它正护着${BODY_PART_NAMES[bite.part]}：伤减半${
+                bite.counterChance > 0
+                  ? `，${chanceCn(bite.counterChance)}会被反咬（${damageText(bite.counterDamage)}）`
+                  : ""
+              }`
+            : null,
       highlight: recommended === `bite:${bite.part}`,
       enabled: true,
       disabledReason: null,
@@ -309,6 +328,29 @@ export function buildCombatVm(
       flavor: null,
     };
   });
+
+  /*
+   * [M2-B1] 决杀：势的兑现按钮。**攒不够时照样出按钮**（灰着，写明还差几点）——
+   * 一个看不见的目标不会有人去攒，而这一颗正是「出招节奏」这件事在屏幕上的样子。
+   */
+  const finisherVm: CombatActionVm = {
+    id: "finisher",
+    act: { kind: "finisher" },
+    glyph: "决",
+    label: "决杀",
+    effect: preview.finisher.ready
+      ? `伤 ${damageText(preview.finisher.damage)} · 耗尽全部势（${preview.finisher.momentumCost}）· 无视守备`
+      : `攒够 ${preview.finisher.momentumNeeded} 点势可发 · 势越多这一记越重 · 无视守备`,
+    warning: preview.finisher.ready ? "发完从零攒起。" : null,
+    highlight: recommended === "finisher",
+    enabled: preview.finisher.ready,
+    disabledReason: preview.finisher.ready
+      ? null
+      : `还差 ${preview.finisher.momentumNeeded - preview.momentum} 点势`,
+    group: "finisher",
+    synergy: false,
+    flavor: null,
+  };
 
   /*
    * 当前姿态**不出按钮**：换成已在的姿态只是白费一回合，引擎那边直接抛错。
@@ -355,14 +397,20 @@ export function buildCombatVm(
     flavor: skill.synergyId === null ? null : skill.desc,
     highlight: recommended === `skill:${skill.skillId}`,
     enabled: skill.ready,
+    /*
+     * 不可用的**原因**三选一，顺序按「多快能解决」排：冷却（下一合就好）→ 势（打几合就攒到）
+     * → 精气／血（这一架里等不到，得先去猎）。三者对玩家的下一步是完全不同的指示。
+     */
     disabledReason:
       skill.cooldownLeft > 0
         ? `还需 ${skill.cooldownLeft} 合`
-        : skill.affordable || !skill.cost
-          ? null
-          : skill.cost.kind === "hp"
-            ? `血不够（需 ${skill.cost.amount}）`
-            : `${ESSENCE_LABELS[skill.cost.type]}精气不足（需 ${skill.cost.amount}）`,
+        : !skill.hasMomentum
+          ? `势不足（需 ${skill.momentumCost}）`
+          : skill.affordable || !skill.cost
+            ? null
+            : skill.cost.kind === "hp"
+              ? `血不够（需 ${skill.cost.amount}）`
+              : `${ESSENCE_LABELS[skill.cost.type]}精气不足（需 ${skill.cost.amount}）`,
     group: "skill",
     synergy: skill.synergyId !== null,
   }));
@@ -383,6 +431,7 @@ export function buildCombatVm(
   };
 
   const marks: string[] = [];
+  if (preview.stageName) marks.push(preview.stageName);
   if (preview.blind > 0) marks.push(`它半盲 ${preview.blind} 合`);
   if (preview.slow > 0) marks.push(`它迟滞 ${preview.slow} 合`);
   if (preview.ward > 0) marks.push(`护体 ${preview.ward} 合`);
@@ -402,7 +451,7 @@ export function buildCombatVm(
     : null;
 
   return {
-    enemyName: enemy?.name ?? combat.enemyId,
+    enemyName: enemy?.name ?? enemyId,
     enemyDesc: enemy?.desc ?? "",
     enemyTags: enemy?.tags ?? [],
     enemyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
@@ -429,7 +478,7 @@ export function buildCombatVm(
     marks,
     outlook: `还撑得住约 ${preview.roundsToLive} 合 · 它还需 ${preview.roundsToKill} 下`,
     outlookHot: preview.roundsToLive <= 2,
-    log: combat.log,
-    actions: [...bites, ...stances, ...skills, flee],
+    log: state.encounter?.log ?? [],
+    actions: [...bites, finisherVm, ...stances, ...skills, flee],
   };
 }

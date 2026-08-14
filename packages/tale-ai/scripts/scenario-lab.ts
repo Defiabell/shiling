@@ -42,6 +42,8 @@ import {
   type TaleContent,
   type TaleEvent,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "@shiling/tale-sim";
 import { SEED_CHANG_TAI, TALE_CONTENT } from "@shiling/tale-content";
 import {
@@ -99,7 +101,7 @@ function decideAction(state: TaleState, actions: readonly ActionId[], roll: () =
 
 function decideStalk(state: TaleState, content: TaleContent): StalkAct {
   const preview = stalkPreview(state, content);
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   if (!stalk) throw new Error("decideStalk: 不在追猎中");
   if (preview.staminaLeft <= 1) return "pounce";
   if (!preview.alreadyUpwind && preview.staminaLeft >= 4) return "circle";
@@ -127,11 +129,11 @@ function playLife(seed: number, content: TaleContent): { state: TaleState; seen:
   let steps = 0;
   while (state.alive && steps < MAX_STEPS) {
     steps += 1;
-    if (state.combat) {
+    if (clashOf(state)) {
       state = combatAct(state, decideCombat(state, content), content).state;
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       state = stalkAct(state, decideStalk(state, content), content).state;
       continue;
     }

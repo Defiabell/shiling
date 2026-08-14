@@ -7,7 +7,7 @@
  * 纪律（引擎 JSDoc 明写、这里逐条落实）：
  * - 拿到非 null 的 `pendingEvent` 必须先 `resolveChoice` 再进下一回合 → `pendingEvent`
  *   非空时行动面板整体禁用。
- * - 战斗日志自己累加 → `over` 非 null 那一刻 `state.combat` 已是 null，末轮日志只能从
+ * - 战斗日志自己累加 → `over` 非 null 那一刻 `clashOf(state)` 已是 null，末轮日志只能从
  *   `CombatTurn.roundLog` 拿。
  * - 演出播放期间 `busy` 为真、所有按钮禁用 → 防连点把上面两条打穿。
  */
@@ -32,6 +32,8 @@ import {
   type TaleState,
   type TreasureDef,
   type WayId,
+  approachOf,
+  clashOf,
 } from "@shiling/tale-sim";
 
 import { CONTENT, USING_FIXTURE_CONTENT, clearInjectedEvents, injectedEvents, setInjectedEvents } from "./content.js";
@@ -62,6 +64,7 @@ import {
 } from "./ai/scenario.js";
 import type { HistorianResult } from "@shiling/tale-ai";
 import { buildStalkVm, type StalkActId } from "./model/stalkVm.js";
+import { buildEncounterChromeVm } from "./model/encounterVm.js";
 import { buildStatusVm } from "./model/statusVm.js";
 import { createFloaterHost, spawnFloaters } from "./fx/floaters.js";
 import { playCinematic } from "./fx/cinematic.js";
@@ -555,7 +558,7 @@ export class TaleApp {
    */
   async doAction(action: ActionId, options?: ActionOptions): Promise<void> {
     const prev = this.state;
-    if (!prev || this.busy || this.pendingEvent || prev.combat || !prev.alive) return;
+    if (!prev || this.busy || this.pendingEvent || clashOf(prev) || !prev.alive) return;
     this.busy = true;
 
     const result = performAction(prev, action, CONTENT, options);
@@ -578,16 +581,10 @@ export class TaleApp {
         key: `event:${result.pendingEvent.id}:${next.rngState}`,
         card,
       };
-    } else if (next.stalk) {
-      // 起追：这一季**尚未收束**（引擎把季推进推迟到追猎的终局），所以这里不放 continue 按钮，
-      // 也不能再走 doAction —— 屏幕切到追猎全屏，下一步只能是 doStalk。
-      this.center = {
-        kind: "stalk",
-        key: `stalk:${next.stalk.preyId}:${next.rngState}`,
-        stalk: buildStalkVm(next, next.stalk, CONTENT),
-      };
-    } else if (next.combat) {
-      this.center = { kind: "combat", key: `combat:${next.combat.enemyId}`, combat: buildCombatVm(next, next.combat, CONTENT) };
+    } else if (this.encounterCenter(next)) {
+      // 起追：这一季**尚未收束**（引擎把季推进推迟到接近阶段的终局），所以这里不放 continue
+      // 按钮，也不能再走 doAction —— 屏幕切到遭遇全屏，下一步只能是 doStalk／doCombat。
+      this.center = this.encounterCenter(next)!;
     } else {
       this.center = {
         kind: "narration",
@@ -601,7 +598,7 @@ export class TaleApp {
 
     this.renderPlayScreen();
     // 起追那一步季还没推进，没有季耗可忽略（追猎的季耗记在收束那一步的 doStalk 里）
-    this.showDelta(prev, next, next.stalk ? 0 : seasonHungerCost(prev));
+    this.showDelta(prev, next, approachOf(next) ? 0 : seasonHungerCost(prev));
 
     if (result.moltResult) await playMoltReveal(this.overlayHost, result.moltResult, CONTENT);
     // 异变排在蜕变开奖**之后**：先看清蜕出了什么，再看它与身上旧器官凑出了什么
@@ -638,7 +635,7 @@ export class TaleApp {
       title: event.title,
       lines: [result.outcomeText, ...dying],
       media: event.illustration ? { kind: "image", src: eventArt(event.illustration) } : null,
-      continueLabel: !next.alive ? this.closeLabel() : next.combat ? "迎　敌" : null,
+      continueLabel: !next.alive ? this.closeLabel() : clashOf(next) ? "迎　敌" : null,
     };
 
     this.renderPlayScreen();
@@ -724,9 +721,37 @@ export class TaleApp {
    * 非 null 时才把季耗算进「该忽略的饱食下降」，否则那 −12 会在追猎中途飘出来一次
    * —— 玩家会以为潜行本身在消耗饱食。
    */
+
+  /**
+   * [M2-B1] 造遭遇屏的 center —— **两个阶段唯一的入口**。
+   *
+   * 公共外壳与阶段中段在同一处组装，于是「接近转交锋」在界面上只是 `body` 换了一支，
+   * 头、势条、伤牌、四相盘、日志都原样留在屏幕上。M1 那两处各自造 center 的写法
+   * 会让这两块屏各自漂移（P2 报告的遗留 5 是同一类毛病）。
+   */
+  private encounterCenter(state: TaleState): CenterVm | null {
+    const approach = approachOf(state);
+    const clash = clashOf(state);
+    if (!state.encounter || (!approach && !clash)) return null;
+    const chrome = buildEncounterChromeVm(state, CONTENT);
+    return approach
+      ? {
+          kind: "encounter",
+          key: `enc:${state.encounter.enemyId}:approach:${state.rngState}`,
+          chrome,
+          body: { kind: "approach", stalk: buildStalkVm(state, approach, CONTENT) },
+        }
+      : {
+          kind: "encounter",
+          key: `enc:${state.encounter.enemyId}:clash`,
+          chrome,
+          body: { kind: "clash", combat: buildCombatVm(state, clash!, CONTENT) },
+        };
+  }
+
   async doStalk(act: StalkActId): Promise<void> {
     const prev = this.state;
-    if (!prev || !prev.stalk || this.busy || !prev.alive) return;
+    if (!prev || !approachOf(prev) || this.busy || !prev.alive) return;
     this.busy = true;
 
     const turn = stalkAct(prev, act, CONTENT);
@@ -738,12 +763,13 @@ export class TaleApp {
       ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
 
-    if (turn.over === null && next.stalk) {
-      this.center = {
-        kind: "stalk",
-        key: `stalk:${next.stalk.preyId}:${next.rngState}`,
-        stalk: buildStalkVm(next, next.stalk, CONTENT),
-      };
+    /*
+     * [M2-B1] `over === "combat"` 不再是「另起一场」：同一个遭遇的 `phase` 换成了 clash，
+     * 所以这里**照样是遭遇屏**（换的只有中段）—— 玩家不必按一次「迎敌」才看到对手，
+     * 而刚刚那四息的日志、势与部位伤都还在原地。
+     */
+    if (this.encounterCenter(next)) {
+      this.center = this.encounterCenter(next)!;
     } else {
       const title = STALK_END_TITLES[turn.over ?? "escaped"];
       this.center = {
@@ -752,7 +778,7 @@ export class TaleApp {
         title,
         lines: [...turn.roundLog, ...dying],
         media: null,
-        continueLabel: !next.alive ? this.closeLabel() : next.combat ? "迎　敌" : null,
+        continueLabel: !next.alive ? this.closeLabel() : null,
       };
     }
 
@@ -764,7 +790,7 @@ export class TaleApp {
 
   async doCombat(act: CombatAct): Promise<void> {
     const prev = this.state;
-    if (!prev || !prev.combat || this.busy || !prev.alive) return;
+    if (!prev || !clashOf(prev) || this.busy || !prev.alive) return;
     this.busy = true;
 
     const turn = combatAct(prev, act, CONTENT);
@@ -776,12 +802,8 @@ export class TaleApp {
       ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
 
-    if (turn.over === null && next.combat) {
-      this.center = {
-        kind: "combat",
-        key: `combat:${next.combat.enemyId}`,
-        combat: buildCombatVm(next, next.combat, CONTENT),
-      };
+    if (turn.over === null && this.encounterCenter(next)) {
+      this.center = this.encounterCenter(next)!;
     } else {
       const title = COMBAT_END_TITLES[turn.over ?? "dead"];
       this.center = {
@@ -807,12 +829,9 @@ export class TaleApp {
       await this.endLife();
       return;
     }
-    if (state.combat) {
-      this.center = {
-        kind: "combat",
-        key: `combat:${state.combat.enemyId}`,
-        combat: buildCombatVm(state, state.combat, CONTENT),
-      };
+    const encounter = this.encounterCenter(state);
+    if (encounter) {
+      this.center = encounter;
       this.renderPlayScreen();
     }
   }
@@ -978,7 +997,7 @@ export class TaleApp {
     if (!state) return;
     const status = buildStatusVm(state, CONTENT, this.wayTab);
     // 进两个战术全屏时主动收掉详情：那两屏的按钮在右下角，浮层压上去等于挡住操作
-    if (this.center.kind === "stalk" || this.center.kind === "combat") this.detail = null;
+    if (this.center.kind === "encounter") this.detail = null;
     const detail = this.detail === null ? null : buildDetailVm(state, CONTENT, this.detail);
     this.swap(
       renderPlay({
@@ -1124,13 +1143,13 @@ export class TaleApp {
      */
     const digit = event.key === "0" ? 10 : Number.parseInt(event.key, 10);
     if (Number.isInteger(digit) && digit >= 1 && digit <= 10) {
-      if (this.center.kind === "combat" || this.center.kind === "stalk" || this.center.kind === "event") {
+      if (this.center.kind === "encounter" || this.center.kind === "event") {
         const selector =
-          this.center.kind === "combat"
-            ? `[data-combat]`
-            : this.center.kind === "stalk"
-              ? `[data-stalk]`
-              : `[data-choice]`;
+          this.center.kind === "event"
+            ? `[data-choice]`
+            : this.center.body.kind === "clash"
+              ? `[data-combat]`
+              : `[data-stalk]`;
         const buttons = this.screenHost.querySelectorAll<HTMLButtonElement>(selector);
         const button = buttons[digit - 1];
         if (button && !button.disabled) {

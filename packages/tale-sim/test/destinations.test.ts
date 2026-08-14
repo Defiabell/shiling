@@ -23,6 +23,7 @@ import {
   type TaleContent,
   type TaleEvent,
   type TaleState,
+  clashOf,
 } from "../src/index.js";
 import {
   DEST_FAR,
@@ -167,13 +168,13 @@ describe("遇袭：本季没撞上事才掷，且只摇此地的兽", () => {
 
   it("此地无兽 → 一次都不遇袭（连概率骰都不掷）", () => {
     const after = performAction(life(AMBUSH), "explore", AMBUSH, NEAR);
-    expect(after.state.combat).toBeNull();
+    expect(clashOf(after.state)).toBeNull();
   });
 
   it("此地有兽 ＋ 概率拉满 → 当场开战，且对手来自该处的 denizens", () => {
     const swift = withOrgans(life(AMBUSH), ORGAN_JI_ZU);
     const after = performAction(swift, "explore", AMBUSH, { destinationId: DEST_FAR });
-    expect(after.state.combat?.enemyId).toBe("qiong-qi-you");
+    expect(after.state.encounter?.enemyId).toBe("qiong-qi-you");
     expect(after.notices.join("")).toContain("远地");
     expect(after.notices.join("")).toContain("穷奇幼崽");
   });
@@ -214,7 +215,7 @@ describe("遇袭：本季没撞上事才掷，且只摇此地的兽", () => {
     for (let seed = 0; seed < 200; seed += 1) {
       const swift = withOrgans(life(TWO, seed * 7919 + 13), ORGAN_JI_ZU);
       const enemyId = performAction(swift, "explore", TWO, { destinationId: DEST_FAR })
-        .state.combat?.enemyId;
+        .state.encounter?.enemyId;
       if (enemyId) counts.set(enemyId, (counts.get(enemyId) ?? 0) + 1);
     }
     const heavy = counts.get(ENEMY_QIONG_QI) ?? 0;
@@ -245,7 +246,7 @@ describe("遇袭：本季没撞上事才掷，且只摇此地的兽", () => {
     const swift = withOrgans(life(both), ORGAN_JI_ZU);
     const turn = performAction(swift, "explore", both, { destinationId: DEST_FAR });
     expect(turn.pendingEvent).not.toBeNull();
-    expect(turn.state.combat).toBeNull();
+    expect(clashOf(turn.state)).toBeNull();
   });
 });
 

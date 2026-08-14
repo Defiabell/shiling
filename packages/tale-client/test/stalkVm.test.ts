@@ -11,9 +11,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { createLife, performAction, stalkAct, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import { approachOf, createLife, performAction, stalkAct, type TaleContent, type TaleState } from "@shiling/tale-sim";
 import { TALE_CONTENT, ORGAN_YE_TONG, SEED_CHANG_TAI } from "@shiling/tale-content";
 import { buildStalkVm } from "../src/model/stalkVm.js";
+
+/** [M2-B1] 改接近阶段的某几个量（接近状态住在遭遇外壳里，各处手写会漏掉外壳）。 */
+function withApproach(state: TaleState, patch: Partial<NonNullable<TaleState["encounter"]>["approach"]>): TaleState {
+  const encounter = state.encounter;
+  if (!encounter?.approach) throw new Error("withApproach: 不在接近阶段");
+  return { ...state, encounter: { ...encounter, approach: { ...encounter.approach, ...patch } } };
+}
 
 const CONTENT: TaleContent = { ...TALE_CONTENT, tuning: { ...TALE_CONTENT.tuning, eventChanceBase: 0 } };
 
@@ -23,13 +30,14 @@ function stalkState(seed = 20260812, organIds: readonly string[] = []): TaleStat
   const withOrgans =
     organIds.length > 0 ? { ...born, organIds: [...born.organIds, ...organIds] } : born;
   const state = performAction(withOrgans, "hunt", CONTENT).state;
-  if (!state.stalk) throw new Error("stalkState: 这一季没起追（种子不合适）");
+  if (!approachOf(state)) throw new Error("stalkState: 这一季没起追（种子不合适）");
   return state;
 }
 
 function vmOf(state: TaleState) {
-  if (!state.stalk) throw new Error("vmOf: 不在追猎中");
-  return buildStalkVm(state, state.stalk, CONTENT);
+  const approach = approachOf(state);
+  if (!approach) throw new Error("vmOf: 不在接近阶段");
+  return buildStalkVm(state, approach, CONTENT);
 }
 
 function actionOf(state: TaleState, id: "creep" | "circle" | "wait" | "pounce") {
@@ -62,13 +70,13 @@ describe("四量可视化", () => {
     let state = stalkState();
     const before = vmOf(state).closeness;
     state = stalkAct(state, "creep", CONTENT).state;
-    if (!state.stalk) return; // 起手就收束的极端种子跳过
+    if (!approachOf(state)) return; // 起手就收束的极端种子跳过
     expect(vmOf(state).closeness).toBeGreaterThan(before);
   });
 
   it("体力剩一动时转告急并明说后果", () => {
     const state = stalkState();
-    const low: TaleState = { ...state, stalk: { ...state.stalk!, stamina: 1 } };
+    const low: TaleState = withApproach(state, { stamina: 1 });
     const vm = vmOf(low);
     expect(vm.stamina.hot).toBe(true);
     expect(vm.stamina.band).toBe("将尽");
@@ -167,7 +175,7 @@ describe("精确值 vs 模糊档位（器官 tag 决定信息精度）", () => {
 
   it("读得出风向且已在上风时，绕行明说是白费", () => {
     const seer = stalkState(20260812, [ORGAN_YE_TONG]);
-    const upwind: TaleState = { ...seer, stalk: { ...seer.stalk!, wind: "into" } };
+    const upwind: TaleState = withApproach(seer, { wind: "into" });
     const circle = actionOf(upwind, "circle");
     expect(circle.highlight).toBe(false);
     expect(circle.warning).toContain("白费");
@@ -177,7 +185,7 @@ describe("精确值 vs 模糊档位（器官 tag 决定信息精度）", () => {
 describe("警告", () => {
   it("必失手时明确警告（不是让玩家从 2% 里自己悟）", () => {
     const state = stalkState();
-    const far: TaleState = { ...state, stalk: { ...state.stalk!, distance: 40, alertness: 90 } };
+    const far: TaleState = withApproach(state, { distance: 40, alertness: 90 });
     const vm = vmOf(far);
     expect(vm.pounceHopeless).toBe(true);
     const pounce = vm.actions.find((action) => action.id === "pounce");
@@ -194,11 +202,11 @@ describe("警告", () => {
       } catch {
         continue;
       }
-      if (state.stalk?.preyId !== "yan-yang") continue;
+      if (state.encounter?.enemyId !== "yan-yang") continue;
       // 常驻标记：远距离时扑击按钮的警告位被「几乎必空」占着，所以这件事挂在名号旁边
       expect(vmOf(state).preyBadge).toBe("会反扑");
       // 逼到近处后，扑击按钮自己也要把赌注写出来
-      const close: TaleState = { ...state, stalk: { ...state.stalk, distance: 0, alertness: 10 } };
+      const close: TaleState = withApproach(state, { distance: 0, alertness: 10 });
       expect(actionOf(close, "pounce").warning).toContain("硬仗");
       return;
     }
@@ -207,13 +215,13 @@ describe("警告", () => {
 
   it("顺风逼近时潜行按钮警告翻倍（前提是看得见风）", () => {
     const seer = stalkState(20260812, [ORGAN_YE_TONG]);
-    const downwind: TaleState = { ...seer, stalk: { ...seer.stalk!, wind: "with" } };
+    const downwind: TaleState = withApproach(seer, { wind: "with" });
     expect(actionOf(downwind, "creep").warning).toContain("翻倍");
   });
 
   it("贴身后潜行无益时明说，且不再发金光", () => {
     const state = stalkState();
-    const point: TaleState = { ...state, stalk: { ...state.stalk!, distance: 0 } };
+    const point: TaleState = withApproach(state, { distance: 0 });
     const creep = actionOf(point, "creep");
     expect(creep.warning).toContain("再近无益");
     expect(creep.highlight).toBe(false);
@@ -222,7 +230,7 @@ describe("警告", () => {
 
   it("警觉已经归零时屏息明说是白耗", () => {
     const state = stalkState();
-    const calm: TaleState = { ...state, stalk: { ...state.stalk!, alertness: 0 } };
+    const calm: TaleState = withApproach(state, { alertness: 0 });
     expect(actionOf(calm, "wait").warning).toContain("白耗");
   });
 });
@@ -237,7 +245,7 @@ describe("纪律", () => {
 
   it("猎物名与描述取自内容库，不是界面自己写的字符串", () => {
     const state = stalkState();
-    const prey = CONTENT.enemies.find((enemy) => enemy.id === state.stalk?.preyId);
+    const prey = CONTENT.enemies.find((enemy) => enemy.id === state.encounter?.enemyId);
     const vm = vmOf(state);
     expect(vm.preyName).toBe(prey?.name);
     expect(vm.preyDesc).toBe(prey?.desc);
@@ -245,7 +253,7 @@ describe("纪律", () => {
 
   it("log 直接来自引擎（界面不改写旁白）", () => {
     const state = stalkState();
-    expect(vmOf(state).log).toEqual(state.stalk?.log);
+    expect(vmOf(state).log).toEqual(state.encounter?.log);
   });
 });
 
@@ -261,8 +269,8 @@ describe("[S3] 已参透的异兽：读数从档位换成确数", () => {
   function pair(seed = 20260812) {
     const born = createLife(seed, SEED_CHANG_TAI, CONTENT);
     const blind = performAction(born, "hunt", CONTENT).state;
-    if (!blind.stalk) throw new Error("这一季没起追");
-    const preyId = blind.stalk.preyId;
+    if (!approachOf(blind)) throw new Error("这一季没起追");
+    const preyId = blind.encounter!.enemyId;
     const knownBorn = createLife(seed, SEED_CHANG_TAI, CONTENT, { loreEnemyIds: [preyId] });
     const known = performAction(knownBorn, "hunt", CONTENT).state;
     return { blind, known, preyId };
@@ -270,7 +278,7 @@ describe("[S3] 已参透的异兽：读数从档位换成确数", () => {
 
   it("同一头猎物：未识只有档位，已识给确数（且两屏的猎物真是同一头）", () => {
     const { blind, known, preyId } = pair();
-    expect(known.stalk?.preyId).toBe(preyId);
+    expect(known.encounter?.enemyId).toBe(preyId);
 
     const dim = vmOf(blind);
     const lit = vmOf(known);
@@ -278,7 +286,7 @@ describe("[S3] 已参透的异兽：读数从档位换成确数", () => {
     expect(lit.alert.exact).toBe(true);
     // 警觉那一格：档位 vs 确数
     expect(dim.alert.hint).toContain("大概");
-    expect(lit.alert.hint).toContain(`警觉 ${known.stalk!.alertness}`);
+    expect(lit.alert.hint).toContain(`警觉 ${approachOf(known)!.alertness}`);
     // 命中率那一行：七档汉字 vs 汉字成数
     expect(dim.pounceLabel).not.toContain("成");
     expect(lit.pounceLabel).toContain("成");
@@ -299,7 +307,8 @@ describe("[S3] 已参透的异兽：读数从档位换成确数", () => {
   it("参透的是别的兽 → 这一头照旧读不出（不是「买一送全部」）", () => {
     const born = createLife(20260812, SEED_CHANG_TAI, CONTENT, { loreEnemyIds: ["qiong-qi-you"] });
     const state = performAction(born, "hunt", CONTENT).state;
-    if (!state.stalk || state.stalk.preyId === "qiong-qi-you") return;
-    expect(buildStalkVm(state, state.stalk, CONTENT).alert.exact).toBe(false);
+    const approach = approachOf(state);
+    if (!approach || state.encounter?.enemyId === "qiong-qi-you") return;
+    expect(buildStalkVm(state, approach, CONTENT).alert.exact).toBe(false);
   });
 });

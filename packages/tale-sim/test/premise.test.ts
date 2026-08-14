@@ -34,6 +34,7 @@ import {
   type TaleContent,
   type TaleEvent,
   type TaleState,
+  approachOf,
 } from "../src/index.js";
 import {
   ALWAYS_POUNCE,
@@ -180,9 +181,9 @@ describe("lifeTuning：调参覆写真的落在结算上", () => {
       "hunt",
       plainNoJitter,
     ).state;
-    expect(a.stalk).not.toBeNull();
-    expect(b.stalk).not.toBeNull();
-    expect((a.stalk?.alertness ?? 0) - (b.stalk?.alertness ?? 0)).toBe(8);
+    expect(approachOf(a)).not.toBeNull();
+    expect(approachOf(b)).not.toBeNull();
+    expect((approachOf(a)?.alertness ?? 0) - (approachOf(b)?.alertness ?? 0)).toBe(8);
   });
 
   it("`combatWinEssenceMul` 覆写让杀获更厚", () => {
@@ -288,7 +289,7 @@ describe("livesTaken：三个来源都要记", () => {
       "hunt",
       content,
     ).state;
-    expect(started.stalk).not.toBeNull();
+    expect(approachOf(started)).not.toBeNull();
     const caught = stalkAct(started, "pounce", content);
     expect(caught.over).toBe("caught");
     expect(caught.state.livesTaken).toBe(1);

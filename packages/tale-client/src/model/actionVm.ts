@@ -38,6 +38,7 @@ import {
   type ActionId,
   type TaleContent,
   type TaleState,
+  clashOf,
 } from "@shiling/tale-sim";
 import { moltPreviewText } from "./detailVm.js";
 import { chanceCn } from "./format.js";
@@ -129,7 +130,7 @@ export function buildActionVms(state: TaleState, content: TaleContent): ActionBu
       // 结果精气已满却在打架时，按钮会写「尚需足之精气 0」——一句自相矛盾的废话。
       if (!state.alive) {
         disabledReason = "已　殁";
-      } else if (state.combat) {
+      } else if (clashOf(state)) {
         disabledReason = "战事未了";
       } else if (id === "dormant") {
         // 差多少 ＋ **攒它干什么** ＋ **怎么攒**：按钮禁用时 hint 被 disabledReason 顶掉，

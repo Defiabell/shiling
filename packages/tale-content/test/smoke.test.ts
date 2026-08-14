@@ -48,6 +48,8 @@ import {
   type EndingType,
   type TaleEvent,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "@shiling/tale-sim";
 import { EVENTS, FLAG_MERCY, FLAG_SICK, FLAG_WOUND, SEED_CHANG_TAI, TALE_CONTENT } from "../src/index.js";
 
@@ -217,11 +219,11 @@ function runLife(seed: number): LifeSummary {
 
   while (state.alive && steps < MAX_STEPS) {
     steps += 1;
-    if (state.combat) {
+    if (clashOf(state)) {
       state = combatAct(state, decideCombat(state), CONTENT).state;
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       state = stalkAct(state, decideStalk(state), CONTENT).state;
       continue;
     }

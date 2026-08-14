@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { quickHuntPreview } from "@shiling/tale-sim";
 import { actionOfButton, buildActionVms } from "../src/model/actionVm.js";
-import { FIXTURE_CONTENT, combatState, newState, withPatch } from "./helpers.js";
+import { FIXTURE_CONTENT, fightingState, newState, withPatch } from "./helpers.js";
 
 const T = FIXTURE_CONTENT.tuning;
 
@@ -35,9 +35,7 @@ describe("buildActionVms", () => {
 
   it("战斗中四颗全灰，理由一律是「战事未了」", () => {
     const base = newState();
-    const state = withPatch(base, {
-      combat: combatState({ log: [] }),
-    });
+    const state = fightingState(base);
     const vms = buildActionVms(state, FIXTURE_CONTENT);
     expect(vms.every((vm) => !vm.enabled)).toBe(true);
     expect(vms.map((vm) => vm.disabledReason)).toEqual([
@@ -50,10 +48,9 @@ describe("buildActionVms", () => {
 
   it("精气已满却在打架时，蛰伏说「战事未了」而不是「尚需…0」", () => {
     const base = newState();
-    const state = withPatch(base, {
-      essence: { zu: T.moltThreshold + 5, lin: 0, xue: 0, meng: 0 },
-      combat: combatState({ log: [] }),
-    });
+    const state = fightingState(
+      withPatch(base, { essence: { zu: T.moltThreshold + 5, lin: 0, xue: 0, meng: 0 } }),
+    );
     const dormant = buildActionVms(state, FIXTURE_CONTENT)[3]!;
     expect(dormant.enabled).toBe(false);
     expect(dormant.highlight).toBe(false);

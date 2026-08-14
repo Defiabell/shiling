@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { DESTINATIONS, TALE_CONTENT } from "@shiling/tale-content";
 import { buildDestinationVms, destinationCaption, PERIL_LABELS } from "../src/model/destinationVm.js";
-import { combatState, realState, withPatch } from "./helpers.js";
+import { fightingState, realState, withPatch } from "./helpers.js";
 
 const CONTENT = TALE_CONTENT;
 
@@ -142,7 +142,7 @@ describe("buildDestinationVms", () => {
       // 后果照写 —— 原因不许顶掉它
       expect(vm.chanceLine.length, vm.id).toBeGreaterThan(0);
     }
-    const fighting = withPatch(realState(), { combat: combatState({ log: [] }) });
+    const fighting = fightingState(realState());
     for (const vm of buildDestinationVms(fighting, CONTENT)) {
       expect(vm.enabled, vm.id).toBe(false);
       expect(vm.disabledReason, vm.id).toBe("战事未了");

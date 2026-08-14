@@ -27,6 +27,8 @@
 
 import {
   WAY_ORDER,
+  approachOf,
+  clashOf,
   availableActions,
   bloodlineGain,
   lifeTuning,
@@ -351,6 +353,17 @@ interface LifeSummary {
   /** 追猎场次与得手数（M1-P1 的核心手感指标） */
   hunts: number;
   caught: number;
+  /**
+   * [M2-B1] 遭遇账：**这一批交付线里那三个问题**（一场架几合？一世打几场？点击涨了多少？）
+   * 只有落成数才答得上来。
+   *
+   * - `encounters` ＝ 起了几场遭遇（三条来路合计：起追／遇袭／事件冲突）；
+   * - `clashes` ＝ 其中有几场进了交锋阶段；
+   * - `clashRounds` ＝ 每一场交锋各打了几合（分布，用来报中位与 p90）。
+   */
+  encounters: number;
+  clashes: number;
+  clashRounds: number[];
   /** [2026-08-13] 死时四条道各自达成了几条门槛／是否够格／是否已闭 */
   wayMet: Record<WayId, number>;
   /** 逐条门槛是否达成：`"shen.ling"` → true。调门槛时唯一有用的那一列 */
@@ -564,7 +577,7 @@ function asSeen(p: ReturnType<typeof stalkPreview>): ReturnType<typeof stalkPrev
 
 function decideStalk(state: TaleState, plan: StalkPlan): StalkAct {
   const p = asSeen(stalkPreview(state, CONTENT));
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   if (!stalk) throw new Error("decideStalk: 不在追猎中");
   // 只剩最后一动：不扑就是空手而归
   if (p.staminaLeft <= 1) return "pounce";
@@ -657,7 +670,7 @@ function decideCombatPlan(state: TaleState, plan: CombatPlan): CombatAct {
 }
 
 function decideCombat(state: TaleState): CombatAct {
-  if (!state.combat) throw new Error("decideCombat: 不在战斗中");
+  if (!clashOf(state)) throw new Error("decideCombat: 不在战斗中");
   return decideCombatPlan(state, COMBAT_PLAN);
 }
 
@@ -732,18 +745,34 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   const actionMix: Record<string, number> = {};
   let hunts = 0;
   let caught = 0;
+  // [M2-B1] 遭遇账：靠「这一步之前没有遭遇、之后有了」这个差分来数，不靠猜
+  let encounters = 0;
+  let clashes = 0;
+  const clashRounds: number[] = [];
+  let roundsThisClash = 0;
+  let inClash = false;
   const chars: CharCount = { prose: 0, options: 0, chronicle: 0 };
 
   while (state.alive && steps < MAX_STEPS) {
     steps += 1;
-    if (state.combat) {
+    if (clashOf(state)) {
+      if (!inClash) {
+        inClash = true;
+        clashes += 1;
+        roundsThisClash = 0;
+      }
       decisions.combat += 1;
+      roundsThisClash += 1;
       const round = combatAct(state, decideCombat(state), CONTENT);
       chars.prose += round.roundLog.join("").length;
       state = round.state;
+      if (round.over !== null) {
+        clashRounds.push(roundsThisClash);
+        inClash = false;
+      }
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       decisions.stalk += 1;
       const step = stalkAct(state, decideStalk(state, STALK_PLAN), CONTENT);
       chars.prose += step.roundLog.join("").length;
@@ -765,6 +794,7 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     const huntMode = action === "hunt" ? decideHuntMode(state) : null;
     actionMix[huntMode === "quick" ? "hunt:quick" : action] =
       (actionMix[huntMode === "quick" ? "hunt:quick" : action] ?? 0) + 1;
+    const hadEncounter = state.encounter !== null;
     const turn = performAction(
       state,
       action,
@@ -777,6 +807,7 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     );
     chars.prose += turn.notices.join("").length;
     state = turn.state;
+    if (!hadEncounter && state.encounter !== null) encounters += 1;
     const event = turn.pendingEvent;
     if (!event || !state.alive) continue;
     const eligible = eligibleChoiceIdxs(state, event, CONTENT);
@@ -792,7 +823,9 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
       CONTENT,
     );
     chars.prose += outcome.outcomeText.length;
+    const hadEncounterBefore = state.encounter !== null;
     state = outcome.state;
+    if (!hadEncounterBefore && state.encounter !== null) encounters += 1;
     fired.add(event.id);
   }
 
@@ -812,6 +845,9 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     chars,
     hunts,
     caught,
+    encounters,
+    clashes,
+    clashRounds,
     wayMet: byWay((way) => way.metCount),
     wayGates: Object.fromEntries(
       progress.ways.flatMap((way) => way.gates.map((gate) => [`${way.id}.${gate.id}`, gate.met])),
@@ -903,13 +939,13 @@ function runStalk(seed: number, plan: StalkPlan, organIds: readonly string[]): S
   state = { ...state, hunger: CONTENT.tuning.hungerMax };
   const started = performAction(state, "hunt", CONTENT);
   state = started.state;
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   if (!stalk) return null;
   const wind = stalk.wind;
 
   let acts = 0;
   let pounceChance: number | null = null;
-  while (state.stalk) {
+  while (approachOf(state)) {
     const act = decideStalk(state, plan);
     if (act === "pounce") pounceChance = stalkPreview(state, CONTENT).pounceChance;
     const step = stalkAct(state, act, CONTENT);
@@ -1059,16 +1095,16 @@ function runCombat(
   }
   state = { ...state, hunger: CONTENT.tuning.hungerMax };
   state = resolveChoice(state, LAB_COMBAT_EVENT(enemyId), 0, CONTENT).state;
-  if (!state.combat) return null;
+  if (!clashOf(state)) return null;
   const hpMax = Math.max(1, state.stats.ti);
 
   let rounds = 0;
-  while (state.combat && rounds < 60) {
+  while (clashOf(state) && rounds < 60) {
     const turn = combatAct(state, decideCombatPlan(state, plan), CONTENT);
     rounds += 1;
     state = turn.state;
     if (turn.over !== null) {
-      const hpLeft = turn.over === "dead" ? 0 : Math.max(0, (turn.state.combat?.playerHp ?? 0) / hpMax);
+      const hpLeft = turn.over === "dead" ? 0 : Math.max(0, (clashOf(turn.state)?.playerHp ?? 0) / hpMax);
       // over 非 null 时 combat 已清空，血量只能从上一帧推 —— 用「是否死亡」当代理即可
       return { over: turn.over, rounds, hpLeft: turn.over === "dead" ? 0 : hpLeft };
     }
@@ -1319,6 +1355,25 @@ function main(): number {
         lives.reduce((sum, life) => sum + (life.actionMix["rest"] ?? 0), 0),
         lives.reduce((sum, life) => sum + life.decisions.action, 0),
       ),
+      combatClicks: Math.round(mean(lives.map((life) => life.decisions.combat))),
+    },
+    /**
+     * [M2-B1] 遭遇账 —— B1 交付线第③问「一场架现在多少回合」的可执行答案，
+     * 以及点击对账里「遭遇次数有没有增」那一半。
+     */
+    encounters: {
+      perLife: Math.round(mean(lives.map((life) => life.encounters)) * 10) / 10,
+      clashesPerLife: Math.round(mean(lives.map((life) => life.clashes)) * 10) / 10,
+      roundsMean: Math.round(mean(lives.flatMap((life) => life.clashRounds)) * 10) / 10,
+      roundsMedian: quantile(lives.flatMap((life) => life.clashRounds), 0.5),
+      roundsP10: quantile(lives.flatMap((life) => life.clashRounds), 0.1),
+      roundsP90: quantile(lives.flatMap((life) => life.clashRounds), 0.9),
+      roundsMax: lives.flatMap((life) => life.clashRounds).reduce((a, b) => Math.max(a, b), 0),
+      /** 落在 5〜10 合的那一档占多少（B1 的目标区间） */
+      inBand: pct(
+        lives.flatMap((life) => life.clashRounds).filter((r) => r >= 5 && r <= 10).length,
+        Math.max(1, lives.flatMap((life) => life.clashRounds).length),
+      ),
     },
     eventCoverage: `${fired.size}/${EVENTS.length}`,
     missingEvents: missing,
@@ -1424,6 +1479,11 @@ function main(): number {
     `点击账：一世 ${report.clicks.perLife} 次（行动 ${report.clicks.actionClicks} ＋追猎屏 ${report.clicks.stalkClicks} ＋事件/战斗）　` +
       `狩猎占行动 ${report.clicks.huntShare}%（其中速猎 ${report.clicks.quickShare}%）　休憩占 ${report.clicks.restShare}%　` +
       `进追猎屏 ${report.clicks.stalkEntries} 次/世`,
+  );
+  console.log(
+    `遭遇账：一世 ${report.encounters.perLife} 场（其中进交锋 ${report.encounters.clashesPerLife} 场）　` +
+      `每场 ${report.encounters.roundsMean} 合（p10 ${report.encounters.roundsP10}／中位 ${report.encounters.roundsMedian}／p90 ${report.encounters.roundsP90}／最长 ${report.encounters.roundsMax}）　` +
+      `落在 5〜10 合 ${report.encounters.inBand}%`,
   );
   console.log(
     `一世阅读量：正文 ${report.reading.proseChars} 字 ＋抉择 ${report.reading.optionChars} 字 ＋列传 ${report.reading.chronicleChars} 字；` +

@@ -8,6 +8,7 @@ import {
   resolveChoice,
   type TaleEvent,
   type TaleState,
+  clashOf,
 } from "../src/index.js";
 import {
   ENEMY_QIONG_QI,
@@ -158,10 +159,10 @@ describe("resolveChoice 结算", () => {
 
   it("startCombat 落账为战斗状态", () => {
     const { state } = resolveChoice(life(), THICKET, 0, CONTENT);
-    expect(state.combat?.enemyId).toBe(ENEMY_YE_ZHI);
-    expect(state.combat?.enemyHp).toBe(6);
-    expect(state.combat?.playerHp).toBe(state.stats.ti);
-    expect(state.combat?.log.join("")).toContain("野雉");
+    expect(state.encounter?.enemyId).toBe(ENEMY_YE_ZHI);
+    expect(clashOf(state)?.enemyHp).toBe(6);
+    expect(clashOf(state)?.playerHp).toBe(state.stats.ti);
+    expect(state.encounter?.log.join("")).toContain("野雉");
   });
 
   it("die 落账为对应结局并把 death 记录放末条", () => {
@@ -403,7 +404,7 @@ describe("trigger 匹配", () => {
       ],
     });
     const { state } = resolveChoice(life(), content.events[0]!, 0, content);
-    expect(state.combat?.enemyId).toBe(ENEMY_QIONG_QI);
-    expect(state.combat?.enemyHp).toBe(40);
+    expect(state.encounter?.enemyId).toBe(ENEMY_QIONG_QI);
+    expect(clashOf(state)?.enemyHp).toBe(40);
   });
 });

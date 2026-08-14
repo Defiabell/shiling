@@ -42,6 +42,27 @@ export type WindDir = "into" | "cross" | "with";
 export type StalkAct = "creep" | "circle" | "wait" | "pounce";
 
 /**
+ * [M2-B1] 一场**遭遇**是怎么起的 —— 它决定遭遇从哪个阶段开场、以及起手有多少势。
+ *
+ * 三条来路此前是三条代码路径（`beginStalk`／`rollAmbush`／`applyEffects.startCombat`
+ * 各自摆一套状态），M2-B1 把它们收进同一个 `beginEncounter`：
+ * - `hunt` **我盯上了它** —— 从接近阶段开场（追猎屏），扑中即得手、扑空且它会反扑则转交锋。
+ * - `ambush` **它扑了我** —— 直接进交锋，且起手势要扣 `encounterAmbushMomentumPenalty`
+ *   （被扑个正着的人没有势）。
+ * - `event` **一桩事把两者撞到一处** —— 直接进交锋，起手势按灵性算，谁也不占便宜。
+ */
+export type EncounterOrigin = "hunt" | "ambush" | "event";
+
+/**
+ * [M2-B1] 一场遭遇的两个阶段。
+ *
+ * **不是两个子系统，是一条状态机的两段**：接近（距离／警觉／风向）与交锋（部位／姿态／
+ * 意图）问的是同一个问题的两半 —— 「我要不要跟这头东西打交道，以及怎么打」。
+ * 两段共用势、部位伤、日志与整块屏幕语汇；`EncounterState.phase` 是唯一的分派依据。
+ */
+export type EncounterPhase = "approach" | "clash";
+
+/**
  * [S2] 一处探索去处的风险档：常路／险地／绝境。
  *
  * 三档不是形容词，是**三组数**（遇袭概率／远行的饱食代价／事件概率乘子），表在
@@ -59,8 +80,8 @@ export type PerilTier = "calm" | "wary" | "grim";
  * 三者**不是伤害档位**，而是三种不同的工具，各有各的适用局面（这是「有一个永远最优」
  * 与「有得选」的分界）：
  * - `throat` 咽喉：高伤，收官用；被护住则减半＋招反击。
- * - `leg` 后腿：低伤 ＋ 迟滞（`CombatState.slow`）—— 它**拦得住要逃的敌人**，也压得住扑击。
- * - `eye` 眼：极低伤 ＋ 致盲（`CombatState.blind`）—— 收益随**敌人伤害**放大，硬仗开局用。
+ * - `leg` 后腿：低伤 ＋ 迟滞（`ClashState.slow`）—— 它**拦得住要逃的敌人**，也压得住扑击。
+ * - `eye` 眼：极低伤 ＋ 致盲（`ClashState.blind`）—— 收益随**敌人伤害**放大，硬仗开局用。
  */
 export type BodyPart = "throat" | "leg" | "eye";
 
@@ -97,6 +118,7 @@ export type CombatAct =
   | { kind: "bite"; part: BodyPart }
   | { kind: "stance"; to: Stance }
   | { kind: "skill"; skillId: string }
+  | { kind: "finisher" }
   | { kind: "flee" };
 
 /**
@@ -117,15 +139,15 @@ export type CombatAct2 = CombatAct;
  *
  * | 档 | 类型 | 落到哪个字段 |
  * |---|---|---|
- * | `venom` 附毒 | 持续·削弱 | `CombatState.slow`（血凝：它出伤打折、逃不掉、扑不起来） |
- * | `bleed` 流血 | 持续·伤害 | `CombatState.bleed`（每回合末它自己掉血，与出手无关） |
+ * | `venom` 附毒 | 持续·削弱 | `ClashState.slow`（血凝：它出伤打折、逃不掉、扑不起来） |
+ * | `bleed` 流血 | 持续·伤害 | `ClashState.bleed`（每回合末它自己掉血，与出手无关） |
  * | `stun` 顿挫 | 控制 | 把它**下一回合**的意图压成 `guard`（偷一个回合） |
- * | `blind` 蒙目 | 控制 | `CombatState.blind`（它多半打空，且不再反击） |
- * | `armor` 护体 | 防御·持续 | `CombatState.ward`（数合内受伤减半） |
- * | `thorns` 反刺 | 防御·惩罚 | `CombatState.thorns`（它每命中你一次就自伤，越爱出手越吃亏） |
+ * | `blind` 蒙目 | 控制 | `ClashState.blind`（它多半打空，且不再反击） |
+ * | `armor` 护体 | 防御·持续 | `ClashState.ward`（数合内受伤减半） |
+ * | `thorns` 反刺 | 防御·惩罚 | `ClashState.thorns`（它每命中你一次就自伤，越爱出手越吃亏） |
  * | `brace` 硬受 | 防御·即时 | **这一回合**它那一手伤害归零（不留计数器 —— 它只挡当下这一下） |
  * | `bolt` 脱身 | 位移 | 这一回合**必定**遁走（`over: "fled"`），不掷骰 |
- * | `insight` 明识 | 信息 | `CombatState.insight`（数合内读得出确切意图 —— 洞察类器官的临时替身） |
+ * | `insight` 明识 | 信息 | `ClashState.insight`（数合内读得出确切意图 —— 洞察类器官的临时替身） |
  * | `heal` 疗愈 | 恢复 | 回自身血量 |
  *
  * `brace` 与 `bolt` 刻意**没有**计数器：两者都在「玩家动作 → 敌人动作」这同一个回合里
@@ -195,6 +217,15 @@ export interface CombatSkillDef {
   damageMul?: number;
   /** [S1] 代价，缺省＝无代价（本库的 12 件器官与 10 条组合全部显式写了代价） */
   cost?: CombatSkillCost;
+  /**
+   * [M2-B1] 发这一手要花几点**势**，缺省 `tuning.encounterSkillMomentumCost`。
+   *
+   * 势与冷却治的是两件不同的事：冷却说「这一颗刚用过」，势说「你现在够不够本钱发大的」。
+   * 只有冷却时，一世蜕五件带技器官之后技能池里永远有一颗转好了的 —— 于是「用哪个」
+   * 退化成「谁先转好」。加上势之后，一场架里能发几手是**打出来的**（乘隙与不挨伤各多攒
+   * 一点），于是「这一合咬它没护的地方」既减了伤又攒了下一记大招。
+   */
+  momentum?: number;
 }
 
 /**
@@ -604,6 +635,22 @@ export interface EnemyDef {
   intentBias?: Partial<Record<EnemyIntentKind, number>>;
   /** [M1-P2] 搏杀旁白（意图宣告），缺省退回引擎通用变体 */
   combatFlavor?: CombatFlavor;
+
+  // — [M2-B1] 遭遇深度：行为段与弱点 —
+
+  /**
+   * 行为段（按血线单向推进）。缺省／空 ＝ 一段到底（沿用 `guardBias`／`intentBias`）。
+   *
+   * 一场架现在 5〜10 合，而「同一个分布重复十次」是玩家学不到东西的十次。填两三段的成本
+   * 是几行，换来的是「它血过半之后要换打法」这条整场都在用的判断。
+   */
+  stages?: readonly EnemyStageDef[];
+  /**
+   * 弱点：一处 ×`weaknessDamageMul` 且**无视守备减伤**的地方，要先识破。
+   *
+   * 缺省 ＝ 这头兽没有明显的软肋（穷奇幼崽就是这样，它的答案是「逃」而不是「找破绽」）。
+   */
+  weakness?: EnemyWeaknessDef;
 }
 
 /** [正本] 事件触发条件。 */
@@ -876,16 +923,19 @@ export interface Bloodline {
 }
 
 /**
- * [M1-P1 正本] 追猎中状态。追猎收束（caught/escaped/exhausted/combat）后 `TaleState.stalk` 置 null。
+ * [M1-P1 正本 ／ M2-B1 改名] **接近阶段**的状态（旧名 `StalkState`）。
  *
  * 四个量就是玩家面前的全部决策变量，所以它们必须**全部可见**（精度按器官 tag 分档，
  * 见 `stalkPreview`）：看不见的变量等于不存在，玩家只会退回「点了再说」。
  *
  * `stamina` 是**动作预算**（含最后那一扑），不是血条：扣到 0 而还没扑，就是空手而归。
+ *
+ * ## M2-B1 搬走了两位
+ * `preyId` → `EncounterState.enemyId`，`log` → `EncounterState.log`：一场遭遇只有一头兽、
+ * 只有一条日志，两个阶段各存一份就会在转阶段那一刻分家（接近的四息读不到、交锋的血战
+ * 也读不到前情）。
  */
-export interface StalkState {
-  /** EnemyDef.id */
-  preyId: string;
+export interface ApproachState {
   /** 步。0 ＝ 贴身 */
   distance: number;
   /** 0-100。满则受惊（逃走或反扑） */
@@ -910,19 +960,67 @@ export interface StalkState {
   windKnown: boolean;
   /** 已结算动作数；起追时为 0，每次 stalkAct 后 +1 */
   round: number;
-  log: string[];
 }
 
 /**
- * [正本 ＋ M1-P2 扩展] 战斗中状态。战斗结束（win/fled/dead/escaped）后 `TaleState.combat` 置 null。
+ * [M2-B1] 一头敌人在遭遇里的**行为段**：血线降到某处，它就换一副打法。
+ *
+ * ## 为什么要有它
+ * M1-P2 的敌人只有「随机守备 ＋ 加权意图」，一场架从头到尾是同一个分布 —— 玩家在第 2 合
+ * 学到的东西，到第 8 合还是那一件。行为段让**一场架内部有节奏**：穷奇前段扑得凶，血过半
+ * 之后进「暴怒」，扑得更凶但也不再守；玄蟒被逼到三成血才肯真正缠上来。
+ *
+ * 段的进入是**单向**的（血只会降），进入时把 `text` 写进日志并在屏幕上换一枚小牌 ——
+ * 玩家看得见「它变了」，那正是「多段行为」与「换一组随机数」的分界。
+ */
+export interface EnemyStageDef {
+  /**
+   * 血量比例 ≤ 此值时进入本段（含）。第一段应为 1（开场即在其中），其后严格递减。
+   * schema 测试钉着这条单调性：两段同 `at` 会让「它变了」这件事变成一次随机跳变。
+   */
+  at: number;
+  /** 段名，上屏做小牌（「暴怒」「盘踞」） */
+  name: string;
+  /** 进入本段时写进日志的一句 */
+  text: string;
+  /** 本段的守备偏好；缺省沿用 `EnemyDef.guardBias` */
+  guardBias?: Partial<Record<BodyPart, number>>;
+  /** 本段的意图偏好；缺省沿用 `EnemyDef.intentBias` */
+  intentBias?: Partial<Record<EnemyIntentKind, number>>;
+  /** 本段的出伤倍率（缺省 1）—— 「暴怒」既打得凶，也是玩家该换伏低的信号 */
+  damageMul?: number;
+}
+
+/**
+ * [M2-B1] 一头敌人的**弱点**：一处打上去格外见效、但要先识破的地方。
+ *
+ * 识破有三条路（见 `combatPreview.weaknessFound`）：历代所记（图鉴知识，开场即知）／
+ * 自己试出来（咬中该处 `weaknessRevealHits` 次）／看出来（打满
+ * `weaknessRevealRounds − floor(灵/weaknessRevealPerLing)` 合）。三条都写在屏幕上，
+ * 所以它是**可积累的知识**而不是一次掷骰 —— 与 `guardBias` 那条「几场之后你会记住它的习惯」
+ * 同一个设计意图，只是这一条有明确的兑现时刻。
+ */
+export interface EnemyWeaknessDef {
+  part: BodyPart;
+  /** 弱点名，上屏做朱砂小牌（「颈侧旧疤」） */
+  name: string;
+  /** 识破那一刻写进日志的一句 */
+  text: string;
+}
+
+/**
+ * [正本 ＋ M1-P2 扩展 ／ M2-B1 改名] **交锋阶段**的状态（旧名 `CombatState`）。
  *
  * ## P2 加的六个字段都是「玩家看得见的决策变量」
- * 同 `StalkState` 的纪律：界面能显示什么，必须能从 `TaleState` 重建出来（determinism
+ * 同 `ApproachState` 的纪律：界面能显示什么，必须能从 `TaleState` 重建出来（determinism
  * 测试正盯着这条）。`guardPart` 与 `intent` 尤其不能只活在客户端 —— 它们必须在玩家出手
  * **之前**就定下来并可见，否则「避开守备部位」「读意图选姿态」两道题都不存在。
+ *
+ * ## M2-B1 搬走了两位、且**部位伤不再住在这里**
+ * `enemyId`／`log` 上移到 `EncounterState`；`blind`／`slow` 现在只表示**技能**挂的一时之效，
+ * 咬出来的部位伤搬进了 `EncounterState.wounds`（整场累积，见那一位的注释）。
  */
-export interface CombatState {
-  enemyId: string;
+export interface ClashState {
   enemyHp: number;
   playerHp: number;
   /** 已结算回合数；开战时为 0，每次 combatAct 后 +1 */
@@ -969,7 +1067,74 @@ export interface CombatState {
    * 不再只是器官 id —— 组合技也要各自冷却。
    */
   skillCooldowns: Record<string, number>;
+}
+
+/**
+ * [M2-B1] **一场遭遇** —— 接近与交锋两个阶段的共同外壳，`TaleState` 里唯一的遭遇位。
+ *
+ * ## 为什么是一个字段而不是两个
+ * M1 留下的是 `TaleState.stalk` 与 `TaleState.combat` 两个互斥的位，于是「一场遭遇」这件事
+ * 在代码里根本不存在：追猎的四息与紧接着的血战是两条互不知情的路径，日志断成两截，
+ * 接近阶段的成果（潜到多近才失手）对交锋没有任何影响，而探索遇袭与事件冲突又各自
+ * 从第三个入口摆状态。owner 要的「对战系统」要求这些是**同一个东西**，所以：
+ *
+ * - 一个入口 `beginEncounter`（三条来路只是 `origin` 不同）；
+ * - 一条日志、一份势、一份部位伤，跨阶段延续；
+ * - 一套屏幕语汇（同一张卡的头、势条、伤牌、四相盘、日志，中段随 `phase` 换）。
+ *
+ * 收束（`over` 非 null）后 `TaleState.encounter` 置 null。
+ */
+export interface EncounterState {
+  /** EnemyDef.id —— 一场遭遇只有一头兽，两个阶段共用 */
+  enemyId: string;
+  /** 这场遭遇怎么起的（决定开场阶段与起手势，见 `EncounterOrigin`） */
+  origin: EncounterOrigin;
+  phase: EncounterPhase;
+  /**
+   * [M2-B1] **势**：0〜`momentumMax`，跨阶段延续，强招的唯一货币。
+   *
+   * 它治的是 M1-P2 那个「每一合都是独立的一道题」的毛病：冷却与代价只回答「这一颗能不能
+   * 按」，不回答「现在按还是攒两合」。势每合自涨（`encounterMomentumPerRound`），咬中它
+   * **没护着**的地方多涨一点（乘隙），它这一合没伤到我也多涨一点 —— 于是「避开守备」
+   * 与「读意图」两件本来只减伤的事，现在还**攒出下一记大招**，出招节奏因此成为决策。
+   *
+   * 起手势由 `origin` 与灵性决定（见 `beginEncounter`）：接近阶段潜得越近才失手，转交锋时
+   * 势越足；被扑个正着（`ambush`）则要扣。
+   */
+  momentum: number;
+  /** 势的上限 ＝ `encounterMomentumBase + floor(灵/encounterMomentumMaxPerLing)`（灵的可见落点之一） */
+  momentumMax: number;
+  /**
+   * [M2-B1] **整场累积的部位伤**（层数，各部位上限 `woundCap`）。
+   *
+   * M1-P2 的咬腿／扑眼是两回合的计数器且**不叠加**，于是它们是「买两合」的工具，
+   * 打断腿这件事在第三合就自己长好了 —— 一场 5〜10 合的架里，那等于什么都没发生。
+   * 现在每一咬都留下一层伤，**整场不消**：
+   *
+   * | 部位 | 每层 | 到 `woundLegNoFleeAt`／`woundEyeNoCounterAt` 层 |
+   * |---|---|---|
+   * | `leg` 腿 | 它出伤 ×`woundLegDamageMul`、扑的权重 ×`woundLegPounceMul` | **它再也逃不掉**（追不上你，也走不掉） |
+   * | `eye` 眼 | 它打空概率 +`woundEyeMissChance` | **它不再反击**（护着的部位也咬得动） |
+   *
+   * **咬喉不留伤**（那一档是爆发，倍率 ×1.6）：若最高伤的那颗还白拿一条持续线，
+   * 三颗咬击就又退化成「挑伤害最高那颗」。于是三颗成了三种角色 ——
+   * 拆它的腿（一劳永逸地断它退路）／废它的眼（让它打不中也不反口）／咬喉收官，
+   * 而「什么时候转回收官」是玩家自己排的顺序。上限 `woundCap` 是防「一手通吃」的闸门
+   * （M1-P2 实测过：可无限续的迟滞让只咬腿一手对岩羊胜率 99.5%）。
+   */
+  wounds: Record<BodyPart, number>;
+  /** [M2-B1] 已识破弱点（见 `EnemyWeaknessDef`）。敌人没有弱点时恒为 false */
+  weaknessFound: boolean;
+  /** [M2-B1] 咬中弱点所在部位的次数 —— 「自己试出来」那条识破路径的计数器 */
+  weaknessHits: number;
+  /** [M2-B1] 当前行为段索引（`EnemyDef.stages`）；无 stages 时恒为 0 */
+  stage: number;
+  /** 整场遭遇的日志（接近的每一息与交锋的每一合都在这一条里，按时间） */
   log: string[];
+  /** 接近阶段的量；`phase !== "approach"` 时为 null */
+  approach: ApproachState | null;
+  /** 交锋阶段的量；`phase !== "clash"` 时为 null */
+  clash: ClashState | null;
 }
 
 /**
@@ -1018,12 +1183,12 @@ export interface TaleState {
   organIds: string[];
   flags: string[];
   firedOnceIds: string[];
-  combat: CombatState | null;
   /**
-   * [M1-P1] 追猎中状态；非 null 时本季的行动**尚未收束** —— 界面须切到追猎屏并调
-   * `stalkAct`，`performAction` 会拒绝。季推进与死亡判定推迟到追猎的终局那一步。
+   * [M2-B1] 遭遇中状态（替掉 M1 的 `combat` 与 `stalk` 两位）；非 null 时本季的行动
+   * **尚未收束** —— 界面须切到遭遇屏，按 `encounter.phase` 调 `stalkAct`（接近）或
+   * `combatAct`（交锋），`performAction` 会拒绝。季推进与死亡判定推迟到遭遇收束那一步。
    */
-  stalk: StalkState | null;
+  encounter: EncounterState | null;
   records: LifeRecord[];
   /**
    * [2026-08-13] 本世亲手夺去的性命数 ＝ 搏杀取胜 ＋ 追猎得手 ＋ 内容标了 `takesLife` 的抉择。
@@ -1037,7 +1202,7 @@ export interface TaleState {
    * [S2] 本世到过的去处（`DestinationDef.id`，按第一次去的先后）。
    *
    * 在 `TaleState` 而不是只在客户端：界面上「此地已至」那一笔必须能从 state 重建
-   * （同 `StalkState.windKnown` 那条教训 —— determinism 测试盯着「界面显示得出的东西
+   * （同 `ApproachState.windKnown` 那条教训 —— determinism 测试盯着「界面显示得出的东西
    * 必须在状态里」）。跨世那一份由客户端抄进 `Bloodline.knownDestinationIds`。
    */
   visitedDestinationIds: string[];
@@ -1057,7 +1222,7 @@ export interface TaleState {
    *
    * 为什么抄进 `TaleState` 而不是让预览函数去读 `Bloodline`：引擎**不认识**跨世资产
    * （那是客户端的持久化层），而 `stalkPreview`／`combatPreview` 要据它决定玩家看得见
-   * 什么 —— 同 `StalkState.windKnown` 那条纪律：界面能显示的东西必须能从 state 重建。
+   * 什么 —— 同 `ApproachState.windKnown` 那条纪律：界面能显示的东西必须能从 state 重建。
    */
   loreEnemyIds: string[];
   /**
@@ -1239,6 +1404,18 @@ export interface TaleTuning {
   /** [补全] 战胜额外回的饱食 */
   combatWinHungerGain: number;
   /**
+   * [M2-B1] 搏杀取胜留下的**食余**季数 ＝ `round(EnemyDef.surplusSeasons × 此值)`。
+   *
+   * 这是这一批的点击账里最要紧的一位。遭遇从 2〜5 合拉到 5〜10 合，每场架多出四五次点击；
+   * 计划正本给的抵消方向是「遭遇次数不增 ＋ **一次遭遇的价值提高**」，而一头玄蟒的尸体
+   * 按理本来就比一只野雉的肉多 —— 打赢一场硬仗此后几季不必再出猎，省下的正是那几次
+   * 「点狩猎」的点击。饥饿节奏批把这一条列为遗留 3，这一批兑现它。
+   *
+   * 用倍率而不是给敌人再写一张表：`surplusSeasons` 已经是「这头兽有多少肉」的唯一落点，
+   * 两张表会各自漂移（同一头岩羊追到与打赢会说两个数）。
+   */
+  combatWinSurplusMul: number;
+  /**
    * [2026-08-13] 搏杀取胜吞得的精气倍率（缺省 1）。「兽潮」之年把它调高 —— 猛兽横行的
    * 年头难活，但杀一头的所得也更厚，于是「兽潮」不是单纯的负面天时。
    */
@@ -1320,6 +1497,90 @@ export interface TaleTuning {
   combatThornsDamage: number;
   /** `insight` 明识持续回合数（期间读得出确切意图） */
   combatInsightRounds: number;
+
+  /*
+   * — [M2-B1] 遭遇加深：势／部位伤／弱点／四属性可见落点 —
+   *
+   * 这一组数回答的是同一个问题：**一场架凭什么值 5〜10 个回合**。M1-P2 的架只有 2〜5 合，
+   * 12 件器官、10 条组合、四项属性没有足够的回合去表达；而拉长回合若只是「双方血更厚」，
+   * 那就是把同一道题重复十次。所以拉长的同时加了三条**跨回合**的经营线（势／部位伤／
+   * 弱点），并把四项属性各自接到一个玩家看得见的量上。
+   *
+   * 复算工具：`node --import ./src/tsResolveHook.mjs src/balance-sim.ts --lab combat --lives 400`
+   * （末尾的手感判据里有「平均回合数落在 5〜10」这一条）。
+   */
+
+  /** 势的上限基数（再加 `floor(灵/encounterMomentumMaxPerLing)`） */
+  encounterMomentumBase: number;
+  /** 灵每这么多点，势上限 +1 —— 灵性 build 攒得起更大的一手 */
+  encounterMomentumMaxPerLing: number;
+  /** 起手势 ＝ `floor(灵/encounterMomentumStartPerLing)`（再按来路加减） */
+  encounterMomentumStartPerLing: number;
+  /** 被扑个正着（`ambush`）时起手势要扣掉这么多 */
+  encounterAmbushMomentumPenalty: number;
+  /** 接近阶段转交锋时，每压低这么多警觉多带一点势（潜得越隐蔽，反扑时越站得住） */
+  encounterApproachMomentumPerAlert: number;
+  /** 每个交锋回合自涨的势 */
+  encounterMomentumPerRound: number;
+  /** 咬中它**没护着**的部位额外涨的势（乘隙） */
+  encounterMomentumOpenGuard: number;
+  /** 它这一合没伤到我时额外涨的势（守住了也是势） */
+  encounterMomentumUnhurt: number;
+  /** 技能的缺省势价（`CombatSkillDef.momentum` 优先） */
+  encounterSkillMomentumCost: number;
+  /** 「决杀」的势门槛：攒够才出得来这颗按钮 */
+  encounterFinisherMomentum: number;
+  /** 「决杀」的基础伤害倍率 */
+  encounterFinisherMul: number;
+  /** 「决杀」每点势追加的伤害倍率（消耗掉的势越多，这一下越重） */
+  encounterFinisherPerMomentum: number;
+
+  /** 各部位伤的层数上限 —— 「一手通吃」的闸门 */
+  woundCap: number;
+  /** 每层腿伤：它的出伤倍率 */
+  woundLegDamageMul: number;
+  /** 每层腿伤：它「扑」的意图权重倍率 */
+  woundLegPounceMul: number;
+  /** 腿伤到这么多层，它再也起不了「逃」意（也拦不住地被你咬） */
+  woundLegNoFleeAt: number;
+  /** 每层眼伤：它打空的概率增量 */
+  woundEyeMissChance: number;
+  /** 眼伤到这么多层，它不再对被护部位反击 */
+  woundEyeNoCounterAt: number;
+
+  /** 弱点：打中它的伤害倍率（且无视守备减伤） */
+  weaknessDamageMul: number;
+  /** 弱点：打满这么多合就看出来了（再减 `floor(灵/weaknessRevealPerLing)`，下限 1） */
+  weaknessRevealRounds: number;
+  /** 弱点：灵每这么多点，看出它早一合 */
+  weaknessRevealPerLing: number;
+  /** 弱点：咬中该部位这么多次就试出来了 */
+  weaknessRevealHits: number;
+
+  /*
+   * — [M2-B1] 四属性在交锋屏上的落点 —
+   *
+   * owner 原话「这样就能很好地展示积累的各项指标的作用」。M1-P2 的四项属性里，猛只在
+   * 伤害公式里、体只是血上限、灵只管逃跑、**德几乎只用在事件门槛上** —— 屏幕上一个字
+   * 都读不到。这四个数把它们各接到一个可显示、可算账的量上（界面的「四相」盘逐项念它们）。
+   */
+
+  /** 交锋起手血 ＝ `round(体 × combatHpPerTi)`。与寿数公式解耦，所以拉长回合不会顺手改寿命 */
+  combatHpPerTi: number;
+  /** 体：每这么多点减 1 点受伤（下限仍是 1 —— 不做无敌） */
+  combatToughnessPerTi: number;
+  /** 德：每点德给的闪避概率（整下躲开，不掉血） */
+  combatDodgePerDe: number;
+  /** 德：闪避概率上限 */
+  combatDodgeMax: number;
+  /** 德：每点德给的暴击概率 */
+  combatCritPerDe: number;
+  /** 德：暴击概率上限 */
+  combatCritMax: number;
+  /** 德：暴击的伤害倍率 */
+  combatCritMul: number;
+  /** 德：每点德抬高敌人「逃」意的权重比例（气运在外，凶兽也敬三分） */
+  combatEnemyFleePerDe: number;
 
   // — [S1] 血脉（血统点的第二个去处）—
 

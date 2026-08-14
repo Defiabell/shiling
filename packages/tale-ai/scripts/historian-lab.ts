@@ -51,6 +51,8 @@ import {
   type TaleEvent,
   type TaleContent,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "@shiling/tale-sim";
 import { SEED_CHANG_TAI, TALE_CONTENT } from "@shiling/tale-content";
 import { writeChronicle } from "../src/index.js";
@@ -83,7 +85,7 @@ function decideAction(state: TaleState, actions: readonly ActionId[], profile: P
 
 function decideStalk(state: TaleState, profile: Profile): StalkAct {
   const preview = stalkPreview(state, CONTENT);
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   if (!stalk) throw new Error("decideStalk: 不在追猎中");
   if (preview.staminaLeft <= 1) return "pounce";
   if (profile === "brute") return stalk.distance > 0 ? "creep" : "pounce";
@@ -148,11 +150,11 @@ function playLife(seed: number, profile: Profile): TaleState {
   let steps = 0;
   while (state.alive && steps < MAX_STEPS) {
     steps += 1;
-    if (state.combat) {
+    if (clashOf(state)) {
       state = combatAct(state, decideCombat(state, profile), CONTENT).state;
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       state = stalkAct(state, decideStalk(state, profile), CONTENT).state;
       continue;
     }

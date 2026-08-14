@@ -16,13 +16,14 @@ import {
   type ChronicleTemplates,
   type CombatSkillDef,
   type CombatSkillEffect,
-  type CombatState,
+  type ClashState,
+  type EncounterState,
   type DestinationDef,
   type EnemyDef,
   type OrganDef,
   type PremiseDef,
   type SeedDef,
-  type StalkState,
+  type ApproachState,
   type SigilDef,
   type SynergyDef,
   type TaleContent,
@@ -306,6 +307,32 @@ const FIXTURE_TUNING: TaleTuning = {
   // 基线里 huntPreyIds 是空的（基线不认识具体内容 id），fixture 只放野雉：
   // 让狩猎的精气收益可预测，穷奇留给战斗测试。
   huntPreyIds: [ENEMY_YE_ZHI],
+
+  /*
+   * ## [M2-B1] fixture 把五个**世界尺度**的旋钮调成中性
+   *
+   * 与 `FIXTURE_SKY`／`FIXTURE_ORIGIN`「无修正」同一条纪律（见那两处的注释）：既有的
+   * 两百多条数值断言测的是**部位倍率／姿态／守备／效果**这些公式，若 fixture 里再叠一层
+   * 全局缩放（血 ×1.6、体给的减伤、德给的闪避与暴击），每一条都要按缩放重算一遍 —— 那样测的就不是被测的那个公式了，而且哪一天调了缩放，两百条断言会一起变红
+   * 却没有任何一条指得出问题在哪。
+   *
+   * 五个旋钮本身**各有专测**（`encounter.test.ts`，用显式调参把它们逐个打开），
+   * 真内容库的那一套则由 `tale-content` 的冒烟与 `packages/gen` 的平衡台盯着。
+   */
+  combatHpPerTi: 1,
+  // 除数极大 ＝ 减伤恒为 0（不写 0：那会 floor(ti/0) 得 Infinity）
+  combatToughnessPerTi: 100000,
+  combatDodgePerDe: 0,
+  combatCritPerDe: 0,
+  combatEnemyFleePerDe: 0,
+
+  /*
+   * 势同理：既有断言里的技能是「冷却好了就能放」，加一道势的闸门会让两百条里的每一条
+   * 都要先攒势。势本身（自涨／乘隙／不挨伤／决杀）由 `encounter.test.ts` 专测。
+   * 决杀的门槛调到够不着，好让 `recommendCombatAct` 的既有断言仍在比「咬 vs 技」。
+   */
+  encounterSkillMomentumCost: 0,
+  encounterFinisherMomentum: 9999,
 };
 
 /**
@@ -462,29 +489,44 @@ export function enterCombat(
   state: TaleState,
   enemyId: string,
   content: TaleContent = FIXTURE_CONTENT,
-  overrides: Partial<Omit<CombatState, "enemyId">> = {},
+  overrides: Partial<ClashState> = {},
+  /** [M2-B1] 遭遇外壳（势／部位伤／行为段／弱点／来路）的覆写 */
+  shell: Partial<Omit<EncounterState, "approach" | "clash">> = {},
 ): TaleState {
   const enemy = content.enemies.find((candidate) => candidate.id === enemyId);
   if (!enemy) throw new Error(`enterCombat: 未知敌人 ${enemyId}`);
+  const t = content.tuning;
   return {
     ...state,
-    combat: {
+    encounter: {
       enemyId,
-      enemyHp: enemy.hp,
-      playerHp: state.stats.ti,
-      round: 0,
-      stance: "square",
-      guardPart: "leg",
-      intent: { kind: "bite", text: "它向前逼了半步。" },
-      blind: 0,
-      slow: 0,
-      ward: 0,
-      bleed: 0,
-      thorns: 0,
-      insight: 0,
-      skillCooldowns: {},
+      origin: "event",
+      phase: "clash",
+      momentum: 0,
+      momentumMax: t.encounterMomentumBase + Math.floor(state.stats.ling / t.encounterMomentumMaxPerLing),
+      wounds: { throat: 0, leg: 0, eye: 0 },
+      weaknessFound: false,
+      weaknessHits: 0,
+      stage: 0,
       log: [],
-      ...overrides,
+      approach: null,
+      ...shell,
+      clash: {
+        enemyHp: enemy.hp,
+        playerHp: Math.max(1, Math.round(state.stats.ti * t.combatHpPerTi)),
+        round: 0,
+        stance: "square",
+        guardPart: "leg",
+        intent: { kind: "bite", text: "它向前逼了半步。" },
+        blind: 0,
+        slow: 0,
+        ward: 0,
+        bleed: 0,
+        thorns: 0,
+        insight: 0,
+        skillCooldowns: {},
+        ...overrides,
+      },
     },
   };
 }
@@ -545,8 +587,21 @@ export function makeSynergy(
 export const ALWAYS_COUNTER: Partial<TaleTuning> = { combatGuardCounterChance: 1 };
 export const NEVER_COUNTER: Partial<TaleTuning> = { combatGuardCounterChance: 0 };
 /** 致盲必打空／必打中。 */
-export const ALWAYS_MISS: Partial<TaleTuning> = { combatBlindMissChance: 1 };
-export const NEVER_MISS: Partial<TaleTuning> = { combatBlindMissChance: 0 };
+/**
+ * 「它必定打空／必定打中」的开关。
+ *
+ * [M2-B1] **两个来源都要拨**：技能挂的致盲（`combatBlindMissChance`）与整场累积的眼伤
+ * （`woundEyeMissChance`）。只拨一个的话，扑眼那一路的测试会在「必空」档下照样挨打 ——
+ * 而那正是这一族开关存在的理由（把概率钉死，不靠猜种子）。
+ */
+export const ALWAYS_MISS: Partial<TaleTuning> = {
+  combatBlindMissChance: 1,
+  woundEyeMissChance: 1,
+};
+export const NEVER_MISS: Partial<TaleTuning> = {
+  combatBlindMissChance: 0,
+  woundEyeMissChance: 0,
+};
 
 /**
  * 手工把状态推进到「正在追某头猎物」，四个量逐项可覆写。
@@ -557,24 +612,38 @@ export const NEVER_MISS: Partial<TaleTuning> = { combatBlindMissChance: 0 };
 export function enterStalk(
   state: TaleState,
   preyId: string,
-  overrides: Partial<Omit<StalkState, "preyId">> = {},
+  overrides: Partial<ApproachState> = {},
   content: TaleContent = FIXTURE_CONTENT,
+  /** [M2-B1] 遭遇外壳（势／部位伤／来路）的覆写 */
+  shell: Partial<Omit<EncounterState, "approach" | "clash">> = {},
 ): TaleState {
   const prey = content.enemies.find((candidate) => candidate.id === preyId);
   if (!prey) throw new Error(`enterStalk: 未知猎物 ${preyId}`);
   const t = content.tuning;
   return {
     ...state,
-    stalk: {
-      preyId,
-      distance: prey.startDistance ?? t.stalkStartDistance,
-      alertness: prey.wariness ?? t.stalkStartAlert,
-      stamina: t.stalkStamina,
-      wind: "cross",
-      windKnown: false,
-      round: 0,
+    encounter: {
+      enemyId: preyId,
+      origin: "hunt",
+      phase: "approach",
+      momentum: 0,
+      momentumMax: t.encounterMomentumBase + Math.floor(state.stats.ling / t.encounterMomentumMaxPerLing),
+      wounds: { throat: 0, leg: 0, eye: 0 },
+      weaknessFound: false,
+      weaknessHits: 0,
+      stage: 0,
       log: [],
-      ...overrides,
+      clash: null,
+      ...shell,
+      approach: {
+        distance: prey.startDistance ?? t.stalkStartDistance,
+        alertness: prey.wariness ?? t.stalkStartAlert,
+        stamina: t.stalkStamina,
+        wind: "cross",
+        windKnown: false,
+        round: 0,
+        ...overrides,
+      },
     },
   };
 }

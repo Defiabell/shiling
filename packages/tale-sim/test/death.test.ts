@@ -9,6 +9,8 @@ import {
   resolveChoice,
   stalkAct,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   ENEMY_QIONG_QI,
@@ -141,7 +143,7 @@ describe("死亡覆盖未结算的东西", () => {
     const started = performAction(doomed, "hunt", content).state;
     // 起追这一步不判死 —— 人还活着，追猎还在
     expect(started.alive).toBe(true);
-    expect(started.stalk).not.toBeNull();
+    expect(approachOf(started)).not.toBeNull();
 
     // 反扑的猎物 ＋ 必失手：这一扑既该转搏杀、又该在同一步饿死 —— 死亡必须盖掉战斗
     const cornered = enterStalk(doomed, ENEMY_QIONG_QI, {}, content);
@@ -149,8 +151,8 @@ describe("死亡覆盖未结算的东西", () => {
     expect(turn.over).toBe("combat");
     expect(turn.state.alive).toBe(false);
     expect(turn.state.ending).toBe("starve");
-    expect(turn.state.combat).toBeNull();
-    expect(turn.state.stalk).toBeNull();
+    expect(clashOf(turn.state)).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
   });
 
   it("死后再行动直接抛错", () => {

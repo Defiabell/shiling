@@ -15,6 +15,7 @@ import {
   type TaleTuning,
   type WayGateId,
   type WayId,
+  clashOf,
 } from "@shiling/tale-sim";
 
 /**
@@ -256,7 +257,7 @@ export const SKILL_EFFECT_LABELS: Record<CombatSkillEffect, string> = {
  * [S1] 一个技的账，**按倍率读**：「伤 ×2.6 · 附毒·数合不起势 · 冷却 4 合 · 代价 自伤 3」。
  *
  * 两处共用：异变揭示演出与转世屏的图鉴 —— 那两处都**不在战斗中**，算不出真实伤害区间
- * （`combatPreview` 要求 `state.combat` 非空），所以只能报倍率。
+ * （`combatPreview` 要求 `clashOf(state)` 非空），所以只能报倍率。
  *
  * 与搏杀屏按钮上那一行（`combatVm.skillEffectText`）的分工是**有意的**：按钮在战斗中，
  * 报的是引擎算好的**真实区间**（「伤 7〜9」）。同一个技在两处读法不同，因为一处有上下文、

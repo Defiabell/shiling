@@ -56,7 +56,12 @@ import type {
   SeedDef,
   SigilDef,
   StalkAct,
-  StalkState,
+  ApproachState,
+  EncounterPhase,
+  ClashState,
+  EncounterOrigin,
+  EncounterState,
+  EnemyStageDef,
   Stance,
   Stats,
   SynergyDef,
@@ -219,7 +224,7 @@ export interface ChoiceResult {
 }
 
 /**
- * 单个战斗回合的结果。`over` 非 null 时 `state.combat` 已置 null。
+ * 单个交锋回合的结果。`over` 非 null 时 `state.encounter` 已置 null。
  *
  * 四种收束（[M1-P2] `escaped` 是新加的）：
  * - `win` 打死它，吞精气回饱食；`dead` 被打死（ending＝slain）；`fled` **我方**逃脱。
@@ -235,9 +240,11 @@ export interface CombatTurn {
 /**
  * [M1-P1 正本] 单个追猎动作的结果。
  *
- * `over` 非 null 时 `state.stalk` 已置 null，**且本季在这一刻才收束**（季推进＋死亡判定
- * 都在这一步跑完，见 `closeSeason`）——「起追」那一次 `performAction` 只把猎物摆上来。
- * `combat` ＝ 转入搏杀（`state.combat` 非 null）。
+ * `over` 为 `caught`／`escaped`／`exhausted` 时 `state.encounter` 已置 null，**且本季在这一刻
+ * 才收束**（季推进＋死亡判定都在这一步跑完，见 `closeSeason`）——「起追」那一次
+ * `performAction` 只把猎物摆上来。
+ * [M2-B1] `combat` ＝ **转进交锋阶段**（同一个 `encounter`，`phase` 变成 `clash`）——
+ * 这一季**不收束**，遭遇还没打完。
  */
 export interface StalkTurn {
   state: TaleState;
@@ -329,24 +336,24 @@ export interface BitePreview {
   damage: DamageRange;
   /** 打的正是它护着的部位 */
   guarded: boolean;
-  /** 招来反击的概率；0 ＝ 不会（未打守备处，或它已被致盲） */
+  /** [M2-B1] 打的正是**识破了的弱点** —— 无视守备减伤，且 ×`weaknessDamageMul` */
+  weakPoint: boolean;
+  /** 招来反击的概率；0 ＝ 不会（未打守备处／打的是弱点／它已瞎） */
   counterChance: number;
-  /** 反击若中会挨多少（已含姿态与护体） */
+  /** 反击若中会挨多少（已含姿态、护体与体给的减伤） */
   counterDamage: DamageRange;
-  /** 附带效果：咬腿＝迟滞，扑眼＝致盲，咬喉＝无 */
-  rider: "blind" | "slow" | null;
-  /** 附带效果持续几回合 */
-  riderRounds: number;
+  /** [M2-B1] 这个部位**已经**累了几层伤（整场不消） */
+  woundStacks: number;
   /**
-   * 这一咬的附带效果**这一次落不落得下来**。
+   * [M2-B1] 这一咬还留不留得下一层伤。
    *
-   * 已经在生效的效果不叠加（见 `combatAct`），所以「它已经瞎着的时候再扑眼」只是一记
-   * 极轻的伤。不报这一位，那颗按钮就在骗人 —— 而这恰好是「什么时候该换回咬喉」的信号。
-   *
-   * 另一种落不下来的情形是**这一咬就把它打死了**（`combatAct` 只在 `enemyHp > 0` 时挂效果）：
-   * 按最坏情况（`damage.min`）判，宁可少许一件也不多许一件。
+   * 落不下来只剩两种情形：**堆满了 `woundCap`**（那颗按钮此后只剩伤害，没有附带），
+   * 以及**这一咬就把它打死了**（按 `damage.min` 判，宁可少许一件也不多许一件）。
+   * 不报这一位，那颗按钮就在骗人 —— 而这恰好是「什么时候该换回收官」的信号。
    */
-  riderLands: boolean;
+  woundLands: boolean;
+  /** [M2-B1] 这一咬能攒到几点势（乘隙：咬中它没护着的地方多攒一点） */
+  momentumGain: number;
   /** 这一咬能否拦住它这一回合的遁走（只有咬腿能，且它确实要走时才为真） */
   stopsFlee: boolean;
   /**
@@ -397,8 +404,108 @@ export interface CombatSkillPreview {
    * 「还需 2 合」是等得到的，「鳞之精气不足」是这一架里等不到的（得去猎）。
    */
   affordable: boolean;
+  /** [M2-B1] 这一手要花几点势 */
+  momentumCost: number;
+  /** [M2-B1] 势够不够 —— 与冷却、代价并列的第三种「为什么按不了」 */
+  hasMomentum: boolean;
   /** 伤害区间（`heal` 类与纯效果类恒为 0） */
   damage: DamageRange;
+}
+
+/**
+ * [M2-B1] 「决杀」的预览 —— 攒够势才出得来的那一记。
+ *
+ * 它不是第四颗咬击：**吃掉全部的势**、伤害随攒到的势线性放大、且**无视守备减伤**。
+ * 势没攒够时 `ready` 为假、`damage` 恒为 0，界面据此把它显示成一颗灰着的、写明
+ * 「还差几点势」的按钮 —— 看得见的目标比看不见的按钮值钱。
+ */
+export interface FinisherPreview {
+  /** 按下去会花掉多少势（＝当前全部的势） */
+  momentumCost: number;
+  /** 至少要攒到多少才按得动 */
+  momentumNeeded: number;
+  ready: boolean;
+  damage: DamageRange;
+}
+
+/**
+ * [M2-B1] 四项属性**此刻**各自在做什么 —— owner 那句「好好展示积累的各项指标的作用」
+ * 的落点。
+ *
+ * 全部是**数**，措辞归客户端（tale-client 零游戏逻辑：它只负责念，不重算公式）。
+ * 每一项都能在屏幕上找到对应的一行，四项都不许只活在公式里：
+ *
+ * | 属性 | 它在这一屏上是什么 |
+ * |---|---|
+ * | 猛 | 咬击的基础伤害（`biteBase` 里 `mengBiteBonus` 那一份）、扑击命中的加成 |
+ * | 体 | 交锋血上限（`hpMax`）与每次受伤的减免（`toughness`） |
+ * | 灵 | 势的上限与起手势、看破弱点要几合、遁走成功率 |
+ * | 德 | 闪避、暴击，以及**把它的退意抬高多少倍**（凶兽也敬三分） |
+ */
+export interface EncounterStats {
+  meng: number;
+  ti: number;
+  ling: number;
+  de: number;
+  /** 一咬的基础伤害（未乘部位／姿态倍率） */
+  biteBase: number;
+  /** 其中猛贡献的那一份 */
+  mengBiteBonus: number;
+  /** 交锋血上限 ＝ round(体 × combatHpPerTi) */
+  hpMax: number;
+  /** 每次受伤减免（体给的） */
+  toughness: number;
+  momentumMax: number;
+  /** 这场遭遇的起手势（灵给的，被扑个正着要扣） */
+  momentumStart: number;
+  /** 光靠「看」识破弱点需要几合（灵越高越少） */
+  weaknessRoundsBase: number;
+  fleeChance: number;
+  dodgeChance: number;
+  critChance: number;
+  /** 德把它「逃」意的权重抬高的倍数 */
+  enemyFleeMul: number;
+  /** 接近阶段：猛给扑击命中率的加成 */
+  pounceChanceBonus: number;
+}
+
+/**
+ * [M2-B1] 遭遇屏的**公共**只读数 —— 接近与交锋两个阶段共用的那一套语汇。
+ *
+ * 见 `encounterPreview`。两个阶段各自的量仍归 `stalkPreview`／`combatPreview`。
+ */
+export interface EncounterPreview {
+  enemyId: string;
+  enemyName: string;
+  enemyDesc: string;
+  origin: EncounterOrigin;
+  phase: EncounterPhase;
+  momentum: number;
+  momentumMax: number;
+  /** 每个交锋回合自涨多少势 */
+  momentumPerRound: number;
+  /** 决杀的势门槛 */
+  finisherMomentum: number;
+  wounds: Record<BodyPart, number>;
+  woundCap: number;
+  /** 腿伤已到「它再也走不掉」那一层 */
+  legCrippled: boolean;
+  /** 眼伤已到「它不再反击」那一层 */
+  eyeRuined: boolean;
+  stageIndex: number;
+  stageCount: number;
+  /** 当前行为段的名字（这头兽只有一段时为 null） */
+  stageName: string | null;
+  weaknessPart: BodyPart | null;
+  weaknessName: string | null;
+  weaknessFound: boolean;
+  /** 光靠看还差几合识破（已识破／没有弱点时为 0） */
+  weaknessRoundsLeft: number;
+  /** 靠试还差几次咬中识破（同上） */
+  weaknessHitsLeft: number;
+  stats: EncounterStats;
+  /** 整场遭遇的日志（两个阶段同一条） */
+  log: string[];
 }
 
 export interface CombatPreview {
@@ -432,12 +539,30 @@ export interface CombatPreview {
    * 不可用原因）摆在同一屏。
    */
   skills: CombatSkillPreview[];
+  /** [M2-B1] 决杀（攒够势才 `ready`） */
+  finisher: FinisherPreview;
+  /** [M2-B1] 当前势与上限 —— 界面的势条读它 */
+  momentum: number;
+  momentumMax: number;
+  /** [M2-B1] 三处部位伤的层数（整场累积） */
+  wounds: Record<BodyPart, number>;
+  /** [M2-B1] 它当前行为段的名字（单段的兽为 null） */
+  stageName: string | null;
+  /** [M2-B1] 它的弱点在哪个部位（没有弱点为 null；**未识破时界面不该显示它**） */
+  weaknessPart: BodyPart | null;
+  weaknessFound: boolean;
   fleeChance: number;
   /** 它这一回合若打中，会挨多少（已含意图倍率、姿态、迟滞、护体） */
   incomingDamage: DamageRange;
-  /** 它打空的概率（致盲期间才 >0） */
+  /** 它打空的概率（技能致盲 ＋ 每层眼伤） */
   incomingMissChance: number;
-  /** 期望受伤 ＝ `incomingDamage × (1 − 打空概率)` */
+  /** [M2-B1] 德给的闪避概率（它打中了也可能被整下躲开） */
+  dodgeChance: number;
+  /** [M2-B1] 德给的暴击概率 */
+  critChance: number;
+  /** [M2-B1] 体给的受伤减免（已经算进上面所有的受伤区间里，这里同报一份供界面说明来源） */
+  toughness: number;
+  /** 期望受伤 ＝ `incomingDamage × (1 − 打空) × (1 − 闪避)` */
   incomingExpected: number;
   /**
    * 还撑得住几回合（**估**）：按「它常规出一手」算，不按这一回合的意图算。
@@ -448,10 +573,12 @@ export interface CombatPreview {
   roundsToLive: number;
   /** 还要几下能打死它（估，按当前最强的一咬算） */
   roundsToKill: number;
-  /** [S1] 双方血量 —— 界面本来就从 `state.combat` 读，这里同报一份是为了让 `recommendCombatAct`
+  /** [S1] 双方血量 —— 界面本来就从 `encounter.clash` 读，这里同报一份是为了让 `recommendCombatAct`
    *  只吃 `CombatPreview` 一个入参（「这一手打不打得死它」算不出来的话，推荐链就只能猜） */
   enemyHp: number;
   playerHp: number;
+  /** [M2-B1] 交锋血上限 ＝ round(体 × combatHpPerTi) */
+  playerHpMax: number;
   blind: number;
   slow: number;
   ward: number;
@@ -600,16 +727,26 @@ function draftOf(state: TaleState): TaleState {
     // [S3] 同上。`loreEnemyIds` 一世不变（降世时定），但照拷不误 —— 少一处「这个数组能不能改」的例外
     metEnemyIds: [...state.metEnemyIds],
     loreEnemyIds: [...state.loreEnemyIds],
-    combat: state.combat
+    /*
+     * [M2-B1] 一个遭遇位替掉了旧的 combat/stalk 两位。里面有五个可变容器要各拷一份
+     * （日志／部位伤／接近／交锋／交锋里的 intent 与 skillCooldowns）—— 漏掉任何一个
+     * 都会让「不改动入参」那条测试变红，而那正是这一层唯一的看门人。
+     */
+    encounter: state.encounter
       ? {
-          ...state.combat,
-          // [M1-P2] intent 与 skillCooldowns 是新的可变容器，漏拷会让「不改动入参」那条测试变红
-          intent: { ...state.combat.intent },
-          skillCooldowns: { ...state.combat.skillCooldowns },
-          log: [...state.combat.log],
+          ...state.encounter,
+          wounds: { ...state.encounter.wounds },
+          log: [...state.encounter.log],
+          approach: state.encounter.approach ? { ...state.encounter.approach } : null,
+          clash: state.encounter.clash
+            ? {
+                ...state.encounter.clash,
+                intent: { ...state.encounter.clash.intent },
+                skillCooldowns: { ...state.encounter.clash.skillCooldowns },
+              }
+            : null,
         }
       : null,
-    stalk: state.stalk ? { ...state.stalk, log: [...state.stalk.log] } : null,
     records: [...state.records],
   };
 }
@@ -1234,8 +1371,7 @@ export function createLife(
     // `sys:` 前缀不该在降世这一刻就改掉引擎规则（同 applyEffects 的理由）
     flags: contentFlags([...(premise.sky.flags ?? []), ...(premise.origin.flags ?? [])]),
     firedOnceIds: [],
-    combat: null,
-    stalk: null,
+    encounter: null,
     records: [
       {
         year: 0,
@@ -1268,7 +1404,7 @@ export function createLife(
  * 「蛰伏」仅在任一型精气 ≥ 这一世生效的 `moltThreshold` 时出现（灵气盛之年门槛更低）。
  */
 export function availableActions(state: TaleState, content: TaleContent): ActionId[] {
-  if (!state.alive || state.combat || state.stalk) return [];
+  if (!state.alive || state.encounter) return [];
   const threshold = lifeTuning(state, content).moltThreshold;
   const actions: ActionId[] = ["hunt", "explore", "rest"];
   if (ESSENCE_ORDER.some((type) => state.essence[type] >= threshold)) {
@@ -1291,27 +1427,222 @@ function noteMetEnemy(draft: TaleState, enemyId: string): void {
   draft.metEnemyIds = [...draft.metEnemyIds, enemyId];
 }
 
+// ===== 遭遇（M2-B1）=====
+//
+// 玩法正本：docs/plans/shiling/2026-08-14-liezhuan-m2-combat-core-plan.md 的「B1」。
+//
+// M1 留下的是**两个互斥的状态位**（`TaleState.stalk` 与 `TaleState.combat`）与**三条各摆
+// 一套状态的入口**（起追／探索遇袭／事件冲突）。于是「一场遭遇」在代码里不存在：
+// 接近阶段的四息与紧接着的血战互不知情（日志断成两截、潜到多近才失手对交锋毫无影响），
+// 而探索撞上的冲突事件走的又是第三条路。M2-B1 把它们收成一条状态机：
+//
+//   一个位（`TaleState.encounter`）· 一个入口（`beginEncounter`）· 两个阶段（`phase`）
+//   · 一条日志 · 一份势 · 一份部位伤 · 一套屏幕语汇。
+//
+// 三条来路的分别只剩 `origin`（谁先动的手），而它落在**起手势**上 —— 那正是「接近阶段
+// 的取舍会不会影响交锋」这个问题的答案：潜到极近才失手的人，反扑时手上是有势的。
+
+/** 一场遭遇开场时的空部位伤。 */
+function noWounds(): Record<BodyPart, number> {
+  return { throat: 0, leg: 0, eye: 0 };
+}
+
+/** [M2-B1] 势的上限：4 ＋ floor(灵/18)。灵性 build 攒得起更大的一手（灵的可见落点之一）。 */
+function momentumMaxOf(stats: Stats, t: TaleTuning): number {
+  return Math.max(1, t.encounterMomentumBase + Math.floor(stats.ling / t.encounterMomentumMaxPerLing));
+}
+
 /**
- * 打一场架的起手状态。playerHp 每场重置为 ti（本模型无跨战常驻 HP）。
+ * [M2-B1] 起手势：灵性给底，来路加减。
  *
- * [M1-P2] 开战就要把**第一回合的守备与意图**摆出来 —— 玩家在按第一颗按钮之前就该读到
+ * `ambush`（它自暗处扑出）要扣 —— 被扑个正着的人没有势。这一条是「探索遇袭比事件冲突
+ * 更难打」的**唯一**数值来源，而它写在屏幕的势条与开场那一行字上，不是背后的暗改。
+ */
+function startMomentumOf(stats: Stats, t: TaleTuning, origin: EncounterOrigin): number {
+  const base = Math.floor(stats.ling / t.encounterMomentumStartPerLing);
+  const penalty = origin === "ambush" ? t.encounterAmbushMomentumPenalty : 0;
+  return clamp(base - penalty, 0, momentumMaxOf(stats, t));
+}
+
+/** [M2-B1] 交锋起手血 ＝ round(体 × combatHpPerTi)。与寿数公式解耦（见 tuning 注释）。 */
+function combatHpOf(stats: Stats, t: TaleTuning): number {
+  return Math.max(1, Math.round(stats.ti * t.combatHpPerTi));
+}
+
+/** [M2-B1] 体给的**减伤**（每 14 点体减 1）—— 体在交锋屏上的第二个落点。 */
+function toughnessOf(stats: Stats, t: TaleTuning): number {
+  return Math.max(0, Math.floor(stats.ti / t.combatToughnessPerTi));
+}
+
+/** [M2-B1] 德给的闪避概率（整下躲开，不掉血）。 */
+function dodgeChanceOf(stats: Stats, t: TaleTuning): number {
+  return clamp(stats.de * t.combatDodgePerDe, 0, t.combatDodgeMax);
+}
+
+/** [M2-B1] 德给的暴击概率。 */
+function critChanceOf(stats: Stats, t: TaleTuning): number {
+  return clamp(stats.de * t.combatCritPerDe, 0, t.combatCritMax);
+}
+
+/**
+ * [M2-B1] 按血线算它此刻在第几段（单向推进，取最后一个满足 `hp/max ≤ at` 的段）。
+ *
+ * 无 `stages` 的敌人恒为 0 段 —— 缺省即「一段到底」，与 M1-P2 的行为逐字相同。
+ */
+function stageIndexOf(enemy: EnemyDef, enemyHp: number): number {
+  const stages = enemy.stages;
+  if (!stages || stages.length === 0) return 0;
+  const ratio = enemy.hp > 0 ? enemyHp / enemy.hp : 0;
+  let index = 0;
+  for (let i = 0; i < stages.length; i += 1) {
+    if (ratio <= (stages[i]?.at ?? 1)) index = i;
+  }
+  return index;
+}
+
+function stageDefOf(enemy: EnemyDef, index: number): EnemyStageDef | undefined {
+  return enemy.stages?.[index];
+}
+
+/**
+ * [M2-B1] 敌人此刻的出伤倍率（行为段给的）。「暴怒」既打得更重，也是玩家该换伏低的信号。
+ */
+function stageDamageMulOf(enemy: EnemyDef, index: number): number {
+  return stageDefOf(enemy, index)?.damageMul ?? 1;
+}
+
+/**
+ * [M2-B1] 弱点此刻识不识得破 —— 三条路径，全部写在屏幕上。
+ *
+ * 1. **历代所记**：花过血统点参透此兽（`loreEnemyIds`），开场即知；
+ * 2. **自己试出来**：咬中该部位 `weaknessRevealHits` 次；
+ * 3. **看出来**：打满 `weaknessRevealRounds − floor(灵/weaknessRevealPerLing)` 合（下限 1）。
+ *
+ * 三条并列而不是二选一：第 1 条是跨世积累的兑现，第 3 条是灵性 build 的回报，
+ * 第 2 条给什么都没有的 build 留一条笨办法 —— 一件只有某类 build 够得着的信息，
+ * 对别的 build 就等于不存在（P1 那条「信息模糊是该有的 build 差异，信息无用不是」）。
+ */
+function weaknessRevealedNow(
+  enemy: EnemyDef,
+  state: TaleState,
+  t: TaleTuning,
+  now: { round: number; hits: number },
+): boolean {
+  if (!enemy.weakness) return false;
+  if (state.loreEnemyIds.includes(enemy.id)) return true;
+  if (now.hits >= t.weaknessRevealHits) return true;
+  const need = Math.max(1, t.weaknessRevealRounds - Math.floor(state.stats.ling / t.weaknessRevealPerLing));
+  return now.round >= need;
+}
+
+/**
+ * [M2-B1] 开一场遭遇 —— **三条来路（起追／遇袭／事件）唯一的入口**。
+ *
+ * `origin === "hunt"` 从接近阶段开场（抽取顺序沿用 M1-P1：距离抖动 → 警觉抖动 → 风向 →
+ * 开场旁白；猎物本身由调用方先抽好）；另两条直接进交锋（抽取顺序：守备 → 意图类型 →
+ * 意图旁白，恒 3 次）。
+ */
+function beginEncounter(
+  draft: TaleState,
+  enemy: EnemyDef,
+  origin: EncounterOrigin,
+  cursor: RngCursor,
+  t: TaleTuning,
+  notices: string[],
+): void {
+  const encounter: EncounterState = {
+    enemyId: enemy.id,
+    origin,
+    phase: origin === "hunt" ? "approach" : "clash",
+    momentum: startMomentumOf(draft.stats, t, origin),
+    momentumMax: momentumMaxOf(draft.stats, t),
+    wounds: noWounds(),
+    // 花过血统点参透的兽，它的软肋是**历代所记**，开场就写在屏幕上
+    weaknessFound: enemy.weakness !== undefined && draft.loreEnemyIds.includes(enemy.id),
+    weaknessHits: 0,
+    stage: 0,
+    log: [],
+    approach: null,
+    clash: null,
+  };
+  draft.encounter = encounter;
+  // [S3] 起追／开战都算照面 —— 追丢了也数，第一回合就被咬死也数
+  noteMetEnemy(draft, enemy.id);
+
+  if (origin === "hunt") {
+    const baseDistance = enemy.startDistance ?? t.stalkStartDistance;
+    const distanceJitter = t.stalkStartDistanceJitter;
+    const distance = Math.max(
+      1,
+      Math.round(baseDistance + (distanceJitter > 0 ? cursor.int(distanceJitter * 2 + 1) - distanceJitter : 0)),
+    );
+    // [2026-08-13] 加成而不是缺省值：八头猎物全都自带 wariness，改缺省值等于没改（见 tuning 注释）
+    const baseAlert = (enemy.wariness ?? t.stalkStartAlert) + t.stalkAlertBonus;
+    const alertJitter = t.stalkStartAlertJitter;
+    const alertness = clamp(
+      Math.round(baseAlert + (alertJitter > 0 ? cursor.int(alertJitter * 2 + 1) - alertJitter : 0)),
+      0,
+      t.stalkAlertMax,
+    );
+    const winds: readonly WindDir[] = ["into", "cross", "with"];
+    const wind = winds[cursor.int(winds.length)] ?? "cross";
+    const opening = render(pickFlavor(cursor, enemy.stalkFlavor?.begin, STALK_MESSAGES.begin), {
+      enemy: enemy.name,
+    });
+    encounter.approach = {
+      distance,
+      alertness,
+      stamina: t.stalkStamina,
+      wind,
+      // 起手不确知风向：有 stalkWindTags 器官的读得出来（见 stalkPreview），没有的只能绕一圈买确定
+      windKnown: false,
+      round: 0,
+    };
+    encounter.log.push(opening);
+    notices.push(opening);
+    return;
+  }
+
+  const opening = render(
+    origin === "ambush" ? ENGINE_MESSAGES.encounterAmbush : ENGINE_MESSAGES.encounterEvent,
+    { enemy: enemy.name },
+  );
+  encounter.log.push(opening);
+  notices.push(opening);
+  openClash(draft, enemy, cursor, t, encounter.log);
+}
+
+/**
+ * [M2-B1] 摆开交锋阶段的起手状态（接近阶段转进来也走这一条）。
+ *
+ * 开场就要把**第一回合的守备与意图**摆出来 —— 玩家在按第一颗按钮之前就该读到
  * 「它护着咽喉、它要扑」。抽取顺序：守备 → 意图类型 → 意图旁白（恒 3 次，见 `rollFace`）。
  */
-function beginCombat(
+function openClash(
   draft: TaleState,
   enemy: EnemyDef,
   cursor: RngCursor,
   t: TaleTuning,
+  log: string[],
+  enemyHp: number = enemy.hp,
 ): void {
+  const encounter = draft.encounter;
+  if (!encounter) throw new Error("openClash: 当前不在遭遇中");
+  const stage = stageIndexOf(enemy, enemyHp);
   const face = rollFace(cursor, enemy, t, {
-    enemyHp: enemy.hp,
+    enemyHp,
+    wounds: encounter.wounds,
     slow: 0,
     forcedGuard: false,
+    stage,
+    de: draft.stats.de,
   });
-  draft.combat = {
-    enemyId: enemy.id,
-    enemyHp: enemy.hp,
-    playerHp: draft.stats.ti,
+  encounter.phase = "clash";
+  encounter.approach = null;
+  encounter.stage = stage;
+  encounter.clash = {
+    enemyHp,
+    playerHp: combatHpOf(draft.stats, t),
     round: 0,
     stance: "square",
     guardPart: face.guardPart,
@@ -1323,10 +1654,10 @@ function beginCombat(
     thorns: 0,
     insight: 0,
     skillCooldowns: {},
-    log: [render(ENGINE_MESSAGES.combatStart, { enemy: enemy.name })],
   };
-  // [S3] 开战即算照面 —— 哪怕这一架第一回合就把你咬死了，你也确实见过它
-  noteMetEnemy(draft, enemy.id);
+  if (encounter.weaknessFound && enemy.weakness) {
+    log.push(render(enemy.weakness.text, { enemy: enemy.name, part: BODY_PART_NAMES[enemy.weakness.part] }));
+  }
 }
 
 /**
@@ -1335,33 +1666,56 @@ function beginCombat(
  * **恒定消耗 3 次抽取**（守备 → 意图类型 → 意图旁白），`forcedGuard`（顿挫）也照抽不误 ——
  * 抽取次数随分支变化会让「同种子同操作＝同终态」变成一件要逐分支推演的事。
  *
- * 两条排除规则（都不是洁癖）：
- * - 迟滞（`slow > 0`）时不出「扑」也不出「逃」：腿被咬伤的兽扑不起来、也走不掉。宣告了
- *   做不到的事就是**骗人**，而这套设计的全部本钱就是「屏幕上写的都算数」。
- * - 血还厚时不出「逃」：满血遁走会让玩家白挨一顿莫名其妙的空。
+ * ## 三条压在意图池上的规则
+ * - **腿伤到 `woundLegNoFleeAt` 层就不出「逃」**（硬）：拖着断腿的兽走不掉。宣告了做不到的事
+ *   就是骗人，而这套设计的全部本钱就是「屏幕上写的都算数」。血还厚时同样不出「逃」。
+ * - **每层腿伤把「扑」的权重乘 `woundLegPounceMul`**（软，不排除）：全排除会让「咬腿→咬喉」
+ *   的轮转彻底删掉扑这一档，而扑的预告正是姿态那一整套决定的前提（M1-P2 实测：
+ *   只会咬腿一手对岩羊胜率 99.5%，等于一颗按钮通吃）。
+ * - **[M2-B1] 德抬高「逃」的权重**（`combatEnemyFleePerDe`）：德高的兽，凶物也敬三分。
+ *   这是德在交锋屏上三个落点里最不像数值的一个 —— 它改的是**它想不想跟你打**。
+ *
+ * [M2-B1] 守备与意图的偏好优先取**当前行为段**的（`EnemyDef.stages`），缺省沿用兽本身的。
  */
 function rollFace(
   cursor: RngCursor,
   enemy: EnemyDef,
   t: TaleTuning,
-  now: { enemyHp: number; slow: number; forcedGuard: boolean },
+  now: {
+    enemyHp: number;
+    wounds: Record<BodyPart, number>;
+    /** 技能挂的迟滞（`venom`／M1-P2 的咬腿）—— 与整场腿伤两条来源都会封掉「逃」 */
+    slow: number;
+    forcedGuard: boolean;
+    stage: number;
+    de: number;
+  },
 ): { guardPart: BodyPart; intent: EnemyIntent } {
+  const stage = stageDefOf(enemy, now.stage);
+  const guardBias = stage?.guardBias ?? enemy.guardBias;
+  const intentBias = stage?.intentBias ?? enemy.intentBias;
+  const legWounds = now.wounds.leg;
   const guardPart =
-    weightedPick(cursor, BODY_PARTS, (part) => enemy.guardBias?.[part] ?? 1) ?? "throat";
+    weightedPick(cursor, BODY_PARTS, (part) => guardBias?.[part] ?? 1) ?? "throat";
   const pool = INTENT_KINDS.filter((kind) => {
     if (kind === "flee") {
-      return now.slow <= 0 && now.enemyHp <= enemy.hp * t.combatFleeIntentHpRatio;
+      return canFlee(t, now.slow, legWounds) && now.enemyHp <= enemy.hp * t.combatFleeIntentHpRatio;
     }
     return true;
   });
   const drawn =
     weightedPick(cursor, pool, (kind) => {
-      const base = enemy.intentBias?.[kind] ?? t.combatIntentWeights[kind];
-      // 迟滞压低「扑」的权重而**不排除**它：腿伤了还是扑得起来，只是没那么频（而且伤害
-      // 已经吃了 combatSlowDamageMul 的折）。全排除会让「咬腿→咬喉」的轮转**彻底删掉**
-      // 扑这一档，而扑的预告正是姿态那一整套决定的前提 —— 实验台上量到的就是这个
-      // （只会咬腿一手对岩羊胜率 99.5%，等于一颗按钮通吃）。
-      return kind === "pounce" && now.slow > 0 ? base * t.combatSlowPounceMul : base;
+      const base = intentBias?.[kind] ?? t.combatIntentWeights[kind];
+      if (kind === "pounce") {
+        // 两条来源都压「扑」：技能挂的迟滞（一时）与整场累积的腿伤（一世）
+        return (
+          base *
+          (now.slow > 0 ? t.combatSlowPounceMul : 1) *
+          Math.pow(t.woundLegPounceMul, legWounds)
+        );
+      }
+      if (kind === "flee") return base * (1 + now.de * t.combatEnemyFleePerDe);
+      return base;
     }) ?? "bite";
   const kind: EnemyIntentKind = now.forcedGuard ? "guard" : drawn;
   const text = render(pickFlavor(cursor, enemy.combatFlavor?.intent?.[kind], COMBAT_MESSAGES.intent[kind]), {
@@ -1369,7 +1723,6 @@ function rollFace(
   });
   return { guardPart, intent: { kind, text } };
 }
-
 // ===== 追猎（M1-P1）=====
 //
 // 玩法正本：docs/plans/shiling/2026-08-12-liezhuan-m1-playable-plan.md 的「P1 追猎屏」。
@@ -1403,12 +1756,35 @@ function preyPool(content: TaleContent, t: TaleTuning): EnemyDef[] {
   });
 }
 
+/**
+ * [M2-B1] 当前遭遇的接近阶段（不在接近阶段时抛错）。
+ *
+ * 两个访问器（这个与 `clashOf`）是整套代码里**唯一**取子阶段的地方 —— 在别处写
+ * `state.encounter?.approach!` 会让「阶段不对」这类错静默地变成 undefined 上的属性访问。
+ */
+export function approachOf(state: TaleState): ApproachState | null {
+  const encounter = state.encounter;
+  return encounter && encounter.phase === "approach" ? encounter.approach : null;
+}
+
+/** [M2-B1] 当前遭遇的交锋阶段；不在交锋阶段时为 null。 */
+export function clashOf(state: TaleState): ClashState | null {
+  const encounter = state.encounter;
+  return encounter && encounter.phase === "clash" ? encounter.clash : null;
+}
+
+/** 当前遭遇的那头兽（不在遭遇中、或 id 失效时抛错）。 */
+function encounterEnemy(state: TaleState, content: TaleContent, who: string): EnemyDef {
+  const encounter = state.encounter;
+  if (!encounter) throw new Error(`${who}: 当前不在遭遇中`);
+  const enemy = enemyById(content, encounter.enemyId);
+  if (!enemy) throw new Error(`${who}: 未知敌人 ${encounter.enemyId}`);
+  return enemy;
+}
+
 function stalkPrey(state: TaleState, content: TaleContent): EnemyDef {
-  const stalk = state.stalk;
-  if (!stalk) throw new Error("stalkPrey: 当前不在追猎中");
-  const prey = enemyById(content, stalk.preyId);
-  if (!prey) throw new Error(`stalkPrey: 未知猎物 ${stalk.preyId}`);
-  return prey;
+  if (!approachOf(state)) throw new Error("stalkPrey: 当前不在接近阶段");
+  return encounterEnemy(state, content, "stalkPrey");
 }
 
 /** 逆风减半／侧风照旧／顺风翻倍。内容写坏（缺项）时退回 1，不静默把风向变成免费。 */
@@ -1430,7 +1806,7 @@ function nearAlertMul(t: TaleTuning, distance: number): number {
 
 /** 潜行能拉近的步数（疾足类 tag 加成；不会拉过头，最多到贴身）。 */
 function creepDistanceGain(state: TaleState, t: TaleTuning, tags: Set<string>): number {
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   const step = t.stalkCreepDistance + (tags.has(t.stalkSwiftTag) ? t.stalkCreepSwiftBonus : 0);
   return Math.max(0, Math.min(stalk?.distance ?? 0, step));
 }
@@ -1442,7 +1818,7 @@ function creepDistanceGain(state: TaleState, t: TaleTuning, tags: Set<string>): 
  * 「攒到多少就该扑」这类计划在第三步对不上账，那比数值不准更糟。
  */
 function creepAlertGain(state: TaleState, t: TaleTuning, tags: Set<string>): number {
-  const stalk = state.stalk;
+  const stalk = approachOf(state);
   if (!stalk) return 0;
   const after = Math.max(0, stalk.distance - creepDistanceGain(state, t, tags));
   const quiet = tags.has(t.huntHunterTag) ? t.stalkQuietAlertMul : 1;
@@ -1460,9 +1836,11 @@ function pounceChanceAt(distance: number, alertness: number, meng: number, t: Ta
 }
 
 /**
- * 起追：摆好一头具体的猎物与四个量。
+ * 起追：抽一头具体的猎物，然后开一场 `origin: "hunt"` 的遭遇。
  *
  * 抽取顺序固定（改动即打破所有既存种子的剧本）：猎物 → 距离抖动 → 警觉抖动 → 风向 → 开场旁白。
+ * 后四次抽取在 `beginEncounter` 里 —— 这里只负责「盯上哪一头」，因为**三条来路都要经过
+ * 那个入口**（M2-B1：一个状态机，不是三处各摆一套状态）。
  *
  * 风向等权三选一：**没有 `stalkWindTags` 的玩家看不见它**，所以「先绕到上风再说」是那种
  * build 的标准开局（花一点体力买确定性）；看得见风向的 build 则省下这一步 —— 信息本身
@@ -1478,51 +1856,17 @@ function beginStalk(
   const pool = preyPool(content, t);
   const prey = pool[cursor.int(pool.length)];
   if (!prey) throw new Error("beginStalk: 猎物表抽取失败");
-
-  const baseDistance = prey.startDistance ?? t.stalkStartDistance;
-  const distanceJitter = t.stalkStartDistanceJitter;
-  const distance = Math.max(
-    1,
-    Math.round(baseDistance + (distanceJitter > 0 ? cursor.int(distanceJitter * 2 + 1) - distanceJitter : 0)),
-  );
-  // [2026-08-13] 加成而不是缺省值：八头猎物全都自带 wariness，改缺省值等于没改（见 tuning 注释）
-  const baseAlert = (prey.wariness ?? t.stalkStartAlert) + t.stalkAlertBonus;
-  const alertJitter = t.stalkStartAlertJitter;
-  const alertness = clamp(
-    Math.round(baseAlert + (alertJitter > 0 ? cursor.int(alertJitter * 2 + 1) - alertJitter : 0)),
-    0,
-    t.stalkAlertMax,
-  );
-  const winds: readonly WindDir[] = ["into", "cross", "with"];
-  const wind = winds[cursor.int(winds.length)] ?? "cross";
-  const opening = render(pickFlavor(cursor, prey.stalkFlavor?.begin, STALK_MESSAGES.begin), {
-    enemy: prey.name,
-  });
-
-  draft.stalk = {
-    preyId: prey.id,
-    distance,
-    alertness,
-    stamina: t.stalkStamina,
-    wind,
-    // 起手不确知风向：有 stalkWindTags 器官的读得出来（见 stalkPreview），没有的只能绕一圈买确定
-    windKnown: false,
-    round: 0,
-    log: [opening],
-  };
-  // [S3] 起追即算照面 —— 追丢了也数，玩家确确实实盯着它看了几息
-  noteMetEnemy(draft, prey.id);
-  notices.push(opening);
+  beginEncounter(draft, prey, "hunt", cursor, t, notices);
 }
 
 /**
- * 追猎屏要显示的全部只读数（纯函数）。
+ * 接近阶段（追猎屏）要显示的全部只读数（纯函数）。
  *
- * @throws 不在追猎中时抛错 —— 界面只该在 `state.stalk` 非 null 时问它
+ * @throws 不在接近阶段时抛错 —— 界面只该在 `encounter.phase === "approach"` 时问它
  */
 export function stalkPreview(state: TaleState, content: TaleContent): StalkPreview {
-  const stalk = state.stalk;
-  if (!stalk) throw new Error("stalkPreview: 当前不在追猎中");
+  const stalk = approachOf(state);
+  if (!stalk) throw new Error("stalkPreview: 当前不在接近阶段");
   const t = lifeTuning(state, content);
   const prey = stalkPrey(state, content);
   const tags = ownedTags(state, content);
@@ -1538,7 +1882,7 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
   const alertGain = Math.min(headroom, creepAlertGain(state, t, tags));
 
   // [S3] 「图鉴知识」是读得出确数的**第二条来源**：器官读的是这一刻，图鉴读的是历代
-  const loreKnown = state.loreEnemyIds.includes(stalk.preyId);
+  const loreKnown = state.loreEnemyIds.includes(prey.id);
 
   return {
     pounceChance: pounceChanceAt(stalk.distance, stalk.alertness, meng, t),
@@ -1563,7 +1907,7 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
 }
 
 /**
- * 打一个追猎动作。
+ * 打一个**接近阶段**的动作（遭遇状态机的前半）。
  *
  * - `creep` 潜行：距离 −（疾足加成），警觉 +（顺风翻倍／逆风减半，且越近涨得越凶）。
  * - `circle` 绕至上风：风向重置为逆风，警觉 +小。**看不见风向的 build 用它买确定性。**
@@ -1576,12 +1920,18 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
  * `performAction` 刻意没跑：否则饿到只剩一季的玩家会在**猎物到嘴之前**先饿死，而
  * 「饿了就去猎」正是这游戏唯一的正解，不能自带一条必死分支。
  *
- * @throws 已死亡、不在追猎中、或猎物 id 失效时抛错
+ * ## [M2-B1] `over === "combat"` 现在是**转阶段**，不是另起一场
+ * 它把同一个 `EncounterState` 的 `phase` 从 `approach` 换成 `clash`（日志接着写、部位伤与
+ * 势带过去），并按**这一刻的警觉**结转一笔势：潜到极近、它还没起疑才失手的人，反扑时
+ * 手上是有势的。这就是「接近阶段的取舍会不会影响交锋」这个问题的答案 ——
+ * M1 那两个互斥状态位下，它的答案是「不会」。
+ *
+ * @throws 已死亡、不在接近阶段、或猎物 id 失效时抛错
  */
 export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent): StalkTurn {
   if (!state.alive) throw new Error("stalkAct: 已死亡");
-  const current = state.stalk;
-  if (!current) throw new Error("stalkAct: 当前不在追猎中");
+  const current = approachOf(state);
+  if (!current) throw new Error("stalkAct: 当前不在接近阶段");
   const prey = stalkPrey(state, content);
 
   const t = lifeTuning(state, content);
@@ -1666,19 +2016,19 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
   if (over === "escaped") say(flavor?.escape, STALK_MESSAGES.escape);
   if (over === "exhausted") say(undefined, STALK_MESSAGES.exhausted);
 
+  const encounter = draft.encounter;
+  if (!encounter) throw new Error("stalkAct: draft 丢了遭遇状态");
   if (over === null) {
-    draft.stalk = {
-      preyId: current.preyId,
+    encounter.approach = {
       distance,
       alertness,
       stamina,
       wind,
       windKnown,
       round: current.round + 1,
-      log: [...current.log, ...roundLog],
     };
+    encounter.log = [...encounter.log, ...roundLog];
   } else {
-    draft.stalk = null;
     if (caught) {
       draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
       draft.essence = addEssence(draft.essence, prey.essence);
@@ -1704,17 +2054,40 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
     }
     if (over === "combat") {
       say(flavor?.retaliate, STALK_MESSAGES.retaliate);
-      beginCombat(draft, prey, cursor, t);
-      // 附毒：扑空那一下把毒蹭了进去，敌人带伤入场。M0 的 CombatState 没有「持续中毒」
-      // 的字段（那是 P2 战斗重做要加的 blind／slow 那一族），所以 P1 落成起手血量折扣 ——
-      // 是真效果、可测，且不用先斩 P2 的接口。
-      if (tags.has(t.stalkVenomTag) && draft.combat) {
-        draft.combat.enemyHp = Math.max(1, Math.round(draft.combat.enemyHp * t.stalkVenomHpMul));
-        say(undefined, STALK_MESSAGES.venom);
+      /*
+       * [M2-B1] 结转势：警觉每低 `encounterApproachMomentumPerAlert` 点多带一点。
+       * 也就是说「悄悄逼到贴身才失手」与「顺风硬冲惊动了它才被顶回来」在交锋里不是同一个
+       * 开局 —— 前者手上有两点势（够第一合就发一记控制技），后者只有灵性给的那点底。
+       */
+      const carried = Math.floor(
+        Math.max(0, t.stalkAlertMax - alertness) / t.encounterApproachMomentumPerAlert,
+      );
+      if (carried > 0) {
+        encounter.momentum = clamp(encounter.momentum + carried, 0, encounter.momentumMax);
+        roundLog.push(ENGINE_MESSAGES.encounterCarry);
       }
+      /*
+       * 附毒：扑空那一下把毒蹭了进去，敌人带伤入场。落成起手血量折扣（而不是 `slow`
+       * 那一族的计数器）——「它带着伤上来」是接近阶段的成果，该在血条上看得见。
+       */
+      const openingHp = tags.has(t.stalkVenomTag)
+        ? Math.max(1, Math.round(prey.hp * t.stalkVenomHpMul))
+        : prey.hp;
+      if (openingHp < prey.hp) say(undefined, STALK_MESSAGES.venom);
+      openClash(draft, prey, cursor, t, roundLog, openingHp);
+    } else {
+      // 接近阶段自己收束（得手／遁走／力尽）—— 遭遇到此为止
+      draft.encounter = null;
     }
-    // 本季到此才收束（起追那一次刻意没推进）
+    /*
+     * 本季到此才收束（起追那一次刻意没推进）。
+     *
+     * **转进交锋也照收**：那一季的账（这一扑成没成、有没有吃到）已经定了，交锋是这一季
+     * 之内发生的事，不该再吃掉一季。若这一步饿死，`die` 会连整场遭遇一起清掉 ——
+     * 与 M1 的行为逐字相同（那时是清 `combat`）。
+     */
     closeSeason(draft, content, t, records, roundLog);
+    if (draft.encounter) draft.encounter.log = [...draft.encounter.log, ...roundLog];
     // [饥饿节奏批] 食余从**下一季**起算，所以落在收束之后（理由见上面 `surplusGranted` 那段）。
     // 死了就不落：一条给尸体记的余粮只会在列传与存档里留下一个没有意义的数。
     if (draft.alive && surplusGranted > 0) {
@@ -1958,9 +2331,8 @@ function die(
 ): LifeRecord {
   draft.alive = false;
   draft.ending = ending;
-  draft.combat = null;
-  // 追猎同战斗：死亡覆盖一切未收束的子系统，界面不会拿到「已死却还在追」的状态
-  draft.stalk = null;
+  // [M2-B1] 死亡覆盖整场遭遇（两个阶段一起清）：界面不会拿到「已死却还在追／还在打」的状态
+  draft.encounter = null;
   draft.wayAchieved = ending === "ascend" ? (way ?? null) : null;
   return { year: draft.year, season: draft.season, kind: "death", text, refId };
 }
@@ -1981,9 +2353,10 @@ function die(
  *
  * ## M1-P1 改动：一个狩猎回合被拆成两段
  * 狩猎不再当场结算食物。它要么撞上一桩狩猎事件（12 条 `actions:["hunt"]` 的内容仍旧入池），
- * 要么起追 —— 后者返回时 `state.stalk` 非空、`pendingEvent` 为 null，**且这一季尚未推进**
- * （步骤 3〜5 全部推迟到 `stalkAct` 判出 `over` 的那一步，两处共用 `closeSeason`）。
- * 客户端据 `state.stalk` 切到追猎屏；`availableActions` 在追猎未收束时返回空数组。
+ * 要么起追 —— 后者返回时 `state.encounter` 非空（`phase === "approach"`）、`pendingEvent`
+ * 为 null，**且这一季尚未推进**（步骤 3〜5 全部推迟到遭遇收束那一步，共用 `closeSeason`）。
+ * 客户端据 `state.encounter.phase` 切到遭遇屏的对应阶段；`availableActions` 在遭遇未收束时
+ * 返回空数组。
  *
  * ## S2 改动：探索必须说清「往哪走」
  * `performAction(state, "explore", content, { destinationId })` —— 去处**必填**。
@@ -2006,8 +2379,13 @@ export function performAction(
   options: ActionOptions = {},
 ): TurnResult {
   if (!state.alive) throw new Error("performAction: 已死亡，不能行动");
-  if (state.combat) throw new Error("performAction: 战斗未结束，先调 combatAct");
-  if (state.stalk) throw new Error("performAction: 追猎未收束，先调 stalkAct");
+  if (state.encounter) {
+    throw new Error(
+      `performAction: 遭遇未收束（${state.encounter.phase}），先调 ${
+        state.encounter.phase === "approach" ? "stalkAct" : "combatAct"
+      }`,
+    );
+  }
   if (!availableActions(state, content).includes(action)) {
     throw new Error(`performAction: 当前不可执行行动 ${action}`);
   }
@@ -2039,7 +2417,7 @@ export function performAction(
 
   // 2. 事件抽取（先刷新四道资格 flag，让本回合刚够格的成道事件当场入池，不白等一季）
   refreshWayFlags(draft, content);
-  const drawn = draft.combat ? null : drawEvent(draft, cursor, content, t, premise, action, destination);
+  const drawn = draft.encounter ? null : drawEvent(draft, cursor, content, t, premise, action, destination);
 
   /*
    * 2'. 探索：**本季没撞上事，才掷遇袭。**
@@ -2071,10 +2449,15 @@ export function performAction(
     else beginStalk(draft, cursor, content, t, notices);
   }
 
-  // 1.5 起追早退：`beginStalk` 只把猎物摆上来，这一季**刻意不推进**（否则光是起追就白耗
-  // 一季），也不抽事件（玩家此刻该盯着追猎屏，不该被别的事件插队）。季推进与死亡判定推迟到
-  // `stalkAct` 判出 `over` 的那一步，由同一个 `closeSeason` 收束。
-  if (draft.stalk) {
+  /*
+   * 1.5 起追早退：`beginStalk` 只把猎物摆上来，这一季**刻意不推进**（否则光是起追就白耗
+   * 一季），也不抽事件（玩家此刻该盯着遭遇屏，不该被别的事件插队）。季推进与死亡判定推迟到
+   * 接近阶段收束的那一步，由同一个 `closeSeason` 兑现。
+   *
+   * ⚠️ **只有接近阶段早退**。探索遇袭起的是 `phase === "clash"` 的遭遇，那一季照常收束
+   * （交锋是这一季**之内**发生的事，不该再吃掉一季）—— 与 M1 的行为逐字相同。
+   */
+  if (draft.encounter?.phase === "approach") {
     draft.records = [...state.records, ...records];
     draft.rngState = cursor.state;
     // 起追这一步不可能获得器官或秘藏，所以两个差集恒为空（省两次全表扫描）
@@ -2283,7 +2666,8 @@ function rollAmbush(
   const enemy = picked ? enemyById(content, picked.enemyId) : null;
   if (!enemy) return;
   notices.push(render(ENGINE_MESSAGES.exploreAmbush, { place: destination.name, enemy: enemy.name }));
-  beginCombat(draft, enemy, cursor, t);
+  // [M2-B1] 与起追、事件冲突走同一个入口 —— 分别只在 `origin`（它先动的手，所以起手势要扣）
+  beginEncounter(draft, enemy, "ambush", cursor, t, notices);
 }
 
 // ===== 事件抉择 =====
@@ -2379,7 +2763,11 @@ function applyEffects(
   if (effects.startCombat !== undefined) {
     const enemy = enemyById(content, effects.startCombat);
     if (!enemy) throw new Error(`applyEffects: 未知敌人 ${effects.startCombat}`);
-    beginCombat(draft, enemy, cursor, t);
+    /*
+     * [M2-B1] 事件撞上的冲突不再是另一条代码路径：同一个 `beginEncounter`，只是 origin 不同。
+     * 这里不收 `notices`（抉择那一步的旁白是 `outcomeText`），开场那一句落进遭遇自己的日志。
+     */
+    beginEncounter(draft, enemy, "event", cursor, t, []);
   }
   // [2026-08-13] 两桩「事迹」：内容明写了取命／尝神兽的分支，落到两条道的判据上
   if (effects.takesLife !== undefined && effects.takesLife > 0) {
@@ -2498,22 +2886,27 @@ export function resolveChoice(
   };
 }
 
-// ===== 搏杀（M1-P2 重做）=====
+// ===== 交锋（M1-P2 重做 · M2-B1 加深）=====
 //
-// 玩法正本：docs/plans/shiling/2026-08-12-liezhuan-m1-playable-plan.md 的「P2 搏杀屏重做」。
+// 玩法正本：M1-P2 见 `2026-08-12-liezhuan-m1-playable-plan.md`；M2-B1 见
+// `2026-08-14-liezhuan-m2-combat-core-plan.md` 的「B1」。
 //
 // M0 的战斗是四选一（战／逃／诈／器官技），而「战」在任何局面下都不比别的差 —— 于是它
-// 事实上是一颗按钮，剩下三颗是装饰。P2 把它拆成「三个部位 × 三种姿态 × 一个带冷却的技」，
-// 并给敌人加了**两个玩家出手前就看得见的量**（护着哪儿、这一回合打算干什么）。
+// 事实上是一颗按钮，剩下三颗是装饰。M1-P2 把它拆成「三个部位 × 三种姿态 × 带冷却的技」，
+// 并给敌人加了两个玩家出手前就看得见的量（护着哪儿、这一回合打算干什么）。
 //
-// 三个部位刻意做成**三种工具而不是三档伤害**：
-//   咬喉 高伤，收官；被护住则减半 ＋ 招反击。
-//   咬腿 低伤 ＋ 迟滞：拦得住要逃的敌人（否则它带走整顿肉），也压得住下一回合的重击。
-//   扑眼 极低伤 ＋ 致盲：收益随**敌人的伤害**放大 —— 打穷奇值，打野雉不值。
-// 于是「哪个最优」的答案随敌人、随血线、随它的意图变化，这正是「有得选」的定义。
+// M2-B1 要回答的是下一个问题：**一场架凭什么值 5〜10 个回合**。M1-P2 的架 2〜5 合，
+// 12 件器官、10 条组合、四项属性根本没有足够的回合去表达；而拉长回合若只是双方血更厚，
+// 那就是把同一道题重复十次。所以拉长的同时加了三条**跨回合**的经营线：
 //
-// 「诈」按计划移除：它的两半（骗过一次攻击／攒一次重击）分别由扑眼与扑击姿态承担，
-// 而且都变成了可见的、跨回合的东西，不再是一次背后掷骰。
+//   势     每合自涨、乘隙与不挨伤多涨 —— 强招（技与决杀）的唯一货币，出招节奏成为决策。
+//   部位伤 咬出来的伤**整场不消**：拆它的腿（追不上也走不掉）／废它的眼（打不中也不反击）
+//          ／放它的血（每合自己掉）。三颗咬击于是从「三种一次性工具」变成三条路线。
+//   行为段 它血过半会换打法（`EnemyDef.stages`），且各有一处**可被识破的弱点**。
+//
+// 再加上四项属性各自接到一个玩家读得到的量上（猛＝伤害／体＝血与减伤／灵＝势与识破／
+// 德＝闪避、暴击与它的退意）—— 这一条是 owner 那句「好好展示积累的各项指标的作用」的
+// 直接兑现，落在 `encounterPreview().stats` 上，界面逐项念，不藏在公式里。
 
 function rollDamage(cursor: RngCursor, meng: number, t: TaleTuning, multiplier: number): number {
   const base = t.combatDamageBase + Math.floor(meng / t.combatDamageMengDivisor);
@@ -2538,35 +2931,109 @@ function damageRange(meng: number, t: TaleTuning, multiplier: number): DamageRan
 
 const ZERO_DAMAGE: DamageRange = { mid: 0, min: 0, max: 0 };
 
-/** 我方出手的总倍率：部位 × 姿态 × （被护住则减半，它还在守势则再减一档）。 */
+/**
+ * [M2-B1] 我方受伤的**减免**（体给的），落在区间的三端上。
+ *
+ * 与倍率分开处理是刻意的：倍率是「这一下有多重」，减免是「这身皮有多厚」——
+ * 后者对轻伤的相对保护更大，那正是「体」该有的手感。下限仍是 1（它打中了就该疼），
+ * 但整段为 0（它这合不出手）时不被顶成 1。
+ */
+function softenRange(range: DamageRange, toughness: number): DamageRange {
+  if (toughness <= 0 || range.max <= 0) return range;
+  const soften = (value: number): number => (value <= 0 ? 0 : Math.max(1, value - toughness));
+  return { mid: soften(range.mid), min: soften(range.min), max: soften(range.max) };
+}
+
+/**
+ * [M2-B1] 我方出手的总倍率：部位 × 姿态 × 守备 × 弱点。
+ *
+ * **识破的弱点无视守备减伤**：它护得住的地方不是它护不住的地方 —— 若弱点还要吃减半，
+ * 「识破」这件事在守备正好压在弱点上的那一合就白识破了，而那恰是玩家最想用它的时候。
+ */
 function biteMultiplier(
   t: TaleTuning,
   part: BodyPart,
   stance: Stance,
   guarded: boolean,
   guardIntent: boolean,
+  weakPoint: boolean,
 ): number {
   const stanceOut = t.combatStanceMul[stance]?.out ?? 1;
-  const guardMul = guarded ? t.combatGuardDamageMul * (guardIntent ? t.combatGuardIntentMul : 1) : 1;
-  return (t.combatBiteMul[part] ?? 1) * stanceOut * guardMul;
+  const guardMul =
+    guarded && !weakPoint ? t.combatGuardDamageMul * (guardIntent ? t.combatGuardIntentMul : 1) : 1;
+  const weakMul = weakPoint ? t.weaknessDamageMul : 1;
+  return (t.combatBiteMul[part] ?? 1) * stanceOut * guardMul * weakMul;
 }
 
-/** 我方受伤的总倍率：意图 × 姿态 × 迟滞 × 护体。0 ＝ 它这一回合不出手。 */
+/** [M2-B1] 决杀的伤害倍率：攒了几点势就有多重（消耗全部势）。 */
+function finisherMultiplier(t: TaleTuning, stance: Stance, momentum: number): number {
+  const stanceOut = t.combatStanceMul[stance]?.out ?? 1;
+  return (t.encounterFinisherMul + momentum * t.encounterFinisherPerMomentum) * stanceOut;
+}
+
+/**
+ * 我方受伤的总倍率：意图 × 行为段 × 姿态 × 迟滞 × 腿伤 × 护体。0 ＝ 它这一回合不出手。
+ *
+ * [M2-B1] 「一场架 5〜10 合」这件事**不靠把敌人的伤害调废**：拉长的是双方的耐打
+ * （敌人血量 ×1.8 在内容里、我方血量 `combatHpPerTi` 在这里），伤害公式一个字没动 ——
+ * 否则猛的成长会跟着变废，而那是四项属性里最直白的一项。
+ */
 function incomingMultiplier(
   t: TaleTuning,
   intentKind: EnemyIntentKind,
   stance: Stance,
   slow: number,
+  legWounds: number,
   ward: number,
+  stageMul: number,
 ): number {
   const intentMul = t.combatIntentDamageMul[intentKind] ?? 1;
   if (intentMul <= 0) return 0;
   return (
     intentMul *
+    stageMul *
     (t.combatStanceMul[stance]?.in ?? 1) *
     (slow > 0 ? t.combatSlowDamageMul : 1) *
+    Math.pow(t.woundLegDamageMul, legWounds) *
     (ward > 0 ? t.combatWardDamageMul : 1)
   );
+}
+
+/**
+ * 反击的总倍率（预览与真跑共用这一份 —— M1-P2 时它在两处各抄了一遍）。
+ *
+ * 反击也是「受伤」，所以同样吃姿态与护体；**不吃迟滞与腿伤**（反口是本能，不用起势）。
+ */
+function counterMultiplier(t: TaleTuning, stance: Stance, ward: number): number {
+  return (
+    t.combatCounterDamageMul *
+    (t.combatStanceMul[stance]?.in ?? 1) *
+    (ward > 0 ? t.combatWardDamageMul : 1)
+  );
+}
+
+/**
+ * [M2-B1] 它此刻打空的概率：技能致盲 ＋ 每层眼伤。
+ *
+ * 上界是 1 而不是 `maxChance`：`combatBlindMissChance` 是内容可以调成 1 的「必空」档
+ * （测试的 `ALWAYS_MISS` 正是这么用的），拿全局概率夹紧去截它等于让那一档说话不算数。
+ */
+function enemyMissChanceOf(t: TaleTuning, blind: number, eyeWounds: number): number {
+  return clamp(fromBlindMiss(t, blind) + eyeWounds * t.woundEyeMissChance, 0, 1);
+}
+
+function fromBlindMiss(t: TaleTuning, blind: number): number {
+  return blind > 0 ? t.combatBlindMissChance : 0;
+}
+
+/** [M2-B1] 它还反不反击（技能致盲、或眼伤到了那一层就不再反口）。 */
+function canCounter(t: TaleTuning, blind: number, eyeWounds: number): boolean {
+  return blind <= 0 && eyeWounds < t.woundEyeNoCounterAt;
+}
+
+/** [M2-B1] 它还走不走得掉（腿伤到那一层就走不掉了）。 */
+function canFlee(t: TaleTuning, slow: number, legWounds: number): boolean {
+  return slow <= 0 && legWounds < t.woundLegNoFleeAt;
 }
 
 /** 逃跑成功率（正本公式 ＋ [M1-P2] 致盲加成：它看不见你往哪去）。 */
@@ -2575,22 +3042,27 @@ function fleeChanceOf(
   enemy: EnemyDef,
   t: TaleTuning,
   blind: number,
+  eyeWounds: number,
 ): number {
   return clamp(
     t.fleeBase +
       (state.stats.ling - enemy.meng) * t.fleePerLingDiff -
       enemy.fleeBias * t.fleeBiasFactor +
-      (blind > 0 ? t.combatBlindFleeBonus : 0),
+      (blind > 0 || eyeWounds > 0 ? t.combatBlindFleeBonus : 0),
     t.minChance,
     t.maxChance,
   );
 }
 
-/** 咬这个部位会附带什么。 */
-function riderOf(part: BodyPart, t: TaleTuning): { rider: "blind" | "slow" | null; rounds: number } {
-  if (part === "eye") return { rider: "blind", rounds: t.combatBlindRounds };
-  if (part === "leg") return { rider: "slow", rounds: t.combatSlowRounds };
-  return { rider: null, rounds: 0 };
+/**
+ * [M2-B1] 咬这个部位留不留**整场伤**：只有腿与眼留。
+ *
+ * 咬喉刻意不留 —— 它是**爆发**那一档（伤害 ×1.6，收官用）。若它也带一条持续线，
+ * 三颗咬击就又退化成「挑伤害最高那颗」（M1-P2 立三种工具时踩过的那个坑：
+ * 高伤的那颗若还白拿附带，另两颗的低伤就不是价钱而是纯亏）。
+ */
+function woundOf(part: BodyPart): BodyPart | null {
+  return part === "throat" ? null : part;
 }
 
 /**
@@ -2620,6 +3092,11 @@ function skillEffectsOf(skill: CombatSkillDef): CombatSkillEffect[] {
   return [...(skill.effects ?? [])];
 }
 
+/** [M2-B1] 这一手技要花几点势。 */
+function skillMomentumOf(skill: CombatSkillDef, t: TaleTuning): number {
+  return Math.max(0, Math.round(skill.momentum ?? t.encounterSkillMomentumCost));
+}
+
 /**
  * [S1] 这个技出不出伤 —— 判据是**数据写的 `damageMul === 0`**，不是从 effect 反推。
  *
@@ -2636,65 +3113,169 @@ function skillDealsDamage(skill: CombatSkillDef, t: TaleTuning): boolean {
 }
 
 /**
- * 搏杀屏要显示的全部只读数（纯函数、不消耗抽取）。
+ * [M2-B1] **遭遇屏的公共只读数** —— 接近与交锋两个阶段共用的那一套语汇。
  *
- * @throws 不在战斗中、或敌人 id 失效时抛错 —— 界面只该在 `state.combat` 非 null 时问它
+ * 它是「一套 UI 语汇」这条交付线的落点：同一张卡的头（名号／来路／行为段／弱点）、
+ * 势条、部位伤牌、四相盘、整场日志，两个阶段读的都是这一个函数；中段（四量／指令网格）
+ * 才随 `phase` 换。没有它，两个阶段就只是长得像的两块屏。
+ *
+ * @throws 不在遭遇中、或敌人 id 失效时抛错
+ */
+export function encounterPreview(state: TaleState, content: TaleContent): EncounterPreview {
+  const encounter = state.encounter;
+  if (!encounter) throw new Error("encounterPreview: 当前不在遭遇中");
+  const enemy = encounterEnemy(state, content, "encounterPreview");
+  const t = lifeTuning(state, content);
+  const clash = encounter.clash;
+  const stage = stageDefOf(enemy, encounter.stage);
+  const weakness = enemy.weakness ?? null;
+  const lingRounds = Math.max(
+    1,
+    t.weaknessRevealRounds - Math.floor(state.stats.ling / t.weaknessRevealPerLing),
+  );
+
+  return {
+    enemyId: enemy.id,
+    enemyName: enemy.name,
+    enemyDesc: enemy.desc,
+    origin: encounter.origin,
+    phase: encounter.phase,
+    momentum: encounter.momentum,
+    momentumMax: encounter.momentumMax,
+    momentumPerRound: t.encounterMomentumPerRound,
+    finisherMomentum: t.encounterFinisherMomentum,
+    wounds: { ...encounter.wounds },
+    woundCap: t.woundCap,
+    legCrippled: encounter.wounds.leg >= t.woundLegNoFleeAt,
+    eyeRuined: encounter.wounds.eye >= t.woundEyeNoCounterAt,
+    stageIndex: encounter.stage,
+    stageCount: enemy.stages?.length ?? 1,
+    stageName: stage?.name ?? null,
+    weaknessPart: weakness?.part ?? null,
+    weaknessName: weakness?.name ?? null,
+    weaknessFound: encounter.weaknessFound,
+    /*
+     * 「还差几合看得出来」也要上屏：一个数字在那儿倒数，玩家才知道「再撑两合就看出来了」
+     * 是一条真的出路（而不是又一件不知何时发生的事）。已识破或这头兽没有弱点时为 0。
+     */
+    weaknessRoundsLeft:
+      weakness === null || encounter.weaknessFound
+        ? 0
+        : Math.max(0, lingRounds - (clash?.round ?? 0)),
+    weaknessHitsLeft:
+      weakness === null || encounter.weaknessFound
+        ? 0
+        : Math.max(0, t.weaknessRevealHits - encounter.weaknessHits),
+    stats: {
+      meng: state.stats.meng,
+      ti: state.stats.ti,
+      ling: state.stats.ling,
+      de: state.stats.de,
+      biteBase: t.combatDamageBase + Math.floor(state.stats.meng / t.combatDamageMengDivisor),
+      mengBiteBonus: Math.floor(state.stats.meng / t.combatDamageMengDivisor),
+      hpMax: combatHpOf(state.stats, t),
+      toughness: toughnessOf(state.stats, t),
+      momentumMax: encounter.momentumMax,
+      momentumStart: startMomentumOf(state.stats, t, encounter.origin),
+      weaknessRoundsBase: lingRounds,
+      fleeChance: fleeChanceOf(state, enemy, t, clash?.blind ?? 0, encounter.wounds.eye),
+      dodgeChance: dodgeChanceOf(state.stats, t),
+      critChance: critChanceOf(state.stats, t),
+      enemyFleeMul: 1 + state.stats.de * t.combatEnemyFleePerDe,
+      pounceChanceBonus: state.stats.meng * t.stalkPouncePerMeng,
+    },
+    log: [...encounter.log],
+  };
+}
+
+/**
+ * 交锋屏要显示的全部只读数（纯函数、不消耗抽取）。
+ *
+ * @throws 不在交锋阶段、或敌人 id 失效时抛错 —— 界面只该在 `phase === "clash"` 时问它
  */
 export function combatPreview(state: TaleState, content: TaleContent): CombatPreview {
-  const combat = state.combat;
-  if (!combat) throw new Error("combatPreview: 当前不在战斗中");
-  const enemy = enemyById(content, combat.enemyId);
-  if (!enemy) throw new Error(`combatPreview: 未知敌人 ${combat.enemyId}`);
+  const encounter = state.encounter;
+  const combat = clashOf(state);
+  if (!encounter || !combat) throw new Error("combatPreview: 当前不在交锋阶段");
+  const enemy = encounterEnemy(state, content, "combatPreview");
   const t = lifeTuning(state, content);
   const tags = ownedTags(state, content);
   const meng = state.stats.meng;
   const guardIntent = combat.intent.kind === "guard";
+  const wounds = encounter.wounds;
+  const stageMul = stageDamageMulOf(enemy, encounter.stage);
+  const toughness = toughnessOf(state.stats, t);
+  const weakPart = encounter.weaknessFound ? (enemy.weakness?.part ?? null) : null;
 
   const bites: BitePreview[] = BODY_PARTS.map((part) => {
     const guarded = part === combat.guardPart;
-    const mul = biteMultiplier(t, part, combat.stance, guarded, guardIntent);
-    const { rider, rounds } = riderOf(part, t);
-    // 反击也是「受伤」，所以同样吃姿态与护体（不吃迟滞：反口是本能，不用起势）
-    const counterMul =
-      t.combatCounterDamageMul *
-      (t.combatStanceMul[combat.stance]?.in ?? 1) *
-      (combat.ward > 0 ? t.combatWardDamageMul : 1);
+    const weakPoint = weakPart === part;
+    const mul = biteMultiplier(t, part, combat.stance, guarded, guardIntent, weakPoint);
+    const counterMul = counterMultiplier(t, combat.stance, combat.ward);
     const damage = damageRange(meng, t, mul);
     /*
-     * 附带效果当回合就生效（且不叠加），所以「咬完之后它这一下能打我多少」按咬完的状态算。
-     * 还要减掉两种落不下来的情形：已经在生效（不叠加），以及**这一咬就把它打死了**
-     * —— 后者按 `damage.min` 判，宁可少许一件也不多许一件（`combatAct` 只在存活时挂效果）。
+     * [M2-B1] 部位伤当回合就生效（且**每一咬都留一层**，直到 `woundCap`），所以
+     * 「咬完之后它这一下能打我多少」按咬完的状态算。落不下来只剩两种情形：
+     * 已经堆满上限，以及**这一咬就把它打死了**（后者按 `damage.min` 判，宁可少许一件
+     * 也不多许一件 —— `combatAct` 只在存活时记伤）。
      */
     const survives = combat.enemyHp - damage.min > 0;
-    const riderLands =
-      survives && ((rider === "slow" && combat.slow <= 0) || (rider === "blind" && combat.blind <= 0));
-    const slowAfter = rider === "slow" && riderLands ? t.combatSlowRounds : combat.slow;
-    const blindAfter = rider === "blind" && riderLands ? t.combatBlindRounds : combat.blind;
-    const afterMul = incomingMultiplier(t, combat.intent.kind, combat.stance, slowAfter, combat.ward);
+    const stacks = wounds[part];
+    // 咬喉不留伤（`woundOf` 那条），所以它那颗按钮上恒不写「伤 N → N+1」
+    const woundLands = woundOf(part) !== null && survives && stacks < t.woundCap;
+    const legAfter = part === "leg" && woundLands ? wounds.leg + 1 : wounds.leg;
+    const eyeAfter = part === "eye" && woundLands ? wounds.eye + 1 : wounds.eye;
+    const afterMul = incomingMultiplier(
+      t,
+      combat.intent.kind,
+      combat.stance,
+      combat.slow,
+      legAfter,
+      combat.ward,
+      stageMul,
+    );
     return {
       part,
       damage,
       guarded,
-      counterChance: guarded && combat.blind <= 0 ? t.combatGuardCounterChance : 0,
-      counterDamage: damageRange(enemy.meng, t, counterMul),
-      rider,
-      riderRounds: rounds,
-      riderLands,
+      weakPoint,
+      counterChance:
+        guarded && !weakPoint && canCounter(t, combat.blind, wounds.eye) ? t.combatGuardCounterChance : 0,
+      counterDamage: softenRange(damageRange(enemy.meng, t, counterMul), toughness),
+      woundStacks: stacks,
+      woundLands,
+      /*
+       * 乘隙：咬中它**没护着**的地方多攒一点势。这一位把「避开守备」从「少挨一半伤」
+       * 升成「少挨一半伤 ＋ 攒出下一记大招」—— 于是读守备这件事在长仗里有了复利。
+       */
+      momentumGain:
+        t.encounterMomentumPerRound + (guarded ? 0 : t.encounterMomentumOpenGuard),
       stopsFlee:
-        part === "leg" && combat.intent.kind === "flee" && combat.slow <= 0 && survives,
-      incomingAfter: damageRange(enemy.meng, t, afterMul),
-      incomingAfterMissChance: blindAfter > 0 ? t.combatBlindMissChance : 0,
+        part === "leg" &&
+        combat.intent.kind === "flee" &&
+        canFlee(t, combat.slow, wounds.leg) &&
+        survives,
+      incomingAfter: softenRange(damageRange(enemy.meng, t, afterMul), toughness),
+      incomingAfterMissChance: enemyMissChanceOf(t, combat.blind, eyeAfter),
     };
   });
 
   const stances: StancePreview[] = STANCES.map((to) => {
-    const mul = incomingMultiplier(t, combat.intent.kind, to, combat.slow, combat.ward);
+    const mul = incomingMultiplier(
+      t,
+      combat.intent.kind,
+      to,
+      combat.slow,
+      wounds.leg,
+      combat.ward,
+      stageMul,
+    );
     return {
       to,
       current: to === combat.stance,
       outMul: t.combatStanceMul[to]?.out ?? 1,
       inMul: t.combatStanceMul[to]?.in ?? 1,
-      incomingIfSwitch: damageRange(enemy.meng, t, mul),
+      incomingIfSwitch: softenRange(damageRange(enemy.meng, t, mul), toughness),
     };
   });
 
@@ -2703,6 +3284,8 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     const cooldown = skill.cooldown ?? t.combatSkillCooldown;
     const cooldownLeft = Math.max(0, combat.skillCooldowns[entry.skillId] ?? 0);
     const affordable = canAfford(skill.cost, combat.playerHp, state);
+    const momentumCost = skillMomentumOf(skill, t);
+    const hasMomentum = encounter.momentum >= momentumCost;
     return {
       skillId: entry.skillId,
       organId: entry.organId,
@@ -2710,26 +3293,61 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
       name: skill.name,
       desc: skill.desc,
       effects: skillEffectsOf(skill),
-      // 两个条件都要满足才叫「能使」；不可用的**原因**分开报（见字段注释）
-      ready: cooldownLeft <= 0 && affordable,
+      // 三个条件都要满足才叫「能使」；不可用的**原因**分开报（见各自的字段注释）
+      ready: cooldownLeft <= 0 && affordable && hasMomentum,
       cooldownLeft,
       cooldown,
       cost: skill.cost ?? null,
       affordable,
+      momentumCost,
+      hasMomentum,
       damage: skillDealsDamage(skill, t)
         ? damageRange(skillStatOf(skill, state.stats), t, skillDamageMul(skill, t, combat.stance))
         : ZERO_DAMAGE,
     };
   });
 
-  const incomingMul = incomingMultiplier(t, combat.intent.kind, combat.stance, combat.slow, combat.ward);
-  const incomingDamage = damageRange(enemy.meng, t, incomingMul);
-  const missChance = combat.blind > 0 ? t.combatBlindMissChance : 0;
+  const incomingMul = incomingMultiplier(
+    t,
+    combat.intent.kind,
+    combat.stance,
+    combat.slow,
+    wounds.leg,
+    combat.ward,
+    stageMul,
+  );
+  const incomingDamage = softenRange(damageRange(enemy.meng, t, incomingMul), toughness);
+  const missChance = enemyMissChanceOf(t, combat.blind, wounds.eye);
+  const dodgeChance = dodgeChanceOf(state.stats, t);
   // roundsToLive 用「它常规出一手」而不是这一回合的意图：它守着不打时这个数不该跳成 99
-  const typicalMul = incomingMultiplier(t, "bite", combat.stance, combat.slow, combat.ward);
-  const typical = damageRange(enemy.meng, t, typicalMul).mid * (1 - missChance);
-  const bestBite = Math.max(...bites.map((bite) => bite.damage.mid));
-  const loreKnown = state.loreEnemyIds.includes(combat.enemyId);
+  const typicalMul = incomingMultiplier(
+    t,
+    "bite",
+    combat.stance,
+    combat.slow,
+    wounds.leg,
+    combat.ward,
+    stageMul,
+  );
+  const typical =
+    softenRange(damageRange(enemy.meng, t, typicalMul), toughness).mid *
+    (1 - missChance) *
+    (1 - dodgeChance);
+  const finisherReady = encounter.momentum >= t.encounterFinisherMomentum;
+  const finisher: FinisherPreview = {
+    momentumCost: encounter.momentum,
+    momentumNeeded: t.encounterFinisherMomentum,
+    ready: finisherReady,
+    damage: finisherReady
+      ? damageRange(meng, t, finisherMultiplier(t, combat.stance, encounter.momentum))
+      : ZERO_DAMAGE,
+  };
+  const bestBite = Math.max(
+    ...bites.map((bite) => bite.damage.mid),
+    finisherReady ? finisher.damage.mid : 0,
+  );
+  const loreKnown = state.loreEnemyIds.includes(enemy.id);
+  const bleedPerRound = combat.bleed > 0 ? t.combatBleedDamage : 0;
 
   return {
     stance: combat.stance,
@@ -2746,21 +3364,37 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     bites,
     stances,
     skills,
-    fleeChance: fleeChanceOf(state, enemy, t, combat.blind),
+    finisher,
+    momentum: encounter.momentum,
+    momentumMax: encounter.momentumMax,
+    wounds: { ...wounds },
+    stageName: stageDefOf(enemy, encounter.stage)?.name ?? null,
+    weaknessPart: enemy.weakness?.part ?? null,
+    weaknessFound: encounter.weaknessFound,
+    fleeChance: fleeChanceOf(state, enemy, t, combat.blind, wounds.eye),
     incomingDamage,
     incomingMissChance: missChance,
-    incomingExpected: Math.round(incomingDamage.mid * (1 - missChance) * 10) / 10,
+    dodgeChance,
+    critChance: critChanceOf(state.stats, t),
+    toughness,
+    incomingExpected:
+      Math.round(incomingDamage.mid * (1 - missChance) * (1 - dodgeChance) * 10) / 10,
     roundsToLive: typical <= 0 ? 99 : Math.min(99, Math.ceil(combat.playerHp / typical)),
-    roundsToKill: bestBite <= 0 ? 99 : Math.min(99, Math.ceil(combat.enemyHp / bestBite)),
+    roundsToKill:
+      bestBite + bleedPerRound <= 0
+        ? 99
+        : Math.min(99, Math.ceil(combat.enemyHp / (bestBite + bleedPerRound))),
     enemyHp: combat.enemyHp,
     playerHp: combat.playerHp,
+    /** 交锋血上限（体 × combatHpPerTi）—— 界面画血条要它，不该再拿 `stats.ti` 顶替 */
+    playerHpMax: combatHpOf(state.stats, t),
     blind: combat.blind,
     slow: combat.slow,
     ward: combat.ward,
     bleed: combat.bleed,
     thorns: combat.thorns,
     insight: combat.insight,
-    enemyWillFlee: combat.intent.kind === "flee" && combat.slow <= 0,
+    enemyWillFlee: combat.intent.kind === "flee" && canFlee(t, combat.slow, wounds.leg),
   };
 }
 
@@ -2780,17 +3414,18 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
  * 放在这里唯一的理由是「三个包都 import 得到 tale-sim」。
  *
  * ## 优先级链（每一条都有玩家看得见的依据）
- * 1. 这一手打得死它（按最坏情况 `damage.min` 判）→ 打最重的那一手（**技也算**）。
- * 2. 撑不过两合 → 保命：`bolt`（必定脱身）＞ 逃（掷骰）＞ `heal` ＞ `brace`。
- * 3. 它要走 → 咬腿拦住（否则整顿肉白丢）。
- * 4. 它宣告重击而它还看得见 → `brace` 硬吃那一下；没有则扑眼（致盲五成五让它整个打空）。
- * 5. 读不出意图、有 `insight` 技、且这是场长仗 → 先买知情权（后面每一合都用得上）。
- * 6. 长仗且持续类（`bleed`／`venom`／`thorns`）还没挂上 → 挂它（越早挂收得越满）。
- * 7. 伤害类技比最强的一咬更重 → 放技。
- * 8. 挨得凶而它还看得见 → 扑眼买两合。
- * 9. 长仗、而咬腿的迟滞这一口落得下来 → 咬腿钝它的势。
- * 10. 它在守（那一合本来就不挨伤）→ 换姿态。
- * 11. 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处）。
+ * 1. 这一手打得死它（按最坏情况 `damage.min` 判）→ 打最重的那一手（技与**决杀**都算）。
+ * 2. 撑不过两合 → 保命：`bolt`（必定脱身）＞ 逃（掷骰）＞ `brace` ＞ `heal`。
+ * 3. 它要走而拦得住 → 咬腿（否则整顿肉白丢）。
+ * 4. 它宣告重击 → `brace` 硬吃；没有则扑眼（眼伤当合就让它多半打空）。
+ * 5. 读不出意图、有 `insight` 技、且这是场长仗 → 先买知情权。
+ * 6. 长仗且持续类（`bleed`／`venom`／`thorns`）还没挂上 → 挂它。
+ * 7. [M2-B1] **决杀已攒够、且比最强的一咬重** → 发它（势的兑现时刻）。
+ * 8. 伤害类技比最强的一咬更重 → 放技。
+ * 9. 挨得凶而眼伤还没堆满 → 扑眼买回合。
+ * 10. 长仗、而腿伤还没到「它再也走不掉」那一层 → 咬腿把它的势钝下来。
+ * 11. 它在守（那一合本来就不挨伤）→ 换姿态。
+ * 12. 否则挑当前伤害最高的那一咬（守备会把它从咬喉赶到别处；识破的弱点会盖过守备）。
  *
  * **自伤类技的安全阀**：代价 ≥ 当前血量一半的技一律不推荐（除了第 1 条那种能收官的）——
  * `ready` 只保证「付完还活着」，而推荐一手让玩家剩 1 血的按钮是在劝他送死（同 P2 那条
@@ -2800,6 +3435,7 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
   const bites = [...preview.bites].sort((a, b) => b.damage.mid - a.damage.mid);
   const bestBite = bites[0];
   const bestBiteAct: CombatAct = { kind: "bite", part: bestBite?.part ?? "throat" };
+  const finisherAct: CombatAct = { kind: "finisher" };
   const skillAct = (skill: CombatSkillPreview): CombatAct => ({
     kind: "skill",
     skillId: skill.skillId,
@@ -2815,10 +3451,11 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
     .filter((skill) => skill.damage.mid > 0)
     .sort((a, b) => b.damage.mid - a.damage.mid)[0];
 
-  // 1. 收官：技与咬一起比，取「最坏情况也打得死」的那一手（这里不管自伤过半 —— 打完就结束了）
+  // 1. 收官：技、决杀与咬一起比，取「最坏情况也打得死」的那一手（这里不管自伤过半 —— 打完就结束了）
   const lethalSkill = [...ready]
     .filter((skill) => skill.damage.min >= preview.enemyHp)
     .sort((a, b) => b.damage.mid - a.damage.mid)[0];
+  if (preview.finisher.ready && preview.finisher.damage.min >= preview.enemyHp) return finisherAct;
   if (lethalSkill) return skillAct(lethalSkill);
   if (bestBite && bestBite.damage.min >= preview.enemyHp) return bestBiteAct;
   if (preview.roundsToKill <= 1) return bestBiteAct;
@@ -2828,9 +3465,7 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
    *
    * 排序按「它把**这场架**了结到什么程度」，不是按「这一合有多确定」：
    * `bolt` 必定脱身（威胁归零）＞ 逃（掷骰，但同样是了结）＞ `brace`（把这一下归零，
-   * 只是把死推迟一合，不解决问题）＞ `heal`（回 8 血，可能盖不住一记 2.2 倍的扑）。
-   * code-reviewer 提过把 `brace` 提到逃之前（按「确定性」排），但那会让一个必死的局面
-   * 多耗一合再死 —— 保命的目的是**活着离开**，不是活得久一点。
+   * 只是把死推迟一合，不解决问题）＞ `heal`（回 8 血，可能盖不住一记重击）。
    */
   if (preview.roundsToLive <= 2) {
     const bolt = withEffect("bolt");
@@ -2843,14 +3478,16 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
   }
 
   // 3. 它要走：读不出意图时「按兵不动」既可能是守也可能是逃 —— 拦一手的代价远小于丢掉整顿肉
+  const legBite = preview.bites.find((bite) => bite.part === "leg");
   const mayFlee = preview.intentKnown ? preview.enemyWillFlee : preview.intentClass === "hold";
-  if (mayFlee) return { kind: "bite", part: "leg" };
+  if (mayFlee && legBite?.stopsFlee !== false) return { kind: "bite", part: "leg" };
 
-  // 4. 它宣告重击：硬吃（免伤）优先于弄瞎（五成五打空）—— 前者是确定的
+  // 4. 它宣告重击：硬吃（免伤）优先于弄瞎（打空）—— 前者是确定的
+  const eyeBite = preview.bites.find((bite) => bite.part === "eye");
   if (preview.intentKnown && preview.intent.kind === "pounce") {
     const brace = withEffect("brace");
     if (brace) return skillAct(brace);
-    if (preview.blind <= 0) return { kind: "bite", part: "eye" };
+    if (eyeBite?.woundLands === true) return { kind: "bite", part: "eye" };
   }
 
   // 5. 读不出意图而买得到：知情权在长仗里每一合都用得上（这是「明识」存在的全部理由）
@@ -2875,20 +3512,38 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
     }
   }
 
-  // 7. 伤害类技比最强的一咬更重就放它（技有冷却，早放早转）
+  /*
+   * 7. [M2-B1] 决杀：攒够了、且这一记比最强的一咬更重就发。
+   *
+   * 排在伤害技之前是因为它**消耗的是攒来的势**，而势会随着回合继续涨 —— 留着不发等于
+   * 让上限吃掉后面几合的进项（势有上限，溢出的部分是白攒的）。这一条就是「出招节奏」
+   * 这件事在链上的样子：前几合咬没护着的地方攒势，攒满一记打出去，再从头攒。
+   */
+  if (preview.finisher.ready && preview.finisher.damage.mid > (bestBite?.damage.mid ?? 0)) {
+    return finisherAct;
+  }
+
+  // 8. 伤害类技比最强的一咬更重就放它（技有冷却，早放早转）
   if (hardest && hardest.damage.mid > (bestBite?.damage.mid ?? 0)) return skillAct(hardest);
 
-  // 8. 挨得凶而它还看得见 → 扑眼买两合
-  if (preview.roundsToLive <= 3 && preview.blind <= 0) return { kind: "bite", part: "eye" };
-
-  // 9. 长仗里把它的势钝下来（附带效果不叠加，所以这一手有节奏：钝完就换回咬喉输出）
-  const leg = preview.bites.find((bite) => bite.part === "leg");
-  if (preview.roundsToKill >= 3 && leg?.riderLands === true) return { kind: "bite", part: "leg" };
+  // 9. 挨得凶而眼伤还堆得上去 → 扑眼买回合
+  if (preview.roundsToLive <= 3 && eyeBite?.woundLands === true) return { kind: "bite", part: "eye" };
 
   /*
-   * 10. 它在守：那一合本来就不挨伤，拿去换姿态。
+   * 10. 长仗里把它的势钝下来。
    *
-   * **顺序是量出来的**：把这一条排到第 9 条之前，岩羊的 seer 胜率 88.8%→87.8%、
+   * [M2-B1] 判据从「迟滞这一口落不落得下来」换成「腿伤还没到**它再也走不掉**那一层」——
+   * 部位伤整场累积之后，前两层腿伤买的是「它逃不掉且扑不动」这件一劳永逸的事，
+   * 而第三层的边际收益（出伤再 ×0.86）不值一个回合。
+   */
+  if (preview.roundsToKill >= 3 && legBite?.woundLands === true && preview.wounds.leg < 2) {
+    return { kind: "bite", part: "leg" };
+  }
+
+  /*
+   * 11. 它在守：那一合本来就不挨伤，拿去换姿态。
+   *
+   * **顺序是量出来的**（M1-P2）：把这一条排到咬腿之前，岩羊的 seer 胜率 88.8%→87.8%、
    * 玄蟒的 seer+fang 67.5%→63.5% —— 守着的那一合拿去咬一口比换姿态划算，
    * 换姿态只在「这一口本来也没什么附带可捞」时才是最优。
    */
@@ -2900,46 +3555,53 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
 }
 
 /**
- * 打一个搏杀回合。
+ * 打一个**交锋阶段**的回合（遭遇状态机的后半）。
  *
  * ## 一个回合的固定顺序（不可变更）
- * 1. 玩家动作（咬／换姿态／技／逃）；咬中被护部位可能招来**即时反击**。
- *    [S1] 技先付代价（自伤／精气）再结算效果；`bolt` 那一档当场判 `fled`。
- * 2. 敌人血尽 → `win`（吞精气回饱食，写一条 combat 记录），到此结束。
- * 3. 敌人按**已宣告的意图**动作：扑／咬（致盲期间可能打空）／守（不出手）／
- *    逃（未被迟滞则 `escaped`，玩家什么也拿不到）。
+ * 1. 玩家动作（咬／换姿态／技／**决杀**／逃）；咬中被护部位可能招来**即时反击**。
+ *    [S1] 技先付代价（自伤／精气／[M2-B1] **势**）再结算效果；`bolt` 那一档当场判 `fled`。
+ *    [M2-B1] 每一咬都留下一层**整场不消**的部位伤（到 `woundCap` 封顶）。
+ * 2. 敌人血尽 → `win`（吞精气回饱食、[M2-B1] 留食余，写一条 combat 记录），到此结束。
+ * 3. 敌人按**已宣告的意图**动作：扑／咬（致盲与眼伤期间可能打空、[M2-B1] 德还可能整下闪开）／
+ *    守（不出手）／逃（腿伤未到那一层则 `escaped`，玩家什么也拿不到）。
  *    [S1] 它这一下命中我方时，若挂着反刺（`thorns`）它自伤一记；`brace` 让这一下伤害归零。
  * 4. 玩家血尽 → `dead`（ending＝slain）。
  * 5. [S1] 流血（`bleed`）在回合**末**结算 —— 它守着不动也照掉。掉光了算 `win`。
  * 6. 计数器各减一（致盲／迟滞／护体／流血／反刺／明识／技能冷却）。
- * 7. 摇下一回合的守备与意图（`rollFace`，恒 3 次抽取）—— **玩家下一次出手前就看得见**。
+ *    **部位伤不减** —— 那正是它与这一族计数器的分界。
+ * 7. [M2-B1] 结算这一回合攒到的**势**（自涨 ＋ 乘隙 ＋ 它没伤到我）。
+ * 8. [M2-B1] 按血线推进**行为段**（换了就宣告一句），并判**弱点**识不识得破。
+ * 9. 摇下一回合的守备与意图（`rollFace`，恒 3 次抽取）—— **玩家下一次出手前就看得见**。
  *
  * 反刺与流血刻意排在两处不同的地方：反刺是**对它出手的惩罚**（跟着它那一下走），
  * 流血是**独立于出手的损耗**（跟着回合走）。两者若并到一处，「它爱守」这类敌人就分不出
  * 该用哪一个了。
  *
  * ## 抽取顺序（改它就是破坏所有既存种子的剧本）
- * 咬：伤害抖动 →（被护住**且它没瞎**时）反击掷骰 → 反击伤害抖动 → 旁白；
- *   （瞎着的敌人不会反口，所以那一掷**不抽** —— 与下面敌人段的「致盲才抽打空掷骰」对称）
- * 姿态：旁白；技：（出伤时）伤害抖动 → 每条落地的效果各一次旁白；逃：成败掷骰。
- * 敌人段：（致盲时）打空掷骰 → 伤害抖动 → 旁白。
+ * 咬／决杀：**暴击掷骰**（恒抽，德为 0 也抽）→ 伤害抖动 →（被护住**且它还反得了口**时）
+ *   反击掷骰 → 反击伤害抖动 → 旁白；
+ * 姿态：旁白；技：（出伤时）暴击掷骰 → 伤害抖动 → 每条落地的效果各一次旁白；逃：成败掷骰。
+ * 敌人段（它真的出手时）：打空掷骰（**恒抽**）→ 闪避掷骰（**恒抽**）→ 伤害抖动 → 旁白。
  * ⚠️ **`brace` 那一回合少抽一次**：硬受挡下的那一下走单句旁白（`combatBraceHold`），
- * 不进变体池。同 M1-P2「被致盲的敌人不抽反击掷骰」那条例外 —— 抽取次数是玩家动作的
- * 纯函数（同种子同操作仍恒等），但它是个**例外**，写在这里免得下一个人按「恒定次数」推演。
- * 回合末的流血与反刺**不抽**（它们的旁白也是单句）。收尾：`rollFace` 的 3 次。
+ * 不进变体池。回合末的流血、喉伤、反刺、势、行为段与弱点**都不抽**（旁白都是单句）。
+ * 收尾：`rollFace` 的 3 次。
  *
- * `over` 非 null 时 `state.combat` 置 null —— 界面要自己累加每次返回的 `roundLog`
- * （战斗进行中也可以读 `state.combat.log` 拿累积日志，但结束那一刻它就没了）。
+ * 「恒抽」那两处是 M2-B1 改的：M1-P2 在 `blind <= 0` 时短路不抽，于是抽取次数随**状态**
+ * 而不只是随**动作**变化 —— 加了眼伤与闪避两个来源之后，那种短路会让「同种子同操作」
+ * 的推演要先在脑子里跑一遍状态机。
  *
- * @throws 已死亡、不在战斗中、敌人 id 失效、技不存在／未持有／还在冷却／**付不起代价**、
- *         或换成当前已在的姿态（那只是白费一回合，界面靠 `combatPreview.stances[].current` 挡住）
+ * `over` 非 null 时 `state.encounter` 置 null —— 界面要自己累加每次返回的 `roundLog`
+ * （遭遇进行中也可以读 `state.encounter.log` 拿累积日志，但结束那一刻它就没了）。
+ *
+ * @throws 已死亡、不在交锋阶段、敌人 id 失效、技不存在／未持有／还在冷却／**付不起代价或势**、
+ *         势不够而按了决杀、或换成当前已在的姿态
  */
 export function combatAct(state: TaleState, act: CombatAct, content: TaleContent): CombatTurn {
   if (!state.alive) throw new Error("combatAct: 已死亡");
-  const current = state.combat;
-  if (!current) throw new Error("combatAct: 当前不在战斗中");
-  const enemy = enemyById(content, current.enemyId);
-  if (!enemy) throw new Error(`combatAct: 未知敌人 ${current.enemyId}`);
+  const encounter = state.encounter;
+  const current = clashOf(state);
+  if (!encounter || !current) throw new Error("combatAct: 当前不在交锋阶段");
+  const enemy = encounterEnemy(state, content, "combatAct");
 
   const t = lifeTuning(state, content);
   const cursor = createCursor(state.rngState);
@@ -2960,56 +3622,98 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   let thorns = current.thorns;
   let insight = current.insight;
   const cooldowns: Record<string, number> = { ...current.skillCooldowns };
+  const wounds: Record<BodyPart, number> = { ...encounter.wounds };
+  let momentum = encounter.momentum;
+  let weaknessHits = encounter.weaknessHits;
   let over: CombatTurn["over"] = null;
   let forcedGuard = false;
   /** [S1] `brace`：这一回合它那一手的伤害归零（只管当下这一下，不留计数器） */
   let bracing = false;
+  /** [M2-B1] 这一合我咬中了它没护着的地方 —— 乘隙，多攒一点势 */
+  let openHit = false;
+  /** [M2-B1] 这一合它没伤到我（守／逃／打空／闪开／硬受）—— 多攒一点势 */
+  let unhurt = true;
   const guardIntent = current.intent.kind === "guard";
+  const stageMul = stageDamageMulOf(enemy, encounter.stage);
+  const toughness = toughnessOf(draft.stats, t);
+  const critChance = critChanceOf(draft.stats, t);
+  const dodgeChance = dodgeChanceOf(draft.stats, t);
+  const weakPart = encounter.weaknessFound ? (enemy.weakness?.part ?? null) : null;
+
+  /** [M2-B1] 一记我方伤害：暴击掷骰（恒抽）→ 伤害抖动。德给的暴击是「气运」的一半。 */
+  const strike = (stat: number, multiplier: number): { dmg: number; crit: boolean } => {
+    const crit = cursor.next() < critChance;
+    const dmg = rollDamage(cursor, stat, t, multiplier * (crit ? t.combatCritMul : 1));
+    return { dmg, crit };
+  };
+
+  /** [M2-B1] 记一层部位伤（整场不消，到 `woundCap` 封顶），并报「这一层刚好触发了什么」。 */
+  const addWound = (part: BodyPart | null): void => {
+    if (part === null || enemyHp <= 0) return;
+    const before = wounds[part];
+    if (before >= t.woundCap) return;
+    wounds[part] = before + 1;
+    if (part === "leg") {
+      if (wounds.leg === t.woundLegNoFleeAt) say(COMBAT_MESSAGES.legCrippled);
+      else say(COMBAT_MESSAGES.slowed);
+    } else if (part === "eye") {
+      if (wounds.eye === t.woundEyeNoCounterAt) say(COMBAT_MESSAGES.eyeRuined);
+      else say(COMBAT_MESSAGES.blinded);
+    }
+  };
 
   // — 1. 玩家动作 —
   switch (act.kind) {
     case "bite": {
       const guarded = act.part === current.guardPart;
-      const mul = biteMultiplier(t, act.part, stance, guarded, guardIntent);
-      const dmg = rollDamage(cursor, draft.stats.meng, t, mul);
+      const weakPoint = weakPart === act.part;
+      const mul = biteMultiplier(t, act.part, stance, guarded, guardIntent, weakPoint);
+      const { dmg, crit } = strike(draft.stats.meng, mul);
       enemyHp -= dmg;
-      if (guarded) {
+      if (act.part === enemy.weakness?.part) weaknessHits += 1;
+      if (!guarded || weakPoint) openHit = true;
+      if (guarded && !weakPoint) {
         // 反击掷骰在旁白**之前**：顺序固定才推演得动（见本函数 JSDoc 的抽取顺序）
-        const countered = blind <= 0 && cursor.next() < t.combatGuardCounterChance;
+        const countered =
+          canCounter(t, blind, wounds.eye) && cursor.next() < t.combatGuardCounterChance;
         const counterDmg = countered
-          ? rollDamage(
-              cursor,
-              enemy.meng,
-              t,
-              t.combatCounterDamageMul *
-                (t.combatStanceMul[stance]?.in ?? 1) *
-                (ward > 0 ? t.combatWardDamageMul : 1),
+          ? Math.max(
+              1,
+              rollDamage(cursor, enemy.meng, t, counterMultiplier(t, stance, ward)) - toughness,
             )
           : 0;
         say(COMBAT_MESSAGES.biteGuarded, { dmg, part: BODY_PART_NAMES[act.part] });
         if (countered) {
           playerHp -= counterDmg;
+          unhurt = false;
           say(COMBAT_MESSAGES.counter, { dmg: counterDmg });
         }
       } else {
         say(COMBAT_MESSAGES.bite[act.part], { dmg });
       }
+      if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
+      addWound(woundOf(act.part));
+      break;
+    }
+    case "finisher": {
       /*
-       * 附带效果只在它还活着、**且当前没在生效**时才落地。
+       * [M2-B1] 决杀 —— 势的兑现时刻。
        *
-       * 「不叠加」这一条是实验台逼出来的：可以每回合续上的话，只会咬腿一手就能把敌人
-       * 永久压在 0.6 倍出伤上 —— 对岩羊胜率 99.5%，三颗咬击按钮退化成一颗。不许续之后
-       * 「咬腿开局 → 咬喉输出 → 快掉了再咬一次腿」的**轮转**才是最优解，那才叫有得选。
+       * 三件事让它不是「又一颗更强的咬」：① 它**吃掉全部的势**（发完从零攒起）；
+       * ② 伤害随攒到的势线性放大（攒 6 点比攒 4 点重四成）；③ **无视守备减伤**
+       * —— 它是「等它露出破绽」的反面：攒够了就不必等破绽。
        */
-      if (enemyHp > 0) {
-        if (act.part === "eye" && blind <= 0) {
-          blind = t.combatBlindRounds;
-          say(COMBAT_MESSAGES.blinded);
-        } else if (act.part === "leg" && slow <= 0) {
-          slow = t.combatSlowRounds;
-          say(COMBAT_MESSAGES.slowed);
-        }
+      if (momentum < t.encounterFinisherMomentum) {
+        throw new Error(`combatAct: 决杀需要 ${t.encounterFinisherMomentum} 点势（现有 ${momentum}）`);
       }
+      const spent = momentum;
+      momentum = 0;
+      const { dmg, crit } = strike(draft.stats.meng, finisherMultiplier(t, stance, spent));
+      enemyHp -= dmg;
+      openHit = true;
+      if (act.kind === "finisher" && weakPart !== null) weaknessHits += 0;
+      say(COMBAT_MESSAGES.finisher, { dmg });
+      if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
       break;
     }
     case "stance": {
@@ -3029,10 +3733,16 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       /*
        * [S1] 代价先付，且付不起就抛错 —— 不做「打个折照样能放」的兜底。
        * 屏幕上写了「精气 −8」而实际不扣，就是这一批最不该出现的那种谎。
+       * [M2-B1] 势是第三样代价，同待遇。
        */
+      const momentumCost = skillMomentumOf(skill, t);
+      if (momentum < momentumCost) {
+        throw new Error(`combatAct: ${skill.name}要 ${momentumCost} 点势（现有 ${momentum}）`);
+      }
       if (!canAfford(skill.cost, playerHp, state)) {
         throw new Error(`combatAct: ${skill.name}的代价此刻付不起`);
       }
+      momentum -= momentumCost;
       const cost = skill.cost;
       if (cost?.kind === "hp") {
         playerHp -= cost.amount;
@@ -3043,16 +3753,15 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
 
       const effects = skill.effects ?? [];
       if (skillDealsDamage(skill, t)) {
-        const dmg = rollDamage(
-          cursor,
+        const { dmg, crit } = strike(
           skillStatOf(skill, draft.stats),
-          t,
           skillDamageMul(skill, t, stance),
         );
         enemyHp -= dmg;
         roundLog.push(
           render(ENGINE_MESSAGES.combatSkillHit, { skill: skill.name, enemy: enemy.name, dmg }),
         );
+        if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
       } else {
         roundLog.push(render(ENGINE_MESSAGES.combatSkillUse, { skill: skill.name, enemy: enemy.name }));
       }
@@ -3065,7 +3774,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       for (const effect of effects) {
         switch (effect) {
           case "heal":
-            playerHp = Math.min(draft.stats.ti, playerHp + t.combatSkillHealAmount);
+            playerHp = Math.min(combatHpOf(draft.stats, t), playerHp + t.combatSkillHealAmount);
             say(COMBAT_MESSAGES.healed);
             break;
           case "armor":
@@ -3085,7 +3794,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
             say(COMBAT_MESSAGES.braced);
             break;
           case "bolt":
-            // 位移类：不掷骰的遁走。它的价钱是精气（见内容表），所以「必定脱身」不是白拿的
+            // 位移类：不掷骰的遁走。它的价钱是精气与势（见内容表），所以「必定脱身」不是白拿的
             over = "fled";
             say(COMBAT_MESSAGES.bolted);
             break;
@@ -3120,7 +3829,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       break;
     }
     case "flee": {
-      if (cursor.next() < fleeChanceOf(draft, enemy, t, blind)) {
+      if (cursor.next() < fleeChanceOf(draft, enemy, t, blind, wounds.eye)) {
         over = "fled";
         roundLog.push(ENGINE_MESSAGES.combatFleeOk);
       } else {
@@ -3133,9 +3842,9 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   /**
    * 取胜的战利品与记账。
    *
-   * [S1] 抽成闭包是因为**现在有两个地方能打死它**：玩家出手（步骤 2）与回合末的流血
-   * （步骤 5）。两处各写一份的话，「被流血放倒的那头兽」会漏掉精气、饱食、夺命数与
-   * combat 记录 —— 而那正是「妖王」那条道的判据，漏了不会有任何测试变红。
+   * [S1] 抽成闭包是因为**有两个地方能打死它**：玩家出手（步骤 2）与回合末的流血（步骤 5）。
+   * 各写一份的话，「被流血放倒的那头兽」会漏掉精气、饱食、夺命数与 combat 记录 ——
+   * 而那正是「妖王」那条道的判据，漏了不会有任何测试变红。
    */
   const winSpoils = (): void => {
     over = "win";
@@ -3153,6 +3862,18 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
           ),
     );
     draft.hunger = clamp(draft.hunger + t.combatWinHungerGain, 0, t.hungerMax);
+    /*
+     * [M2-B1] 打赢也留食余 —— 这一批点击账的主要抵消项（饥饿节奏批的遗留 3）。
+     * 一场硬仗换来此后几季不必出猎，正好抵掉「一场架从 3 合变成 7 合」多出来的点击。
+     */
+    const surplus = Math.max(
+      0,
+      Math.round((enemy.surplusSeasons ?? t.huntSurplusSeasons) * t.combatWinSurplusMul),
+    );
+    if (surplus > 0) {
+      draft.surplusSeasons = Math.max(draft.surplusSeasons, surplus);
+      roundLog.push(render(ENGINE_MESSAGES.combatWinSurplus, { seasons: cnNumeral(surplus) }));
+    }
     // [2026-08-13] 搏杀取胜也是夺了一命；战胜神兽另记一笔（登神门槛之一）
     draft.livesTaken += 1;
     if (enemy.tags.includes(t.wayDivineTag)) {
@@ -3178,30 +3899,45 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
         say(COMBAT_MESSAGES.enemyHold);
         break;
       case "flee":
-        if (slow > 0) {
-          // 咬腿把它的退路断了 —— 这条分支是「咬腿」独一份用处的兑现
+        if (!canFlee(t, slow, wounds.leg)) {
+          // 拦住它的退路 —— 这条分支是「咬腿」独一份用处的兑现（一时的迟滞或整场的断腿）
           say(COMBAT_MESSAGES.fleeBlocked);
         } else {
           /*
            * 它走成了。**即使它正流着血、且这一合末就会流干，也照样是 escaped**
-           * （流血在步骤 5 结算，而这里是步骤 3）—— 有意如此：拦逃的工具是**咬腿**
-           * （迟滞），不是「挂个持续伤害等它自己倒下」。若流血能追着跑掉的兽结算，
-           * 「咬腿拦逃」这条 M1-P2 立起来的用处就被一个无关的效果绕开了。
+           * （失血在步骤 5 结算，而这里是步骤 3）—— 有意如此：拦逃的工具是**咬腿**，
+           * 不是「挂个持续伤害等它自己倒下」。
            */
           over = "escaped";
           say(COMBAT_MESSAGES.enemyFled);
         }
         break;
       default: {
-        const missed = blind > 0 && cursor.next() < t.combatBlindMissChance;
+        // 打空与闪避两掷**恒抽**（见 JSDoc 的抽取顺序）：抽取次数只随动作变，不随状态变
+        const missRoll = cursor.next();
+        const dodgeRoll = cursor.next();
+        const missed = missRoll < enemyMissChanceOf(t, blind, wounds.eye);
+        const dodged = !missed && dodgeRoll < dodgeChance;
+        const mul = incomingMultiplier(
+          t,
+          current.intent.kind,
+          stance,
+          slow,
+          wounds.leg,
+          ward,
+          stageMul,
+        );
+        // 抖动照抽 —— 抽取次数不随分支变化
+        const rolled = Math.max(1, rollDamage(cursor, enemy.meng, t, mul) - toughness);
         if (missed) {
           say(COMBAT_MESSAGES.enemyMiss);
+        } else if (dodged) {
+          say(COMBAT_MESSAGES.dodge);
         } else {
-          const mul = incomingMultiplier(t, current.intent.kind, stance, slow, ward);
-          // [S1] `brace`（硬受）：这一下的伤害归零。抖动照抽 —— 抽取次数不随分支变化
-          const rolled = rollDamage(cursor, enemy.meng, t, mul);
+          // [S1] `brace`（硬受）：这一下的伤害归零
           const dmg = bracing ? 0 : rolled;
           playerHp -= dmg;
+          if (dmg > 0) unhurt = false;
           if (bracing) {
             roundLog.push(render(ENGINE_MESSAGES.combatBraceHold, { enemy: enemy.name }));
           } else {
@@ -3233,8 +3969,8 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   /*
    * — 4.5／5. 反刺或流血把它放倒 —
    *
-   * 顺序刻意是「先判我方死、再结算流血」：同一回合两边都归零时**死亡优先**（死了就是死了，
-   * 不存在「我倒下的同时它也失血而亡，于是我赢了」）。流血在回合末结算是它与迟滞的分界：
+   * 顺序刻意是「先判我方死、再结算失血」：同一回合两边都归零时**死亡优先**（死了就是死了，
+   * 不存在「我倒下的同时它也失血而亡，于是我赢了」）。失血在回合末结算是它与迟滞的分界：
    * 它守着不动也照掉。
    */
   if (over === null && enemyHp <= 0) winSpoils();
@@ -3246,7 +3982,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     if (enemyHp <= 0) winSpoils();
   }
 
-  // — 6. 计数器各减一（先让这一回合吃满效果，再衰减）—
+  // — 6. 计数器各减一（先让这一回合吃满效果，再衰减）。**部位伤不减** —
   blind = Math.max(0, blind - 1);
   slow = Math.max(0, slow - 1);
   ward = Math.max(0, ward - 1);
@@ -3259,17 +3995,61 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     else cooldowns[id] = left;
   }
 
+  // — 7. [M2-B1] 这一回合攒到的势 —
+  momentum = clamp(
+    momentum +
+      t.encounterMomentumPerRound +
+      (openHit ? t.encounterMomentumOpenGuard : 0) +
+      (unhurt ? t.encounterMomentumUnhurt : 0),
+    0,
+    encounter.momentumMax,
+  );
+
   const round = current.round + 1;
   if (over === "dead") {
     records.push(
       die(draft, "slain", render(ENGINE_MESSAGES.deathSlain, { enemy: enemy.name }), enemy.id),
     );
   }
-  if (over === null) {
-    // — 7. 下一回合的脸（玩家出手前就看得见）—
-    const face = rollFace(cursor, enemy, t, { enemyHp, slow, forcedGuard });
-    draft.combat = {
-      enemyId: current.enemyId,
+
+  const draftEncounter = draft.encounter;
+  if (over === null && draftEncounter) {
+    // — 8. [M2-B1] 行为段与弱点：两件「它变了／我看懂了」的事，都要当场宣告 —
+    const nextStage = stageIndexOf(enemy, enemyHp);
+    if (nextStage > encounter.stage) {
+      const def = stageDefOf(enemy, nextStage);
+      roundLog.push(
+        render(def?.text ?? ENGINE_MESSAGES.encounterStage, { enemy: enemy.name }),
+      );
+    }
+    const foundNow =
+      encounter.weaknessFound ||
+      weaknessRevealedNow(enemy, draft, t, { round, hits: weaknessHits });
+    if (foundNow && !encounter.weaknessFound && enemy.weakness) {
+      roundLog.push(
+        render(enemy.weakness.text, {
+          enemy: enemy.name,
+          part: BODY_PART_NAMES[enemy.weakness.part],
+        }),
+      );
+    }
+
+    // — 9. 下一回合的脸（玩家出手前就看得见）—
+    const face = rollFace(cursor, enemy, t, {
+      enemyHp,
+      wounds,
+      slow,
+      forcedGuard,
+      stage: nextStage,
+      de: draft.stats.de,
+    });
+    draftEncounter.momentum = momentum;
+    draftEncounter.wounds = wounds;
+    draftEncounter.weaknessFound = foundNow;
+    draftEncounter.weaknessHits = weaknessHits;
+    draftEncounter.stage = nextStage;
+    draftEncounter.log = [...encounter.log, ...roundLog];
+    draftEncounter.clash = {
       enemyHp,
       playerHp,
       round,
@@ -3283,10 +4063,9 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       thorns,
       insight,
       skillCooldowns: cooldowns,
-      log: [...current.log, ...roundLog],
     };
   } else {
-    draft.combat = null;
+    draft.encounter = null;
   }
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;

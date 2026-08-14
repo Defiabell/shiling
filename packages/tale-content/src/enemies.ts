@@ -27,10 +27,30 @@
  * 狩齿／毒腺／铁鬃那条线，就必须冒真打的风险，这是「稳妥 vs 稀有器官线索」这条抉择原则的
  * 数值底座。
  *
- * ## 战斗强度参照（playerHp ＝ ti，起手 20 上下；玩家每回合伤害 3＋floor(meng/8)）
- * 野雉/穴鼠/文鳐鱼 = 两三回合可下；岩羊 = 五回合，会掉半血；草狐 = 早期必须考虑逃；
- * 山魈/玄蟒 = 中期带器官技才谈得上打；穷奇幼崽 = 全内容库最硬的一堵墙，正面赢它多半要
- * ti≥45、有战斗技，且诈术先手。
+ * ## [M2-B1] 战斗强度参照（playerHp ＝ round(体×1.6)，起手 42；玩家每回合伤害 3＋floor(猛/8)，
+ * 咬喉再 ×1.6；敌人出伤全局 ×`combatEnemyDamageMul`）
+ *
+ * 八头的血量在这一批整体上调（约 ×1.8），目标是**一场架 5〜10 合**：M1-P2 的 2〜5 合装不下
+ * 势、部位伤、行为段与弱点这四条跨回合的线 —— 一场三回合的架里，任何「经营」都还没开始
+ * 就结束了。血量上调的同时敌人出伤打了折（见 tuning），所以拉长的是**双方**的耐打，
+ * 不是把玩家的伤害调废。
+ *
+ * 野雉/穴鼠/文鳐鱼 = 三四合可下（它们本来就不是给你打的）；岩羊 = 五六合，扑空那一场真打；
+ * 草狐 = 早期必须考虑逃；山魈/玄蟒 = 中期带技才谈得上打；穷奇幼崽 = 全库最硬的一堵墙，
+ * 也是唯一没有弱点的一头 —— 它那道题的答案是「逃不逃」。
+ *
+ * ## [M2-B1] 行为段与弱点
+ * 八头全部填了 `stages`（2〜3 段），七头有 `weakness`。两件事分工不同：
+ * - **行为段**回答「这场架的第 6 合与第 2 合有什么不一样」（它血过半会换打法，且当场宣告）；
+ * - **弱点**回答「我这几合到底学到了什么」（识破之后那一处 ×1.6 且**无视守备**）。
+ *
+ * 弱点刻意有两头是**它自己护着的地方**（草狐护眼而弱点在眼、玄蟒护喉而七寸在喉）——
+ * 那是这套机制最好的一处兑现：同一颗按钮在同一头兽身上，从全场最差翻成全场最优，
+ * 靠的只是「你看懂了没有」。
+ *
+ * ## [M2-B1] 强敌也留食余
+ * 草狐 2／山魈 3／玄蟒 4／穷奇 5 季（打赢按 `combatWinSurplusMul` 打七折落账）。
+ * 一场硬仗换来此后几季不必出猎 —— 这是「遭遇变长」那几次点击的抵消项。
  */
 
 import type { EnemyDef } from "@shiling/tale-sim";
@@ -93,7 +113,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_YE_ZHI,
     name: "野雉",
     meng: 4,
-    hp: 6,
+    hp: 10,
     tags: ["beast", "prey", "bird"],
     essence: { zu: 16, lin: 4 },
     fleeBias: -12,
@@ -105,6 +125,21 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 靠腿逃的鸟：护后腿、动不动就想走 —— 它是「咬腿拦逃」这条机制的教具
     guardBias: { throat: 1, leg: 3, eye: 1 },
     intentBias: { pounce: 4, bite: 34, guard: 12, flee: 40 },
+    // 一只鸟被逼到墙角只剩一条路：拼命扑腾。血过四成就再也不想着走了
+    stages: [
+      { at: 1, name: "惊走", text: "" },
+      {
+        at: 0.4,
+        name: "垂死",
+        text: "{{enemy}}再也跑不动了 —— 它转过身来，翅膀张到最开。",
+        intentBias: { pounce: 40, bite: 40, guard: 14, flee: 2 },
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "颈下裸皮",
+      text: "看清了：{{enemy}}颈下那一圈没有羽毛，皮薄得能看见血管。",
+    },
     combatFlavor: {
       intent: {
         pounce: ["{{enemy}}张开翅膀，要往你脸上扑。", "它把翅根一抬 —— 要拍上来了。"],
@@ -149,7 +184,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_WEN_YAO,
     name: "文鳐鱼",
     meng: 5,
-    hp: 8,
+    hp: 12,
     tags: ["beast", "prey", "fish"],
     essence: { lin: 20 },
     fleeBias: -8,
@@ -161,6 +196,21 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 离了水就只剩瞪着你：护眼，且滑不留手（会溜）
     guardBias: { throat: 1, leg: 1, eye: 3 },
     intentBias: { pounce: 8, bite: 40, guard: 14, flee: 30 },
+    // 离了水的鱼先是拼命想滑回去，滑不动了就只剩鳍在拍
+    stages: [
+      { at: 1, name: "滑走", text: "" },
+      {
+        at: 0.5,
+        name: "搁浅",
+        text: "水离得太远了。{{enemy}}的鳍拍在干石上，再滑不回去。",
+        intentBias: { pounce: 4, bite: 60, guard: 30, flee: 6 },
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "鳃盖之下",
+      text: "看清了：{{enemy}}张合的鳃盖底下是一层薄膜，齿一挑就破。",
+    },
     stalkFlavor: {
       begin: [
         "浅滩上银光一闪 —— 一尾文鳐鱼搁在半露的石背上晒鳞。",
@@ -194,7 +244,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_XUE_SHU,
     name: "穴鼠",
     meng: 4,
-    hp: 7,
+    hp: 11,
     tags: ["beast", "prey"],
     essence: { xue: 18, zu: 2 },
     fleeBias: -10,
@@ -206,6 +256,22 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 一惊往洞里钻：护后腿，逃意最重
     guardBias: { throat: 1, leg: 3, eye: 1 },
     intentBias: { pounce: 4, bite: 30, guard: 12, flee: 46 },
+    // 它满脑子只有洞口；进不了洞的穴鼠会咬人，且咬得很凶
+    stages: [
+      { at: 1, name: "奔洞", text: "" },
+      {
+        at: 0.45,
+        name: "困兽",
+        text: "洞口被挡住了。{{enemy}}缩起背，露出两颗门齿。",
+        intentBias: { pounce: 20, bite: 56, guard: 20, flee: 4 },
+        damageMul: 1.2,
+      },
+    ],
+    weakness: {
+      part: "eye",
+      name: "凸出的小眼",
+      text: "看清了：{{enemy}}的眼球凸在头侧，一爪就能拍到。",
+    },
     stalkFlavor: {
       begin: [
         "土坡上新翻出一堆浮土，一只穴鼠正把头探在洞口外。",
@@ -236,7 +302,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_YAN_YANG,
     name: "岩羊",
     meng: 10,
-    hp: 14,
+    hp: 26,
     tags: ["beast", "prey", "horn"],
     essence: { meng: 10, zu: 10 },
     fleeBias: 4,
@@ -260,6 +326,25 @@ export const ENEMIES: readonly EnemyDef[] = [
      */
     guardBias: { throat: 4, leg: 1, eye: 1 },
     intentBias: { pounce: 44, bite: 34, guard: 20, flee: 2 },
+    /*
+     * 两段：前段仗着石棱一顶再顶，后段蹄子站不住了就只剩硬撑。
+     * 它是「弱点无视守备」这条机制的第一个教具 —— 双角把咽喉压得死死的（护喉权重 4），
+     * 而它真正的软肋在**后蹄**：咬腿这颗低伤按钮在它身上是全场最优。
+     */
+    stages: [
+      { at: 1, name: "据石", text: "" },
+      {
+        at: 0.45,
+        name: "失蹄",
+        text: "{{enemy}}的后蹄在碎石上打了个滑 —— 它不敢再冲了。",
+        intentBias: { pounce: 16, bite: 40, guard: 40, flee: 4 },
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "后蹄的旧裂",
+      text: "看清了：{{enemy}}的一只后蹄裂了道旧口，它一直不敢把重量压上去。",
+    },
     combatFlavor: {
       intent: {
         pounce: [
@@ -311,7 +396,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_CAO_HU,
     name: "草狐",
     meng: 14,
-    hp: 18,
+    hp: 34,
     tags: ["beast"],
     essence: { zu: 12, meng: 10 },
     fleeBias: 0,
@@ -322,6 +407,30 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 眼极亮、也一直盯着你：护眼 → 致盲这条路对它不通，得改咬腿放血
     guardBias: { throat: 2, leg: 1, eye: 4 },
     intentBias: { pounce: 24, bite: 44, guard: 22, flee: 14 },
+    // 尸首够两季 —— 打赢一场硬仗此后不必急着出猎（点击账的抵消项之一）
+    surplusSeasons: 2,
+    // 「狐都记仇」：见了血就不再周旋，扑得凶且不肯走
+    stages: [
+      { at: 1, name: "周旋", text: "" },
+      {
+        at: 0.5,
+        name: "记仇",
+        text: "{{enemy}}舔了一口自己的血，眼睛更亮了 —— 它不打算走了。",
+        intentBias: { pounce: 46, bite: 44, guard: 10, flee: 0 },
+      },
+    ],
+    /*
+     * **它护着的正是它的软肋**：护眼权重 4，而弱点也在眼。
+     *
+     * 这是「识破弱点无视守备」最好的一处兑现 —— 没识破时扑眼是全场最差的一手
+     * （低伤 ＋ 减半 ＋ 招反击），识破之后它变成最优。同一颗按钮在同一头兽身上翻转，
+     * 靠的只是「你看懂了没有」。
+     */
+    weakness: {
+      part: "eye",
+      name: "那双太亮的眼",
+      text: "它护得太紧了 —— {{enemy}}护着眼，正因为那双眼是它唯一护得住的软处。",
+    },
     combatFlavor: {
       intent: {
         pounce: ["{{enemy}}的脊背压成一道弓 —— 它要扑。", "它后腿一沉，眼睛盯住你的喉。"],
@@ -335,7 +444,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_SHAN_XIAO,
     name: "山魈",
     meng: 20,
-    hp: 26,
+    hp: 48,
     tags: ["beast", "humanoid"],
     essence: { meng: 16, xue: 8 },
     fleeBias: 6,
@@ -346,6 +455,23 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 两臂过膝，护在胸前：护咽喉；打法只有硬碰硬（靠姿态与器官技）
     guardBias: { throat: 4, leg: 2, eye: 1 },
     intentBias: { pounce: 38, bite: 40, guard: 16, flee: 6 },
+    surplusSeasons: 3,
+    // 人形的东西打起来会「上头」：血过半之后又快又重，那正是该换伏低的一段
+    stages: [
+      { at: 1, name: "探手", text: "" },
+      {
+        at: 0.55,
+        name: "暴起",
+        text: "{{enemy}}忽然直起身子，赤面涨成紫黑 —— 它不再试探了。",
+        intentBias: { pounce: 56, bite: 36, guard: 8, flee: 0 },
+        damageMul: 1.25,
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "膝后的筋",
+      text: "看清了：{{enemy}}两臂过膝，全身的力都撑在那两条腿的筋上。",
+    },
     combatFlavor: {
       intent: {
         pounce: ["{{enemy}}把两臂张开 —— 它要整个人压下来。", "它弓起背，长臂在地上一撑。"],
@@ -359,7 +485,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_XUAN_MANG,
     name: "玄蟒",
     meng: 26,
-    hp: 34,
+    hp: 60,
     tags: ["beast", "venom"],
     essence: { xue: 20, lin: 12 },
     fleeBias: 12,
@@ -374,6 +500,33 @@ export const ENEMIES: readonly EnemyDef[] = [
      */
     guardBias: { throat: 4, leg: 1, eye: 2 },
     intentBias: { pounce: 20, bite: 30, guard: 48, flee: 2 },
+    surplusSeasons: 4,
+    /*
+     * 三段，全库最长的一场。它前段只是等（守 48），中段缠上来，末段把整条身子都赌进去 ——
+     * 一个只会「趁它守着换姿态」的玩家会在第二段被打个措手不及，那正是「多段行为」
+     * 要制造的那种「它变了」。
+     */
+    stages: [
+      { at: 1, name: "盘踞", text: "" },
+      {
+        at: 0.55,
+        name: "缠上",
+        text: "{{enemy}}的盘忽然松开，整条身子朝你压过来 —— 它不等了。",
+        intentBias: { pounce: 42, bite: 44, guard: 14, flee: 0 },
+      },
+      {
+        at: 0.22,
+        name: "垂死",
+        text: "{{enemy}}的头已经抬不高了，只剩尾在地上一下一下地抽。",
+        intentBias: { pounce: 8, bite: 62, guard: 30, flee: 0 },
+        damageMul: 1.3,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "七寸",
+      text: "看清了：{{enemy}}的头下七寸处鳞色稍淡 —— 打蛇打七寸，说的就是那儿。",
+    },
     combatFlavor: {
       intent: {
         pounce: ["{{enemy}}的前段忽然离地 —— 它要弹出来。", "它把身子绷成一条直线。"],
@@ -387,7 +540,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: ENEMY_QIONG_QI,
     name: "穷奇幼崽",
     meng: 34,
-    hp: 44,
+    hp: 78,
     tags: ["beast", "divine"],
     essence: { meng: 32, xue: 8 },
     fleeBias: 16,
@@ -398,6 +551,29 @@ export const ENEMIES: readonly EnemyDef[] = [
     // 全内容库最硬的一堵墙：守备均等（没有软肋可挑）、扑极多、绝不逃 —— 该做的判断是「逃不逃」
     guardBias: { throat: 2, leg: 2, eye: 2 },
     intentBias: { pounce: 52, bite: 34, guard: 14, flee: 0 },
+    surplusSeasons: 5,
+    /*
+     * 三段，越打越凶 —— 它是全库唯一**没有弱点**的一头（守备均等、无软肋）。
+     * 该做的判断因此不是「找破绽」而是「逃不逃」，而三段的宣告正是那道题的计时器：
+     * 进「暴怒」还没打掉一半血，就该走了。
+     */
+    stages: [
+      { at: 1, name: "戏弄", text: "" },
+      {
+        at: 0.6,
+        name: "暴怒",
+        text: "{{enemy}}啼声一变，猬毛倒竖 —— 它不再把你当玩物了。",
+        intentBias: { pounce: 64, bite: 30, guard: 6, flee: 0 },
+        damageMul: 1.3,
+      },
+      {
+        at: 0.25,
+        name: "濒死",
+        text: "{{enemy}}的小翼垂了下来，可它把仅剩的力气全压在爪上。",
+        intentBias: { pounce: 44, bite: 34, guard: 22, flee: 0 },
+        damageMul: 1.15,
+      },
+    ],
     combatFlavor: {
       intent: {
         pounce: ["{{enemy}}肩上的小翼张开了 —— 这一下躲不掉。", "它把爪抵在石上，虎身压低。"],

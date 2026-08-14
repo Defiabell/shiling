@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { combatPreview, type CombatState, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import { combatPreview, type TaleContent, type TaleState } from "@shiling/tale-sim";
 import { buildCombatVm, recommendCombatActId } from "../src/model/combatVm.js";
-import { FIXTURE_CONTENT, combatState, newState, withPatch } from "./helpers.js";
+import { FIXTURE_CONTENT, fightingState, makeContent, newState, withPatch, type ClashPatch } from "./helpers.js";
 
 /** 灵蕴神种（fixture）＋雾目 = 带 night-eye，也就是 BASELINE 的 combatIntentTags 之一。 */
 const SEER_ORGAN = "wu-mu";
@@ -10,9 +10,9 @@ function seeing(state: TaleState): TaleState {
   return withPatch(state, { organIds: [...state.organIds, SEER_ORGAN] });
 }
 
-function vm(patch: Partial<CombatState> = {}, state: TaleState = newState()) {
-  const combat = combatState(patch);
-  return buildCombatVm(withPatch(state, { combat }), combat, FIXTURE_CONTENT);
+function vm(patch: ClashPatch = {}, state: TaleState = newState()) {
+  const next = fightingState(state, patch);
+  return buildCombatVm(next, next.encounter!.clash!, FIXTURE_CONTENT);
 }
 
 function actionById(actions: ReturnType<typeof vm>["actions"], id: string) {
@@ -69,8 +69,8 @@ describe("buildCombatVm：血条与基本盘", () => {
 
 describe("buildCombatVm：三颗咬击按钮都写着按下去会发生什么", () => {
   it("每颗按钮的伤害与引擎预览逐字一致（界面不自己算公式）", () => {
-    const combat = combatState({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" });
-    const state = withPatch(newState(), { combat });
+    const state = fightingState(newState(), { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" });
+    const combat = state.encounter!.clash!;
     const preview = combatPreview(state, FIXTURE_CONTENT);
     const view = buildCombatVm(state, combat, FIXTURE_CONTENT);
     for (const bite of preview.bites) {
@@ -84,11 +84,36 @@ describe("buildCombatVm：三颗咬击按钮都写着按下去会发生什么", 
     }
   });
 
-  it("咬腿写明「它迟滞 N 合」、扑眼写明「它盲 N 合」，咬喉不写附带", () => {
+  it("[M2-B1] 咬腿／扑眼写明这一咬留下第几层伤，咬喉不写伤（三颗都写攒几点势）", () => {
     const view = vm({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "throat" });
-    expect(actionById(view.actions, "bite:leg")?.effect).toContain("迟滞");
-    expect(actionById(view.actions, "bite:eye")?.effect).toContain("盲");
-    expect(actionById(view.actions, "bite:throat")?.effect).not.toContain("盲");
+    expect(actionById(view.actions, "bite:leg")?.effect).toContain("腿伤 0 → 1");
+    expect(actionById(view.actions, "bite:eye")?.effect).toContain("眼伤 0 → 1");
+    // 咬喉是爆发那一档：不留伤，所以它那一行只有伤害与势
+    expect(actionById(view.actions, "bite:throat")?.effect).not.toContain("伤 0 → 1");
+    for (const part of ["throat", "leg", "eye"] as const) {
+      expect(actionById(view.actions, `bite:${part}`)?.effect, part).toContain("势 +");
+    }
+  });
+
+  it("[M2-B1] 决杀按钮恒在：攒不够时灰着并写明还差几点势", () => {
+    const cold = vm({ enemyId: "qiong-qi-you", enemyHp: 40 });
+    const finisher = actionById(cold.actions, "finisher");
+    expect(finisher?.enabled).toBe(false);
+    expect(finisher?.disabledReason).toContain("势");
+    /*
+     * 攒够之后按钮亮起来。fixture 把决杀门槛调到够不着（见 `FIXTURE_TUNING` 的注释），
+     * 所以这里显式把门槛放回基线值，测的才是这颗按钮本身而不是 fixture 的开关。
+     */
+    const armed = makeContent({ tuning: { encounterFinisherMomentum: 4 } });
+    const hotState = fightingState(
+      newState(),
+      { enemyId: "qiong-qi-you", enemyHp: 40 },
+      { momentum: 5, momentumMax: 5 },
+    );
+    const hot = buildCombatVm(hotState, hotState.encounter!.clash!, armed);
+    const ready = hot.actions.find((action) => action.id === "finisher");
+    expect(ready?.enabled).toBe(true);
+    expect(ready?.effect).toContain("耗尽全部势");
   });
 
   it("打在守备处的那颗按钮挂警告，写清减半与反击概率", () => {
@@ -262,7 +287,7 @@ describe("buildCombatVm：读不出意图时不许泄露意图", () => {
 
 describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim，这里只验按钮 id 映射）", () => {
   it("任何局面下都恰好一颗按钮发金光", () => {
-    const cases: Partial<CombatState>[] = [
+    const cases: ClashPatch[] = [
       {},
       { guardPart: "throat" },
       { intent: { kind: "pounce", text: "扑。" } },
@@ -315,7 +340,7 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
         },
       ],
     };
-    const cases: Partial<CombatState>[] = [
+    const cases: ClashPatch[] = [
       {},
       { skillCooldowns: { "s-burst": 2, "syn:syn-pool": 3 } },
       { intent: { kind: "pounce", text: "扑。" } },
@@ -329,8 +354,8 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
       essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
     });
     for (const patch of cases) {
-      const combat = combatState({ enemyId: "qiong-qi-you", enemyHp: 40, ...patch });
-      const view = buildCombatVm(withPatch(armed, { combat }), combat, content);
+      const state = fightingState(armed, { enemyId: "qiong-qi-you", enemyHp: 40, ...patch });
+      const view = buildCombatVm(state, state.encounter!.clash!, content);
       // 池子确实是满的（4 颗器官技 ＋ 1 颗组合技），不是「碰巧只有一颗」
       expect(view.actions.filter((action) => action.group === "skill")).toHaveLength(5);
       const hot = view.actions.filter((action) => action.highlight);
@@ -339,8 +364,8 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
   });
 
   it("能一下打死它就打（不劝人在赢面前逃走）", () => {
-    const combat = combatState({ enemyId: "ye-zhi", enemyHp: 2, guardPart: "eye", playerHp: 3 });
-    const state = withPatch(newState(), { combat });
+    const state = fightingState(newState(), { enemyId: "ye-zhi", enemyHp: 2, guardPart: "eye", playerHp: 3 });
+    const combat = state.encounter!.clash!;
     expect(recommendCombatActId(combatPreview(state, FIXTURE_CONTENT))).toBe("bite:throat");
   });
 
@@ -349,38 +374,40 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
    * —— 界面在劝玩家送死。判据放在这里：撑不过两合就该走。
    */
   it("撑不过两合且逃得掉 → 推荐遁走", () => {
-    const combat = combatState({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye", playerHp: 6 });
     const base = newState();
     // 灵性 50 才逃得掉穷奇（fleeBias 16）：逃不掉的时候链条会改推扑眼买两合，见下一条
-    const state = withPatch(base, { combat, stats: { ...base.stats, ling: 50 } });
+    const state = fightingState(withPatch(base, { stats: { ...base.stats, ling: 50 } }), {
+      enemyId: "qiong-qi-you",
+      enemyHp: 40,
+      guardPart: "eye",
+      playerHp: 6,
+    });
     expect(recommendCombatActId(combatPreview(state, FIXTURE_CONTENT))).toBe("flee");
   });
 
   it("撑不过两合但逃不掉（穷奇 fleeBias 高）→ 改推扑眼买两合，而不是硬送", () => {
-    const combat = combatState({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye", playerHp: 6 });
-    const state = withPatch(newState(), { combat });
+    const state = fightingState(newState(), { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye", playerHp: 6 });
+    const combat = state.encounter!.clash!;
     expect(recommendCombatActId(combatPreview(state, FIXTURE_CONTENT))).toBe("bite:eye");
   });
 
   it("它要走且自己还撑得住 → 推荐咬腿拦住", () => {
-    const combat = combatState({
+    const state = seeing(fightingState(newState(), {
       enemyId: "qiong-qi-you",
       enemyHp: 8,
       guardPart: "eye",
       intent: { kind: "flee", text: "它想走。" },
-    });
-    const state = seeing(withPatch(newState(), { combat }));
+    }));
     expect(recommendCombatActId(combatPreview(state, FIXTURE_CONTENT))).toBe("bite:leg");
   });
 
   it("读不出意图时，粗档「按兵不动」也按「它可能要走」处置（拦一手比丢一顿肉便宜）", () => {
-    const combat = combatState({
+    const bare = fightingState(newState(), {
       enemyId: "qiong-qi-you",
       enemyHp: 40,
       guardPart: "eye",
       intent: { kind: "guard", text: "它守着。" },
     });
-    const bare = withPatch(newState(), { combat });
     expect(recommendCombatActId(combatPreview(bare, FIXTURE_CONTENT))).toBe("bite:leg");
     /*
      * 同一局面读得出意图 → 知道它只是在守，于是**不是**为了拦逃而咬腿，而是为了钝它的势
@@ -390,15 +417,24 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
     expect(recommendCombatActId(combatPreview(known, FIXTURE_CONTENT))).toBe("bite:leg");
   });
 
-  it("它在守、而迟滞还挂着（咬腿这一手落不下来）→ 那一合拿去换姿态", () => {
-    const combat = combatState({
-      enemyId: "qiong-qi-you",
-      enemyHp: 40,
-      guardPart: "eye",
-      slow: 2,
-      intent: { kind: "guard", text: "它守着。" },
-    });
-    const known = seeing(withPatch(newState(), { combat }));
+  /*
+   * [M2-B1] 判据从「迟滞还挂着」换成「腿伤已经拆到位」：部位伤整场累积之后，
+   * 前两层腿伤买的是「它逃不掉且扑不动」这件一劳永逸的事，第三层的边际收益
+   * （出伤再 ×0.86）不值一个回合 —— 那一合该拿去换姿态。
+   */
+  it("它在守、而腿已经拆到位（再咬一层不值）→ 那一合拿去换姿态", () => {
+    const known = seeing(
+      fightingState(
+        newState(),
+        {
+          enemyId: "qiong-qi-you",
+          enemyHp: 40,
+          guardPart: "eye",
+          intent: { kind: "guard", text: "它守着。" },
+        },
+        { wounds: { throat: 0, leg: 2, eye: 0 } },
+      ),
+    );
     expect(recommendCombatActId(combatPreview(known, FIXTURE_CONTENT))).toBe("stance:lunge");
   });
 });
@@ -429,13 +465,13 @@ function withSkill(skill: Record<string, unknown>): TaleContent {
   };
 }
 
-function skillButton(content: TaleContent, patch: Partial<CombatState> = {}, statePatch: Partial<TaleState> = {}) {
+function skillButton(content: TaleContent, patch: ClashPatch = {}, statePatch: Partial<TaleState> = {}) {
   const base = newState();
-  const state = withPatch({ ...base, ...statePatch }, {
-    organIds: [...base.organIds, "probe"],
-    combat: combatState({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye", ...patch }),
-  });
-  const view = buildCombatVm(state, state.combat!, content);
+  const state = fightingState(
+    withPatch({ ...base, ...statePatch }, { organIds: [...base.organIds, "probe"] }),
+    { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye", ...patch },
+  );
+  const view = buildCombatVm(state, state.encounter!.clash!, content);
   return view.actions.find((action) => action.id === "skill:probe");
 }
 
@@ -521,11 +557,11 @@ describe("S1 技能池：每颗技能按钮都写清伤害、效果、冷却与�
       ],
     };
     const base = newState();
-    const state = withPatch(base, {
-      organIds: [...base.organIds, "gou-chi", "wu-mu"],
-      combat: combatState({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" }),
-    });
-    const view = buildCombatVm(state, state.combat!, content);
+    const state = fightingState(
+      withPatch(base, { organIds: [...base.organIds, "gou-chi", "wu-mu"] }),
+      { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" },
+    );
+    const view = buildCombatVm(state, state.encounter!.clash!, content);
     const combo = view.actions.find((action) => action.id === "skill:syn:test-syn");
     const organSkill = view.actions.find((action) => action.id === "skill:gou-chi");
     expect(combo?.synergy).toBe(true);

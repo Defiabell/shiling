@@ -29,6 +29,7 @@ import {
   type TaleEvent,
   type TaleState,
   type TaleTuning,
+  clashOf,
 } from "../src/index.js";
 import {
   ENEMY_QIONG_QI,
@@ -123,8 +124,8 @@ describe("S1 技能池：不再只取第一件带技器官", () => {
       { guardPart: "eye" },
     );
     const after = combatAct(state, SKILL("s-b"), content).state;
-    expect(after.combat?.skillCooldowns["s-b"]).toBe(2);
-    expect(after.combat?.skillCooldowns[ORGAN_GOU_CHI]).toBeUndefined();
+    expect(clashOf(after)?.skillCooldowns["s-b"]).toBe(2);
+    expect(clashOf(after)?.skillCooldowns[ORGAN_GOU_CHI]).toBeUndefined();
     const preview = combatPreview(after, content);
     expect(preview.skills.find((skill) => skill.skillId === ORGAN_GOU_CHI)?.ready).toBe(true);
     expect(preview.skills.find((skill) => skill.skillId === "s-b")?.ready).toBe(false);
@@ -136,7 +137,7 @@ describe("S1 代价：付得起才是一手，付不起是不可用", () => {
     const content = withProbeSkill({ name: "自伤技", desc: "。", cost: { kind: "hp", amount: 3 } });
     const { state: next, roundLog } = combatAct(probing(content), SKILL("probe"), content);
     // 20 − 3（自伤）− 6（它常规一口）= 11
-    expect(next.combat?.playerHp).toBe(11);
+    expect(clashOf(next)?.playerHp).toBe(11);
     expect(roundLog.join("")).toContain("自身亦损3");
   });
 
@@ -185,7 +186,7 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     const content = withProbeSkill({ name: "掩明", desc: "。", effects: ["blind"], damageMul: 0.6 });
     const next = combatAct(probing(content), SKILL("probe"), content).state;
     // 2 合挂上、回合末减 1
-    expect(next.combat?.blind).toBe(1);
+    expect(clashOf(next)?.blind).toBe(1);
   });
 
   it("bleed：回合**末**掉血，它守着不动也照掉", () => {
@@ -197,12 +198,12 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     const guarding = probing(content, { intent: { kind: "guard", text: "它守着。" } });
     const first = combatAct(guarding, SKILL("probe"), content);
     // 伤害 floor(4 × 0.8) = 3，＋回合末流血 2 → 40 − 5 = 35
-    expect(first.state.combat?.enemyHp).toBe(35);
+    expect(clashOf(first.state)?.enemyHp).toBe(35);
     expect(first.roundLog.join("")).toContain("仍在渗血");
-    expect(first.state.combat?.bleed).toBe(2);
+    expect(clashOf(first.state)?.bleed).toBe(2);
     // 下一合什么都不做（换姿态）也照掉 2
     const second = combatAct(first.state, { kind: "stance", to: "low" }, content).state;
-    expect(second.combat?.enemyHp).toBe(33);
+    expect(clashOf(second)?.enemyHp).toBe(33);
   });
 
   it("bleed 把它放倒时照样算 win：精气、饱食、夺命数、combat 记录一样不少", () => {
@@ -226,7 +227,7 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     );
     // 它常规咬一口 → 命中 → 自伤 2；伤害 floor(4×0.5)=2 → 40 − 2 − 2 = 36
     const hit = combatAct(probing(content), SKILL("probe"), content);
-    expect(hit.state.combat?.enemyHp).toBe(36);
+    expect(clashOf(hit.state)?.enemyHp).toBe(36);
     expect(hit.roundLog.join("")).toContain("自伤2");
     // 它这一合只守 → 没命中 → 不扎（40 − 2 = 38）
     const held = combatAct(
@@ -234,16 +235,16 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
       SKILL("probe"),
       content,
     );
-    expect(held.state.combat?.enemyHp).toBe(38);
+    expect(clashOf(held.state)?.enemyHp).toBe(38);
   });
 
   it("brace：这一合它那一手伤害归零（且不留计数器）", () => {
     const content = withProbeSkill({ name: "合鳞", desc: "。", effects: ["brace"], damageMul: 0 });
     const turn = combatAct(probing(content), SKILL("probe"), content);
-    expect(turn.state.combat?.playerHp).toBe(20);
+    expect(clashOf(turn.state)?.playerHp).toBe(20);
     expect(turn.roundLog.join("")).toContain("一分力也没进来");
     // 不出伤：damageMul 0 的技绝不能靠 rollDamage 的 max(1,…) 偷偷打 1 点
-    expect(turn.state.combat?.enemyHp).toBe(40);
+    expect(clashOf(turn.state)?.enemyHp).toBe(40);
     expect(combatPreview(probing(content), content).skills[0]?.damage).toEqual({
       mid: 0,
       min: 0,
@@ -257,9 +258,9 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
       { combatThornsRounds: 3, combatThornsDamage: 2 },
     );
     const turn = combatAct(probing(content), SKILL("probe"), content);
-    expect(turn.state.combat?.playerHp).toBe(20);
-    expect(turn.state.combat?.enemyHp).toBe(40);
-    expect(turn.state.combat?.thorns).toBe(2);
+    expect(clashOf(turn.state)?.playerHp).toBe(20);
+    expect(clashOf(turn.state)?.enemyHp).toBe(40);
+    expect(clashOf(turn.state)?.thorns).toBe(2);
   });
 
   it("bolt：必定遁走（不掷骰），且什么也拿不到", () => {
@@ -271,7 +272,7 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     expect(combatAct(probing(content), { kind: "flee" }, content).over).toBeNull();
     const turn = combatAct(probing(content), SKILL("probe"), content);
     expect(turn.over).toBe("fled");
-    expect(turn.state.combat).toBeNull();
+    expect(clashOf(turn.state)).toBeNull();
     expect(turn.state.livesTaken).toBe(0);
   });
 
@@ -283,7 +284,7 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     const before = probing(content);
     expect(combatPreview(before, content).intentKnown).toBe(false);
     const after = combatAct(before, SKILL("probe"), content).state;
-    expect(after.combat?.insight).toBe(2);
+    expect(clashOf(after)?.insight).toBe(2);
     expect(combatPreview(after, content).intentKnown).toBe(true);
 
     /*
@@ -291,10 +292,13 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
      * 除了 `insight` 计数器本身，推进逐字相同（同 M1-P2 那条洞察 tag 的测试）。
      */
     const plain = probing(content);
-    const seer = { ...plain, combat: { ...plain.combat!, insight: 3 } };
-    const a = combatAct(plain, BITE("throat"), content).state.combat;
-    const b = combatAct(seer, BITE("throat"), content).state.combat;
-    expect({ ...b, insight: 0, log: [] }).toEqual({ ...a, insight: 0, log: [] });
+    const seer = {
+      ...plain,
+      encounter: { ...plain.encounter!, clash: { ...plain.encounter!.clash!, insight: 3 } },
+    };
+    const a = combatAct(plain, BITE("throat"), content).state.encounter?.clash;
+    const b = combatAct(seer, BITE("throat"), content).state.encounter?.clash;
+    expect({ ...b, insight: 0 }).toEqual({ ...a, insight: 0 });
   });
 
   it("stat 为 ling 的技按灵算伤害（灵系 build 的输出手）", () => {
@@ -302,7 +306,7 @@ describe("S1 六档新效果各改一个玩家看得见的量", () => {
     // ling 40 → 3 + floor(40/8) = 8；meng 10 那一档只有 4
     const state = probing(content, {}, { stats: { meng: 10, ling: 40, ti: 20, de: 5 } });
     expect(combatPreview(state, content).skills[0]?.damage.mid).toBe(8);
-    expect(combatAct(state, SKILL("probe"), content).state.combat?.enemyHp).toBe(32);
+    expect(combatAct(state, SKILL("probe"), content).state.encounter?.clash?.enemyHp).toBe(32);
   });
 });
 
@@ -354,17 +358,17 @@ describe("S1 组合技（异变）", () => {
       content,
     );
     // floor(4 × 2.6) = 10
-    expect(turn.state.combat?.enemyHp).toBe(30);
-    expect(turn.state.combat?.slow).toBeGreaterThan(0);
+    expect(clashOf(turn.state)?.enemyHp).toBe(30);
+    expect(clashOf(turn.state)?.slow).toBeGreaterThan(0);
     // 顿挫压的是它**下一回合**的意图（已宣告的这一手照打），所以这里看的是下一合的脸
-    expect(turn.state.combat?.intent.kind).toBe("guard");
+    expect(clashOf(turn.state)?.intent.kind).toBe("guard");
     /*
      * 20 − 3（自伤代价）− 4（它已宣告的那一咬：穷奇 meng 30 → 基础 6，但附毒的迟滞
      * **当回合就生效** → floor(6 × 0.75) = 4）= 13。
      *
      * 这一条顺带钉住了「两条效果都在同一回合内兑现」：若迟滞延到下一合才算，这里会是 11。
      */
-    expect(turn.state.combat?.playerHp).toBe(13);
+    expect(clashOf(turn.state)?.playerHp).toBe(13);
   });
 
   it("组合技的冷却记在自己的键上，不占器官技的键", () => {
@@ -373,8 +377,8 @@ describe("S1 组合技（异变）", () => {
       SKILL(`${SYNERGY_SKILL_PREFIX}test-syn`),
       content,
     ).state;
-    expect(after.combat?.skillCooldowns[`${SYNERGY_SKILL_PREFIX}test-syn`]).toBeGreaterThan(0);
-    expect(after.combat?.skillCooldowns[ORGAN_GOU_CHI]).toBeUndefined();
+    expect(clashOf(after)?.skillCooldowns[`${SYNERGY_SKILL_PREFIX}test-syn`]).toBeGreaterThan(0);
+    expect(clashOf(after)?.skillCooldowns[ORGAN_GOU_CHI]).toBeUndefined();
   });
 
   it("配方里的器官是从哪来的**不影响**判定（血脉带来的也算）", () => {

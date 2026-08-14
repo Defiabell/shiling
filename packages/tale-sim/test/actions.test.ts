@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { availableActions, createLife, performAction, stalkAct } from "../src/index.js";
+import { approachOf, availableActions, createLife, performAction, stalkAct } from "../src/index.js";
 import {
   ALWAYS_POUNCE,
   ENEMY_QIONG_QI,
@@ -47,20 +47,20 @@ describe("performAction 前置校验", () => {
     );
   });
 
-  it("战斗未结束时抛错", () => {
+  it("交锋未收束时抛错", () => {
     expect(() =>
       performAction(enterCombat(life, ENEMY_YE_ZHI), "rest", FIXTURE_CONTENT),
-    ).toThrow(/战斗未结束/);
+    ).toThrow(/遭遇未收束（clash）/);
   });
 
   it("行动当前不可用时抛错（精气不够却要蛰伏）", () => {
     expect(() => performAction(life, "dormant", FIXTURE_CONTENT)).toThrow(/不可执行行动/);
   });
 
-  it("追猎未收束时抛错（追猎把一个回合拆成两段，中途不许换行动）", () => {
+  it("接近阶段未收束时抛错（遭遇把一个回合拆成两段，中途不许换行动）", () => {
     expect(() =>
       performAction(enterStalk(life, ENEMY_YE_ZHI), "rest", FIXTURE_CONTENT),
-    ).toThrow(/追猎未收束/);
+    ).toThrow(/遭遇未收束（approach）/);
   });
 });
 
@@ -72,18 +72,18 @@ describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
     const { state, pendingEvent, notices } = performAction(life, "hunt", QUIET);
 
     expect(pendingEvent).toBeNull();
-    expect(state.stalk).not.toBeNull();
-    expect(QUIET.tuning.huntPreyIds).toContain(state.stalk?.preyId);
-    expect(state.stalk?.stamina).toBe(QUIET.tuning.stalkStamina);
-    expect(state.stalk?.round).toBe(0);
-    expect(["into", "cross", "with"]).toContain(state.stalk?.wind);
+    expect(approachOf(state)).not.toBeNull();
+    expect(QUIET.tuning.huntPreyIds).toContain(state.encounter?.enemyId);
+    expect(approachOf(state)?.stamina).toBe(QUIET.tuning.stalkStamina);
+    expect(approachOf(state)?.round).toBe(0);
+    expect(["into", "cross", "with"]).toContain(approachOf(state)?.wind);
     // 季推进与饱食消耗推迟到追猎收束那一步 —— 否则饿到只剩一季的玩家会在猎物到嘴前先饿死
     expect(state.season).toBe(life.season);
     expect(state.year).toBe(life.year);
     expect(state.hunger).toBe(life.hunger);
     // 开场旁白进 notices，也进 stalk.log（界面两处都要读得到）
     expect(notices.length).toBeGreaterThan(0);
-    expect(state.stalk?.log).toEqual([notices[0]]);
+    expect(state.encounter?.log).toEqual([notices[0]]);
     // 追猎未收束 → 行动面板整体压住
     expect(availableActions(state, QUIET)).toEqual([]);
   });
@@ -96,7 +96,7 @@ describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
     const busy = makeContent({ tuning: { eventChanceBase: 1 } });
     const { state, pendingEvent } = performAction(createLife(3, FIXTURE_SEED_ID, busy), "hunt", busy);
     expect(pendingEvent).not.toBeNull();
-    expect(state.stalk).toBeNull();
+    expect(approachOf(state)).toBeNull();
     // 这一季照常收束（该扣的饱食扣了）
     expect(state.hunger).toBe(60 - 12);
   });
@@ -108,7 +108,7 @@ describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
     const turn = stalkAct(stalking, "pounce", content);
 
     expect(turn.over).toBe("caught");
-    expect(turn.state.stalk).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
     // 60 + 26（huntFoodGain）− 12（春季消耗）
     expect(turn.state.hunger).toBe(74);
     expect(turn.state.essence.zu).toBe(12);
@@ -137,7 +137,7 @@ describe("狩猎 → 起追（M1-P1：一个回合被拆成两段）", () => {
     for (let seed = 0; seed < 40; seed += 1) {
       const life = createLife(seed, FIXTURE_SEED_ID, twoPrey);
       const { state } = performAction(life, "hunt", twoPrey);
-      if (state.stalk) seen.add(state.stalk.preyId);
+      if (approachOf(state)) seen.add(state.encounter!.enemyId);
     }
     expect(seen).toEqual(new Set([ENEMY_YE_ZHI, ENEMY_QIONG_QI]));
   });

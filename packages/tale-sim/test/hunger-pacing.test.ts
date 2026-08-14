@@ -24,6 +24,8 @@ import {
   type TaleContent,
   type TaleState,
   type TaleTuning,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   ALWAYS_POUNCE,
@@ -180,7 +182,7 @@ describe("速猎：一次点击的快路径", () => {
     const content = contentWithoutEvents({ tuning: ALWAYS_QUICK });
     const state = createLife(11, FIXTURE_SEED_ID, content);
     const turn = performAction(state, "hunt", content, { huntMode: "quick" });
-    expect(turn.state.stalk).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
     expect(turn.state.season).toBe(1);
   });
 
@@ -232,7 +234,7 @@ describe("速猎：一次点击的快路径", () => {
         content,
         { huntMode: "quick" },
       );
-      expect(turn.state.combat).toBeNull();
+      expect(clashOf(turn.state)).toBeNull();
     }
   });
 
@@ -313,11 +315,11 @@ describe("两条狩猎路的分别（谁也不该严格占优）", () => {
     const state = createLife(31, FIXTURE_SEED_ID, content);
     // 追猎：起追那一次 performAction 不推进季，玩家还要在追猎屏上按好几次
     const stalking = performAction(state, "hunt", content).state;
-    expect(stalking.stalk).not.toBeNull();
+    expect(approachOf(stalking)).not.toBeNull();
     expect(stalking.season).toBe(0);
     // 速猎：一次点击，这一季就了
     const quick = performAction(state, "hunt", content, { huntMode: "quick" }).state;
-    expect(quick.stalk).toBeNull();
+    expect(approachOf(quick)).toBeNull();
     expect(quick.season).toBe(1);
   });
 });
@@ -325,9 +327,9 @@ describe("两条狩猎路的分别（谁也不该严格占优）", () => {
 describe("huntMode 参数契约", () => {
   it("缺省 ＝ 追猎（这一批之前唯一存在的行为）", () => {
     const state = createLife(13, FIXTURE_SEED_ID, QUIET);
-    expect(performAction(state, "hunt", QUIET).state.stalk).not.toBeNull();
-    expect(performAction(state, "hunt", QUIET, {}).state.stalk).not.toBeNull();
-    expect(performAction(state, "hunt", QUIET, { huntMode: "stalk" }).state.stalk).not.toBeNull();
+    expect(performAction(state, "hunt", QUIET).state.encounter?.approach).not.toBeNull();
+    expect(performAction(state, "hunt", QUIET, {}).state.encounter?.approach).not.toBeNull();
+    expect(performAction(state, "hunt", QUIET, { huntMode: "stalk" }).state.encounter?.approach).not.toBeNull();
   });
 
   it("非狩猎行动给了 huntMode 抛错（同去处那条纪律：写错的参数不许被静默吞掉）", () => {

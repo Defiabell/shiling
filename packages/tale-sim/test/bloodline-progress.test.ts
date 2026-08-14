@@ -25,6 +25,8 @@ import {
   type SigilDef,
   type TaleContent,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   DEST_FAR,
@@ -233,7 +235,7 @@ describe("图鉴知识（买到的是信息，不是加成）", () => {
     expect(stalkPreview(blind, QUIET).loreKnown).toBe(false);
 
     const known = stalking(QUIET, [ENEMY_YE_ZHI]);
-    expect(known.stalk?.preyId).toBe(ENEMY_YE_ZHI);
+    expect(known.encounter?.enemyId).toBe(ENEMY_YE_ZHI);
     expect(stalkPreview(known, QUIET).alertVisible).toBe(true);
     expect(stalkPreview(known, QUIET).loreKnown).toBe(true);
   });
@@ -257,12 +259,12 @@ describe("图鉴知识（买到的是信息，不是加成）", () => {
       return performAction(born, "explore", AMBUSH, { destinationId: DEST_FAR }).state;
     };
     const blind = fight([]);
-    expect(blind.combat?.enemyId).toBe(ENEMY_QIONG_QI);
+    expect(blind.encounter?.enemyId).toBe(ENEMY_QIONG_QI);
     expect(combatPreview(blind, AMBUSH).intentKnown).toBe(false);
     expect(combatPreview(blind, AMBUSH).loreKnown).toBe(false);
 
     const known = fight([ENEMY_QIONG_QI]);
-    expect(known.combat?.enemyId).toBe(ENEMY_QIONG_QI);
+    expect(known.encounter?.enemyId).toBe(ENEMY_QIONG_QI);
     expect(combatPreview(known, AMBUSH).intentKnown).toBe(true);
     expect(combatPreview(known, AMBUSH).loreKnown).toBe(true);
   });
@@ -271,11 +273,11 @@ describe("图鉴知识（买到的是信息，不是加成）", () => {
     const run = (lore: readonly string[]): TaleState => {
       let state = createLife(31, FIXTURE_SEED_ID, QUIET, { loreEnemyIds: lore });
       for (let i = 0; i < 8 && state.alive; i += 1) {
-        if (state.stalk) {
+        if (approachOf(state)) {
           state = stalkAct(state, i % 2 === 0 ? "creep" : "pounce", QUIET).state;
           continue;
         }
-        if (state.combat) break;
+        if (clashOf(state)) break;
         state = performAction(state, i % 3 === 0 ? "hunt" : "rest", QUIET).state;
       }
       return state;
@@ -305,14 +307,14 @@ describe("照面记录（图鉴「已识异兽」的唯一来源）", () => {
     // 远地只有穷奇，遇袭必中（`AMBUSH` 把条件概率钉成 1）
     const charted = createLife(7, FIXTURE_SEED_ID, AMBUSH, { chartedDestinationId: DEST_FAR });
     const after = performAction(charted, "explore", AMBUSH, { destinationId: DEST_FAR }).state;
-    expect(after.combat?.enemyId).toBe(ENEMY_QIONG_QI);
+    expect(after.encounter?.enemyId).toBe(ENEMY_QIONG_QI);
     expect(after.metEnemyIds).toContain(ENEMY_QIONG_QI);
   });
 
   it("幂等：同一头兽追第二次不重复记", () => {
     let state = performAction(life(), "hunt", QUIET).state;
-    while (state.stalk) state = stalkAct(state, "pounce", QUIET).state;
-    if (state.combat || !state.alive) return; // 这一次撞上反噬，换一条判据没意义
+    while (approachOf(state)) state = stalkAct(state, "pounce", QUIET).state;
+    if (clashOf(state) || !state.alive) return; // 这一次撞上反噬，换一条判据没意义
     const again = performAction(state, "hunt", QUIET).state;
     expect(again.metEnemyIds).toEqual([ENEMY_YE_ZHI]);
   });

@@ -20,6 +20,8 @@ import {
   type StalkAct,
   type TaleContent,
   type TaleState,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   ENEMY_YE_ZHI,
@@ -50,11 +52,11 @@ const COMBAT_SCRIPT: readonly CombatAct[] = [
  *
  * 唯一的加工是「已经是这个姿态就改咬一口」：`combatAct` 对「换成当前姿态」抛错（那只是
  * 白费一回合，界面本来也不给这颗按钮），而按步数轮转的剧本迟早会撞上。仍是纯函数、
- * 完全确定 —— 它只读 `state.combat.stance`。
+ * 完全确定 —— 它只读 `clashOf(state).stance`。
  */
 function scriptedCombat(state: TaleState, step: number): CombatAct {
   const plan = COMBAT_SCRIPT[step % COMBAT_SCRIPT.length] ?? { kind: "bite", part: "throat" };
-  if (plan.kind === "stance" && plan.to === (state.combat?.stance ?? "square")) {
+  if (plan.kind === "stance" && plan.to === (clashOf(state)?.stance ?? "square")) {
     return { kind: "bite", part: "leg" };
   }
   return plan;
@@ -140,14 +142,14 @@ function playLife(
    */
   let turn = 0;
   while (state.alive && step < maxSteps) {
-    if (state.combat) {
+    if (clashOf(state)) {
       const turn = combatAct(state, scriptedCombat(state, step), content);
       state = turn.state;
       log.push(...turn.roundLog);
       step += 1;
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       const act = STALK_SCRIPT[step % STALK_SCRIPT.length] ?? "creep";
       const turn = stalkAct(state, act, content);
       state = turn.state;
@@ -192,12 +194,12 @@ function huntOnly(
   let state = createLife(seed, FIXTURE_SEED_ID, content);
   let step = 0;
   while (state.alive && step < maxSteps) {
-    if (state.combat) {
+    if (clashOf(state)) {
       state = combatAct(state, decideCombat(state, content), content).state;
       step += 1;
       continue;
     }
-    if (state.stalk) {
+    if (approachOf(state)) {
       state = stalkAct(state, decideStalk(state, content), content).state;
       step += 1;
       continue;
@@ -223,11 +225,11 @@ describe("确定性回归", () => {
   });
 
   /*
-   * ⚠️ 下面两条 golden 的数值被整批重掷过**四次**：
+   * ⚠️ 下面两条 golden 的数值被整批重掷过**五次**：
    * M1-P1（追猎屏把狩猎从一次掷骰换成状态机）、M1-P2（搏杀重做：每回合多了「守备＋意图＋
    * 意图旁白」三次抽取，且开战时也要摇一次）、2026-08-13「每局不同」（`createLife`
    * 在最前面加了**两次**抽取：天时与出身 —— 于是每个已存种子的整条剧本从第一步就错开了），
-   * 以及 2026-08-14「饥饿节奏」。
+   * 2026-08-14「饥饿节奏」，以及 2026-08-14「M2-B1 遭遇统一＋战斗加深」。
    *
    * **第四次与前三次不同形，值得单独记一句**：这一批**一次抽取都没多、也没少、顺序也没动**
    * （食余不掷骰，速猎是一条新分支、旧分支的抽取序列逐字未变）。变的是**饱食经济**：
@@ -235,7 +237,14 @@ describe("确定性回归", () => {
    * （seed 20260811 从 4 岁活到 6 岁）。seed 1 与 4242 那两行**一个字没变** ——
    * 它们死得太早，还没吃到第一口食余，这正说明改的是经济不是掷骰。
    *
-   * 四次都是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
+   * **第五次（M2-B1）动的是抽取序列本身**，与第四次相反：每一咬多抽一次暴击掷骰、
+   * 敌人出手时打空与闪避两掷改成**恒抽**（M1-P2 在 `blind <= 0` 时短路不抽 —— 加了眼伤与
+   * 闪避两个来源之后，那种短路会让「同种子同操作」的推演要先在脑子里跑一遍状态机），
+   * 接近阶段转交锋时的附毒旁白也挪到了开战抽取之前。于是每一颗已存种子的剧本从第一场
+   * 遭遇起就错开了 —— seed 1 从 3 岁变成 2 岁，seed 20260811 的狩猎流从 6 岁活到 8 岁
+   * （战斗更耐打，所以它多活了两年、多蜕一件、多杀两头）。
+   *
+   * 五次都是**有意的破坏性变更**，不是漂移 —— 判据是三条都还成立：
    * ① 同种子同操作仍恒等（上一条测试）② 换种子仍有分岔 ③ 30 世仍全部收束得出列传。
    */
   // 下面两条是**golden 字面量**回归，不是「同进程跑两遍」那种自证式断言。
@@ -246,7 +255,7 @@ describe("确定性回归", () => {
   it("golden：轮转策略下 3 个种子的终态逐字锁定", () => {
     const golden = [
       { seed: 20260811, steps: 37, rngState: 2596392088, year: 6, ending: "starve", organs: 1 },
-      { seed: 1, steps: 15, rngState: 752141765, year: 3, ending: "starve", organs: 1 },
+      { seed: 1, steps: 14, rngState: 1887930711, year: 2, ending: "starve", organs: 1 },
       { seed: 4242, steps: 16, rngState: 1383981676, year: 2, ending: "starve", organs: 1 },
     ] as const;
     for (const expected of golden) {
@@ -276,21 +285,21 @@ describe("确定性回归", () => {
     const golden = [
       {
         seed: 20260811,
-        steps: 97,
-        rngState: 557850084,
-        year: 6,
-        organIds: ["organ-ling-yun", "ji-zu", "gou-chi", "lin-jia"],
-        molts: 3,
-        kills: 5,
+        steps: 135,
+        rngState: 4021581819,
+        year: 8,
+        organIds: ["organ-ling-yun", "wu-mu", "gou-chi", "ji-zu", "lin-jia"],
+        molts: 4,
+        kills: 7,
       },
       {
         seed: 7,
-        steps: 120,
-        rngState: 2617343581,
-        year: 8,
-        organIds: ["organ-ling-yun", "wu-mu", "ji-zu", "gou-chi", "lin-jia"],
-        molts: 4,
-        kills: 6,
+        steps: 98,
+        rngState: 1801260620,
+        year: 6,
+        organIds: ["organ-ling-yun", "lin-jia", "gou-chi", "ji-zu"],
+        molts: 3,
+        kills: 4,
       },
     ] as const;
     for (const expected of golden) {
@@ -319,10 +328,10 @@ describe("确定性回归", () => {
   it("state 是完整自描述的：JSON 往返后续跑结果一致", () => {
     const mid = playLife(31337, BUSY, 20).state;
     const revived = JSON.parse(JSON.stringify(mid)) as TaleState;
-    if (mid.stalk) {
+    if (approachOf(mid)) {
       // 追猎中的 state 也必须是自描述的：四个量＋log 全在 TaleState 里，没有藏在闭包里的东西
       expect(stalkAct(revived, "creep", BUSY).state).toEqual(stalkAct(mid, "creep", BUSY).state);
-    } else if (mid.combat) {
+    } else if (clashOf(mid)) {
       const act = decideCombat(mid, BUSY);
       expect(combatAct(revived, act, BUSY).state).toEqual(combatAct(mid, act, BUSY).state);
     } else if (mid.alive) {

@@ -22,6 +22,8 @@ import {
   type TaleContent,
   type TaleState,
   type WindDir,
+  approachOf,
+  clashOf,
 } from "../src/index.js";
 import {
   ALWAYS_POUNCE,
@@ -59,7 +61,7 @@ describe("起追", () => {
     const t = QUIET.tuning;
     for (let seed = 0; seed < 60; seed += 1) {
       const { state } = performAction(createLife(seed, FIXTURE_SEED_ID, QUIET), "hunt", QUIET);
-      const stalk = state.stalk;
+      const stalk = approachOf(state);
       expect(stalk).not.toBeNull();
       if (!stalk) return;
       // fixture 野雉：startDistance 24、wariness 18
@@ -75,7 +77,8 @@ describe("起追", () => {
     const winds = new Set<WindDir>();
     for (let seed = 0; seed < 60; seed += 1) {
       const { state } = performAction(createLife(seed, FIXTURE_SEED_ID, QUIET), "hunt", QUIET);
-      if (state.stalk) winds.add(state.stalk.wind);
+      const approach = approachOf(state);
+      if (approach) winds.add(approach.wind);
     }
     expect(winds).toEqual(new Set<WindDir>(["into", "cross", "with"]));
   });
@@ -84,7 +87,7 @@ describe("起追", () => {
     const openings = new Set<string>();
     for (let seed = 0; seed < 40; seed += 1) {
       const { state } = performAction(createLife(seed, FIXTURE_SEED_ID, QUIET), "hunt", QUIET);
-      const first = state.stalk?.log[0];
+      const first = state.encounter?.log[0];
       if (first) openings.add(first);
     }
     // fixture 野雉没写 begin 槽 → 走引擎兜底池，三条变体都该出现
@@ -96,15 +99,15 @@ describe("潜行", () => {
   it("按 tuning 拉近距离，且不会拉成负数", () => {
     const t = QUIET.tuning;
     const near = act(stalking({ distance: 5 }), "creep");
-    expect(near.state.stalk?.distance).toBe(0);
+    expect(approachOf(near.state)?.distance).toBe(0);
     const far = act(stalking({ distance: 30 }), "creep");
-    expect(far.state.stalk?.distance).toBe(30 - t.stalkCreepDistance);
+    expect(approachOf(far.state)?.distance).toBe(30 - t.stalkCreepDistance);
   });
 
   it("警觉增益：顺风翻倍、逆风减半（正本的风向表）", () => {
     const gainAt = (wind: WindDir): number => {
       const before = stalking({ distance: 30, alertness: 10, wind });
-      return (act(before, "creep").state.stalk?.alertness ?? 0) - 10;
+      return (act(before, "creep").state.encounter?.approach?.alertness ?? 0) - 10;
     };
     const cross = gainAt("cross");
     expect(gainAt("into")).toBe(Math.round(cross / 2));
@@ -118,7 +121,7 @@ describe("潜行", () => {
   it("越近警觉涨得越凶（贴近倍率）", () => {
     const gainAt = (distance: number): number => {
       const before = stalking({ distance, alertness: 10, wind: "cross" });
-      return (act(before, "creep").state.stalk?.alertness ?? 0) - 10;
+      return (act(before, "creep").state.encounter?.approach?.alertness ?? 0) - 10;
     };
     const far = gainAt(40); // 移动后仍在 stalkNearDistance 之外
     const mid = gainAt(20);
@@ -131,9 +134,9 @@ describe("潜行", () => {
 
   it("疾足 tag 拉得更近，猎手 tag 走得更轻", () => {
     const base = stalking({ distance: 30, alertness: 10, wind: "cross" });
-    const plain = act(base, "creep").state.stalk;
-    const swift = act(withOrgans(base, ORGAN_JI_ZU), "creep").state.stalk;
-    const quiet = act(withOrgans(base, ORGAN_GOU_CHI), "creep").state.stalk;
+    const plain = act(base, "creep").state.encounter?.approach;
+    const swift = act(withOrgans(base, ORGAN_JI_ZU), "creep").state.encounter?.approach;
+    const quiet = act(withOrgans(base, ORGAN_GOU_CHI), "creep").state.encounter?.approach;
 
     expect(swift?.distance).toBe((plain?.distance ?? 0) - QUIET.tuning.stalkCreepSwiftBonus);
     expect(quiet?.alertness).toBeLessThan(plain?.alertness ?? 0);
@@ -143,11 +146,11 @@ describe("潜行", () => {
 
   it("每一步都扣一点体力、round 递增、log 累积", () => {
     const first = act(stalking({ distance: 30 }), "creep");
-    expect(first.state.stalk?.stamina).toBe(QUIET.tuning.stalkStamina - 1);
-    expect(first.state.stalk?.round).toBe(1);
+    expect(approachOf(first.state)?.stamina).toBe(QUIET.tuning.stalkStamina - 1);
+    expect(approachOf(first.state)?.round).toBe(1);
     const second = act(first.state, "creep");
-    expect(second.state.stalk?.round).toBe(2);
-    expect(second.state.stalk?.log.length).toBe(2);
+    expect(approachOf(second.state)?.round).toBe(2);
+    expect(second.state.encounter?.log.length).toBe(2);
     expect(second.roundLog).toHaveLength(1);
   });
 });
@@ -156,28 +159,28 @@ describe("绕至上风与屏息等待", () => {
   it("绕行把风向重置为逆风，代价是一点警觉与一点体力", () => {
     const before = stalking({ wind: "with", alertness: 20 });
     const turn = act(before, "circle");
-    expect(turn.state.stalk?.wind).toBe("into");
-    expect(turn.state.stalk?.alertness).toBe(20 + QUIET.tuning.stalkCircleAlert);
-    expect(turn.state.stalk?.stamina).toBe(QUIET.tuning.stalkStamina - 1);
+    expect(approachOf(turn.state)?.wind).toBe("into");
+    expect(approachOf(turn.state)?.alertness).toBe(20 + QUIET.tuning.stalkCircleAlert);
+    expect(approachOf(turn.state)?.stamina).toBe(QUIET.tuning.stalkStamina - 1);
     // 距离不变：绕的是风，不是路
-    expect(turn.state.stalk?.distance).toBe(before.stalk?.distance);
+    expect(approachOf(turn.state)?.distance).toBe(approachOf(before)?.distance);
   });
 
   it("绕行的警觉代价按旧风向的账付，收益从下一步起兑现", () => {
     const before = stalking({ distance: 30, alertness: 20, wind: "with" });
     const circled = act(before, "circle").state;
-    const creptAfter = act(circled, "creep").state.stalk?.alertness ?? 0;
+    const creptAfter = act(circled, "creep").state.encounter?.approach?.alertness ?? 0;
     // 顺风直接潜行 vs 先绕风再潜行：后者这一步的警觉增益应当只有一半
-    const creptDirect = act(before, "creep").state.stalk?.alertness ?? 0;
-    expect(creptAfter - (circled.stalk?.alertness ?? 0)).toBeLessThan(creptDirect - 20);
+    const creptDirect = act(before, "creep").state.encounter?.approach?.alertness ?? 0;
+    expect(creptAfter - (approachOf(circled)?.alertness ?? 0)).toBeLessThan(creptDirect - 20);
   });
 
   it("屏息压警觉，且不会压成负数", () => {
     const calm = contentWithoutEvents({ tuning: { stalkWaitMoveChance: 0 } });
     const mid = act(stalking({ alertness: 40 }, calm), "wait", calm);
-    expect(mid.state.stalk?.alertness).toBe(40 - calm.tuning.stalkWaitAlertDrop);
+    expect(approachOf(mid.state)?.alertness).toBe(40 - calm.tuning.stalkWaitAlertDrop);
     const already = act(stalking({ alertness: 3 }, calm), "wait", calm);
-    expect(already.state.stalk?.alertness).toBe(0);
+    expect(approachOf(already.state)?.alertness).toBe(0);
   });
 
   it("屏息时猎物可能自行挪位（远离或靠近，都在声明的步幅内）", () => {
@@ -186,7 +189,7 @@ describe("绕至上风与屏息等待", () => {
     const moved = new Set<number>();
     for (let seed = 0; seed < 40; seed += 1) {
       const turn = act(stalking({ distance: 20, alertness: 40 }, restless, seed), "wait", restless);
-      const distance = turn.state.stalk?.distance ?? 0;
+      const distance = approachOf(turn.state)?.distance ?? 0;
       moved.add(distance);
       const delta = Math.abs(distance - 20);
       expect(delta).toBeGreaterThanOrEqual(t.stalkWaitMoveMin);
@@ -203,7 +206,7 @@ describe("绕至上风与屏息等待", () => {
     });
     const turn = act(stalking({ distance: 28, alertness: 40 }, restless), "wait", restless);
     expect(turn.over).toBe("escaped");
-    expect(turn.state.stalk).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
   });
 });
 
@@ -240,7 +243,7 @@ describe("扑击", () => {
     const turn = act(stalking({ distance: 2, alertness: 20 }, content), "pounce", content);
     expect(turn.over).toBe("caught");
     expect(turn.state.essence.zu).toBe(12);
-    expect(turn.state.stalk).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
     // [饥饿节奏批] 得手的三句：扑中 ＋ 进食 ＋ **余粮**（第三句是这一批加的，见 `huntSurplus`）
     expect(turn.roundLog).toHaveLength(3);
     expect(turn.roundLog[2]).toContain("够吃");
@@ -250,15 +253,15 @@ describe("扑击", () => {
     const content = contentWithoutEvents({ tuning: NEVER_POUNCE });
     const small = act(stalking({ distance: 2 }, content), "pounce", content);
     expect(small.over).toBe("escaped");
-    expect(small.state.combat).toBeNull();
+    expect(clashOf(small.state)).toBeNull();
 
     const life = createLife(7, FIXTURE_SEED_ID, content);
     const big = stalkAct(enterStalk(life, ENEMY_QIONG_QI, {}, content), "pounce", content);
     expect(big.over).toBe("combat");
-    expect(big.state.combat?.enemyId).toBe(ENEMY_QIONG_QI);
-    expect(big.state.combat?.enemyHp).toBe(40);
-    expect(big.state.combat?.playerHp).toBe(big.state.stats.ti);
-    expect(big.state.stalk).toBeNull();
+    expect(big.state.encounter?.enemyId).toBe(ENEMY_QIONG_QI);
+    expect(clashOf(big.state)?.enemyHp).toBe(40);
+    expect(clashOf(big.state)?.playerHp).toBe(big.state.stats.ti);
+    expect(approachOf(big.state)).toBeNull();
   });
 
   it("附毒 tag：扑空转搏杀时敌人已带伤入场", () => {
@@ -268,7 +271,7 @@ describe("扑击", () => {
     const life = withOrgans(createLife(7, FIXTURE_SEED_ID, content), ORGAN_WU_MU);
     const turn = stalkAct(enterStalk(life, ENEMY_QIONG_QI, {}, content), "pounce", content);
     expect(turn.over).toBe("combat");
-    expect(turn.state.combat?.enemyHp).toBe(20);
+    expect(clashOf(turn.state)?.enemyHp).toBe(20);
     expect(turn.roundLog.join("")).toContain("腥液");
   });
 });
@@ -278,7 +281,7 @@ describe("收束边界", () => {
     const t = QUIET.tuning;
     const spooked = act(stalking({ distance: 4, alertness: t.stalkAlertMax - 1, wind: "with" }), "creep");
     expect(spooked.over).toBe("escaped");
-    expect(spooked.state.stalk).toBeNull();
+    expect(approachOf(spooked.state)).toBeNull();
 
     const life = createLife(7, FIXTURE_SEED_ID, QUIET);
     const cornered = stalkAct(
@@ -292,7 +295,7 @@ describe("收束边界", () => {
   it("体力耗尽（最后一点花在非扑击动作上）＝空手而归", () => {
     const turn = act(stalking({ distance: 30, stamina: 1 }), "creep");
     expect(turn.over).toBe("exhausted");
-    expect(turn.state.stalk).toBeNull();
+    expect(approachOf(turn.state)).toBeNull();
     expect(turn.state.hunger).toBeLessThan(60); // 只扣了季消耗，没有收益
     expect(turn.roundLog.join("")).toMatch(/追不动|气力|没能近身/);
   });
@@ -306,12 +309,12 @@ describe("收束边界", () => {
   it("一场追猎最多消耗 stalkStamina 个动作（不会无限追下去）", () => {
     let state = stalking({ distance: 40 });
     let steps = 0;
-    while (state.stalk && steps < 50) {
+    while (approachOf(state) && steps < 50) {
       state = act(state, "wait").state;
       steps += 1;
     }
     expect(steps).toBeLessThanOrEqual(QUIET.tuning.stalkStamina);
-    expect(state.stalk).toBeNull();
+    expect(approachOf(state)).toBeNull();
   });
 });
 
@@ -328,13 +331,13 @@ describe("预览不骗人（信息可见性的地基）", () => {
       for (const organs of [[], [ORGAN_JI_ZU], [ORGAN_GOU_CHI]]) {
         const before = withOrgans(stalking(shape), ...organs);
         const preview = stalkPreview(before, QUIET);
-        const after = act(before, "creep").state.stalk;
+        const after = act(before, "creep").state.encounter?.approach;
         if (!after) continue;
         expect(after.distance, JSON.stringify({ shape, organs })).toBe(
-          (before.stalk?.distance ?? 0) - preview.creepGain,
+          (approachOf(before)?.distance ?? 0) - preview.creepGain,
         );
         expect(after.alertness, JSON.stringify({ shape, organs })).toBe(
-          (before.stalk?.alertness ?? 0) + preview.creepAlertGain,
+          (approachOf(before)?.alertness ?? 0) + preview.creepAlertGain,
         );
       }
     }
@@ -346,7 +349,7 @@ describe("预览不骗人（信息可见性的地基）", () => {
       const promised = stalkPreview(before, QUIET).pounceChanceAfterCreep;
       const afterCreep = act(before, "creep").state;
       // 潜行本身可能直接收束（警觉满）——那种情况没有「之后」可比
-      if (!afterCreep.stalk) continue;
+      if (!approachOf(afterCreep)) continue;
       expect(stalkPreview(afterCreep, QUIET).pounceChance).toBeCloseTo(promised, 10);
     }
   });
@@ -359,7 +362,7 @@ describe("预览不骗人（信息可见性的地基）", () => {
     expect(preview.circleAlertGain).toBe(2);
     // 真跑一步：警觉封顶（这一步同时会把猎物惊走，所以只对账警觉本身）
     const after = act(brink, "circle").state;
-    expect(after.stalk).toBeNull();
+    expect(approachOf(after)).toBeNull();
     const calm = stalking({ distance: 30, alertness: t.stalkAlertMax - 2 });
     expect(stalkPreview(calm, QUIET).circleAlertGain).toBe(2);
   });
@@ -369,10 +372,10 @@ describe("预览不骗人（信息可见性的地基）", () => {
     for (const shape of cases) {
       const before = stalking(shape, calm);
       const preview = stalkPreview(before, calm);
-      const waited = act(before, "wait", calm).state.stalk;
-      expect(waited?.alertness).toBe((before.stalk?.alertness ?? 0) - preview.waitAlertDrop);
-      const circled = act(before, "circle", calm).state.stalk;
-      expect(circled?.alertness).toBe((before.stalk?.alertness ?? 0) + preview.circleAlertGain);
+      const waited = act(before, "wait", calm).state.encounter?.approach;
+      expect(waited?.alertness).toBe((approachOf(before)?.alertness ?? 0) - preview.waitAlertDrop);
+      const circled = act(before, "circle", calm).state.encounter?.approach;
+      expect(circled?.alertness).toBe((approachOf(before)?.alertness ?? 0) + preview.circleAlertGain);
     }
   });
 
@@ -426,20 +429,20 @@ describe("器官 tag 决定信息精度（build 差异直接改操作层）", ()
     expect(stalkPreview(blind, QUIET).windVisible).toBe(false);
 
     const circled = act(blind, "circle").state;
-    expect(circled.stalk?.windKnown).toBe(true);
+    expect(approachOf(circled)?.windKnown).toBe(true);
     const after = stalkPreview(circled, QUIET);
     expect(after.windVisible).toBe(true);
     expect(after.alreadyUpwind).toBe(true);
 
     // 确知位一旦立起来就不会掉（此后风向只可能因为再绕一圈而改变，仍是逆风）
     const crept = act(circled, "creep").state;
-    expect(crept.stalk?.windKnown).toBe(true);
+    expect(approachOf(crept)?.windKnown).toBe(true);
   });
 
   it("起追时风向未确知（除非器官读得出）", () => {
     for (let seed = 0; seed < 20; seed += 1) {
       const { state } = performAction(createLife(seed, FIXTURE_SEED_ID, QUIET), "hunt", QUIET);
-      expect(state.stalk?.windKnown).toBe(false);
+      expect(approachOf(state)?.windKnown).toBe(false);
     }
   });
 
@@ -447,8 +450,8 @@ describe("器官 tag 决定信息精度（build 差异直接改操作层）", ()
     const bare = stalking({ distance: 18, alertness: 30, wind: "cross" });
     // 雾目只带 night-eye（无 swift／hunter），所以四个量的推进必须逐字相同
     const seer = withOrgans(bare, ORGAN_WU_MU);
-    const plainAfter = act(bare, "creep").state.stalk;
-    const seerAfter = act(seer, "creep").state.stalk;
+    const plainAfter = act(bare, "creep").state.encounter?.approach;
+    const seerAfter = act(seer, "creep").state.encounter?.approach;
     expect(seerAfter?.distance).toBe(plainAfter?.distance);
     expect(seerAfter?.alertness).toBe(plainAfter?.alertness);
     expect(stalkPreview(seer, QUIET).pounceChance).toBe(stalkPreview(bare, QUIET).pounceChance);
@@ -486,10 +489,10 @@ describe("旁白变体（不复读）", () => {
 });
 
 describe("纪律", () => {
-  it("不在追猎中调 stalkAct／stalkPreview 直接抛错", () => {
+  it("不在接近阶段调 stalkAct／stalkPreview 直接抛错", () => {
     const life = createLife(1, FIXTURE_SEED_ID, QUIET);
-    expect(() => stalkAct(life, "creep", QUIET)).toThrow(/不在追猎中/);
-    expect(() => stalkPreview(life, QUIET)).toThrow(/不在追猎中/);
+    expect(() => stalkAct(life, "creep", QUIET)).toThrow(/不在接近阶段/);
+    expect(() => stalkPreview(life, QUIET)).toThrow(/不在接近阶段/);
   });
 
   it("已死亡时调 stalkAct 抛错", () => {
@@ -497,8 +500,9 @@ describe("纪律", () => {
   });
 
   it("猎物 id 失效时抛错（内容 bug 要吵）", () => {
-    const broken = { ...stalking(), stalk: { ...stalking().stalk!, preyId: "no-such-beast" } };
-    expect(() => stalkAct(broken, "creep", QUIET)).toThrow(/未知猎物/);
+    const base = stalking();
+    const broken = { ...base, encounter: { ...base.encounter!, enemyId: "no-such-beast" } };
+    expect(() => stalkAct(broken, "creep", QUIET)).toThrow(/未知敌人/);
   });
 
   it("stalkAct 不改动入参 state，同一 state 反复调结果恒等", () => {
@@ -536,24 +540,24 @@ describe("一场追猎打得通（手感的最小验证）", () => {
   it("绕上风 → 潜到贴身 → 扑：命中率 ≥0.70", () => {
     let state = stalking({ distance: 24, alertness: 18, wind: "with" });
     state = act(state, "circle").state;
-    while ((state.stalk?.distance ?? 0) > 0 && state.stalk) {
+    while ((approachOf(state)?.distance ?? 0) > 0 && approachOf(state)) {
       const next = act(state, "creep").state;
-      if (!next.stalk) break;
+      if (!approachOf(next)) break;
       state = next;
     }
-    expect(state.stalk).not.toBeNull();
+    expect(approachOf(state)).not.toBeNull();
     expect(stalkPreview(state, QUIET).pounceChance).toBeGreaterThanOrEqual(0.7);
   });
 
   /** 顺风硬冲：不绕风、一路猛潜到贴身 —— 警觉飙升，命中率必须明显更差。 */
   it("顺风硬冲到贴身：命中率 ≤0.50，且明显低于逆风打法", () => {
     let state = stalking({ distance: 24, alertness: 18, wind: "with" });
-    while ((state.stalk?.distance ?? 0) > 0 && state.stalk) {
+    while ((approachOf(state)?.distance ?? 0) > 0 && approachOf(state)) {
       const next = act(state, "creep").state;
-      if (!next.stalk) break;
+      if (!approachOf(next)) break;
       state = next;
     }
-    if (!state.stalk) return; // 途中就被惊走也算「硬冲失败」
+    if (!approachOf(state)) return; // 途中就被惊走也算「硬冲失败」
     expect(stalkPreview(state, QUIET).pounceChance).toBeLessThanOrEqual(0.5);
   });
 

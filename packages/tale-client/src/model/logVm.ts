@@ -1,7 +1,7 @@
 /**
  * 右侧「最近 6 条」日志缓冲（纯）。
  *
- * 引擎不维护这个缓冲：`TurnResult.notices` 是一次性的，`state.combat.log` 在战斗结束那一刻
+ * 引擎不维护这个缓冲：`TurnResult.notices` 是一次性的，`state.encounter?.log` 在战斗结束那一刻
  * 就没了，`state.records` 又只收列传素材（狩猎成败不写）。所以由界面自己攒，攒的规则
  * 放这里以便单测。
  */

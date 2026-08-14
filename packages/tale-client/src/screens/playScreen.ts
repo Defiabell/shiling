@@ -19,8 +19,9 @@ import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
 import type { GuideVm } from "../model/guideVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
+import type { EncounterChromeVm, MomentumVm, StatLineVm, WoundVm } from "../model/encounterVm.js";
 import type { StatusVm } from "../model/statusVm.js";
-import type { CombatAct, WayId } from "@shiling/tale-sim";
+import { approachOf, clashOf, type CombatAct, type WayId } from "@shiling/tale-sim";
 
 export type CenterVm =
   | {
@@ -39,8 +40,19 @@ export type CenterVm =
       omens?: NarrationOmenVm[];
     }
   | { kind: "event"; key: string; card: EventCardVm }
-  | { kind: "combat"; key: string; combat: CombatVm }
-  | { kind: "stalk"; key: string; stalk: StalkVm };
+  /**
+   * [M2-B1] **一场遭遇** —— 接近与交锋合成一块屏（M1 是 `combat` 与 `stalk` 两种 kind）。
+   *
+   * 公共外壳（`chrome`：头／势条／伤牌／四相盘／整场日志）两个阶段共用，只有 `body`
+   * 随阶段换。这不是排版偏好：两个阶段本来就是同一场遭遇的两半，屏幕整块换掉会让
+   * 「我刚才潜到多近」在转阶段那一刻从玩家眼前消失。
+   */
+  | {
+      kind: "encounter";
+      key: string;
+      chrome: EncounterChromeVm;
+      body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm };
+    };
 
 /** 降世屏上的一条前提（天时／出身）：名字 ＋ 机制账 ＋ 风味一句。 */
 export interface NarrationOmenVm {
@@ -121,7 +133,7 @@ function detailButton(
    * （见 `renderPlay`），若还留着按钮的样子，玩家点一下什么也不会发生 —— 一颗按了没反应
    * 的按钮比没有按钮更糟。悬停提示仍在（title 里就是那句实例化的机制）。
    */
-  if (props.center.kind === "stalk" || props.center.kind === "combat") {
+  if (props.center.kind === "encounter") {
     return el(
       "div",
       {
@@ -570,6 +582,223 @@ function hpBar(label: string, name: string, hp: number, max: number, percent: nu
 }
 
 /**
+ * [M2-B1] **遭遇卡** —— 接近与交锋共用的那一张。
+ *
+ * 从上到下：
+ *   遭遇头（头像／名号／来路／阶段／行为段／破绽牌）
+ *   → **势条**（跨阶段延续，决杀的进度）
+ *   → **部位伤三牌**（整场累积，断腿／废眼各有一句「已成」）
+ *   → 阶段中段（接近＝距离轨＋三量表＋四按钮；交锋＝意图＋双血条＋形势＋指令网格）
+ *   → **四相盘**（猛体灵德逐项写此刻的作用）
+ *   → 整场日志（两个阶段同一条）
+ *
+ * 「一套 UI 语汇」这条交付线就落在这个函数上：M1 的两块屏在转阶段那一刻是整块换掉的，
+ * 于是玩家刚刚花四息攒下的东西（潜到多近、它警觉多高）在血战开始时从眼前消失。
+ * 现在换的只有中段。
+ */
+function encounterCard(
+  chrome: EncounterChromeVm,
+  body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm },
+  key: string,
+  props: PlayProps,
+): HTMLElement {
+  return el(
+    "section",
+    {
+      class: `card card--encounter card--${body.kind === "approach" ? "stalk" : "combat"}${
+        body.kind === "clash" && body.combat.playerCritical ? " is-critical" : ""
+      }`,
+      attrs: { "data-key": key, "data-phase": body.kind },
+    },
+    [
+      encounterHead(chrome, body),
+      momentumBar(chrome.momentum),
+      woundRow(chrome.wounds),
+      body.kind === "approach"
+        ? stalkBody(body.stalk, props)
+        : clashBody(body.combat, props),
+      statPanel(chrome.stats),
+      el(
+        "ol",
+        { class: "combat__log", attrs: { "data-encounter-log": "1" } },
+        chrome.log.slice(-6).map((line) => el("li", { text: line })),
+      ),
+    ],
+  );
+}
+
+/** 遭遇头：一场遭遇的「它是谁、怎么起的、打到哪一段、破绽看出来没有」。 */
+function encounterHead(
+  chrome: EncounterChromeVm,
+  body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm },
+): HTMLElement {
+  const roundLabel =
+    body.kind === "approach" ? body.stalk.roundLabel : body.combat.roundLabel;
+  const badges: (HTMLElement | null)[] = [
+    el("b", { class: "enc__phase", text: chrome.phaseLabel, attrs: { "data-enc-phase": "1" } }),
+    chrome.stageBadge
+      ? el("b", {
+          class: "enc__stage",
+          text: `${chrome.stageBadge}　${chrome.stageProgress ?? ""}`.trim(),
+          attrs: { "data-enc-stage": "1" },
+          title: "它按血线换打法 —— 换段那一刻日志里会写一句。",
+        })
+      : null,
+    chrome.weaknessBadge
+      ? el("b", {
+          class: `enc__weak${chrome.weaknessFound ? " is-found" : ""}`,
+          text: chrome.weaknessBadge,
+          attrs: { "data-enc-weak": chrome.weaknessFound ? "found" : "hidden" },
+          title: chrome.weaknessHint ?? "",
+        })
+      : null,
+  ];
+  return el("div", { class: "combat__head" }, [
+    el("figure", { class: "foe" }, [
+      el("img", {
+        class: "foe__img",
+        attrs: {
+          src:
+            chrome.enemyPortrait?.src ??
+            inkArt("event", `enemy:${chrome.enemyName}`, { width: 768, height: 768 }),
+          alt: "",
+          "data-foe": "1",
+        },
+      }),
+    ]),
+    el("div", { class: "combat__intro" }, [
+      el("div", { class: "combat__kicker" }, [
+        el("span", { text: "遭遇" }),
+        el("em", { text: roundLabel }),
+        el("i", { class: "enc__origin", text: chrome.originLabel }),
+        ...badges.filter((node): node is HTMLElement => node !== null),
+      ]),
+      el("div", { class: "combat__nameline" }, [
+        el("h2", { class: "combat__name", text: chrome.enemyName }),
+        ...(body.kind === "approach"
+          ? [
+              body.stalk.preyBadge
+                ? el("b", {
+                    class: "stalk__badge",
+                    text: body.stalk.preyBadge,
+                    title: "追猎失手或它受惊时，它不会逃 —— 会转成一场交锋。",
+                  })
+                : null,
+              body.stalk.preyLoreBadge
+                ? el("b", {
+                    class: "stalk__lore",
+                    text: body.stalk.preyLoreBadge,
+                    attrs: { "data-lore-badge": "1" },
+                    title: "历代与它照过面，且已以血统参透 —— 警觉与命中率读得出确数。",
+                  })
+                : null,
+            ]
+          : [
+              body.combat.enemyLoreBadge
+                ? el("b", {
+                    class: "combat__lore",
+                    text: body.combat.enemyLoreBadge,
+                    attrs: { "data-lore-badge": "1" },
+                    title: "历代与它照过面，且已以血统参透 —— 它的意图读得出确数。",
+                  })
+                : null,
+            ]),
+      ]),
+      body.kind === "approach"
+        ? el("p", { class: "stalk__desc", text: body.stalk.preyDesc })
+        : el(
+            "div",
+            {
+              class: `combat__intent${body.combat.intentHot ? " is-hot" : ""}${
+                body.combat.intentKnown ? "" : " is-vague"
+              }`,
+              attrs: { "data-intent": body.combat.intentKnown ? "exact" : "vague" },
+            },
+            [
+              el("b", { class: "combat__intent-text", text: body.combat.intentLabel }),
+              el("em", { class: "combat__intent-detail", text: body.combat.intentDetail }),
+            ],
+          ),
+    ]),
+  ]);
+}
+
+/**
+ * 势条 —— 一排小方块，比进度条更像「攒了几点」。
+ *
+ * 它跨阶段延续，所以在接近阶段也在（那时它只涨不花：接近的成果结转到交锋的起手势）。
+ */
+function momentumBar(momentum: MomentumVm): HTMLElement {
+  return el(
+    "div",
+    {
+      class: `enc__momentum${momentum.hot ? " is-hot" : ""}`,
+      title: momentum.hint,
+      attrs: { "data-momentum": String(momentum.value) },
+    },
+    [
+      el("b", { class: "enc__momentum-zi", text: "势" }),
+      el(
+        "div",
+        { class: "enc__pips" },
+        momentum.pips.map((full) => el("i", { class: `enc__pip${full ? " is-full" : ""}` })),
+      ),
+      el("em", { class: "enc__momentum-label", text: momentum.label }),
+    ],
+  );
+}
+
+/** 三处部位伤：整场累积，且「断腿／废眼」那两条一劳永逸的事要看得出已经成了。 */
+function woundRow(wounds: WoundVm[]): HTMLElement {
+  return el(
+    "div",
+    { class: "enc__wounds", attrs: { "data-wounds": "1" } },
+    wounds.map((wound) =>
+      el(
+        "b",
+        {
+          class: `enc__wound${wound.stacks > 0 ? " is-hurt" : ""}${wound.landmark ? " is-landmark" : ""}`,
+          title: wound.hint,
+          attrs: { "data-wound": wound.part },
+        },
+        [
+          el("span", { class: "enc__wound-zi", text: wound.label }),
+          el("em", { text: `${wound.stacks}／${wound.cap}` }),
+        ],
+      ),
+    ),
+  );
+}
+
+/**
+ * 四相盘 —— owner 那句「好好展示积累的各项指标的作用」的落点。
+ *
+ * 四行固定顺序（猛体灵德），每行「字 · 值 · 此刻在做的两三件事」。
+ * 它**不是** tooltip：一屏之内看得见的东西才叫看得见，而这一盘就在指令网格底下。
+ */
+function statPanel(stats: StatLineVm[]): HTMLElement {
+  return el(
+    "div",
+    { class: "enc__stats", attrs: { "data-enc-stats": "1" } },
+    stats.map((line) =>
+      el(
+        "div",
+        { class: "enc__stat", attrs: { "data-enc-stat": line.key } },
+        [
+          el("b", { class: "enc__stat-zi", style: `--hue:${STAT_HUE[line.key] ?? "var(--c-ink)"}`, text: line.zi }),
+          el("i", { class: "enc__stat-num", text: String(line.value) }),
+          el(
+            "div",
+            { class: "enc__stat-uses" },
+            line.effects.map((text) => el("em", { text })),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/**
  * 搏杀屏（M1-P2 重做）。
  *
  * 与追猎屏同一条骨架，因为它们要回答同一个问题：**按下去会发生什么**。
@@ -579,110 +808,36 @@ function hpBar(label: string, name: string, hp: number, max: number, percent: nu
  * 指令**全部平铺在一屏**（既定裁决第三条：不做多级菜单、不增加每回合的必点次数）：
  * 三颗咬击 ＋ 两颗姿态（当前姿态不出按钮）＋ 器官技若干 ＋ 遁走。
  */
-function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
+function clashBody(combat: CombatVm, props: PlayProps): HTMLElement {
   // [S1] 遁走单独拎出来（见下面 combat__stand 那段的理由）；其余按钮留在可滚的网格里
   const flee = combat.actions.find((action) => action.group === "flee") ?? null;
   const grid = combat.actions.filter((action) => action.group !== "flee");
-  const log = el(
-    "ol",
-    { class: "combat__log" },
-    combat.log.slice(-6).map((line) => el("li", { text: line })),
-  );
-  return el(
-    "section",
-    {
-      class: `card card--combat${combat.playerCritical ? " is-critical" : ""}`,
-      attrs: { "data-key": `combat:${combat.enemyName}` },
-    },
-    [
-      /*
-       * 敌人头像是 B4 出的 1:1 胸像，所以**不能**走顶部横幅图位 —— 一张方形胸像塞进
-       * 780×130 的横幅里只剩眼睛一条缝。改成头像在左、名号与描述在右（三国志式的遭遇版式），
-       * 顺带把战斗卡的纵向高度让给血条与指令：打架时最不该出现的就是滚屏。
-       */
-      el("div", { class: "combat__head" }, [
-        el("figure", { class: "foe" }, [
-          el("img", {
-            class: "foe__img",
-            attrs: {
-              src: combat.enemyPortrait?.src ?? inkArt("event", `enemy:${combat.enemyName}`, { width: 768, height: 768 }),
-              alt: "",
-              "data-foe": "1",
-            },
-          }),
-        ]),
-        el("div", { class: "combat__intro" }, [
-          el("div", { class: "combat__kicker" }, [
-            el("span", { text: "遭遇" }),
-            el("em", { text: combat.roundLabel }),
-            // 守备与姿态是两个常驻小牌：它们决定「该咬哪儿」与「出伤受伤各打几折」
-            el("b", { class: "combat__guard", attrs: { "data-guard": combat.guardPart } }, [
-              el("span", { text: combat.guardLabel }),
-            ]),
-            el("b", { class: "combat__stance" }, [el("span", { text: combat.stanceLabel })]),
-            ...combat.marks.map((mark) => el("i", { class: "combat__mark", text: mark })),
-          ]),
-          el("div", { class: "combat__nameline" }, [
-            el("h2", { class: "combat__name", text: combat.enemyName }),
-            /*
-             * [S3] 「已入图鉴」：花血统点参透过这一头，所以这一场读得出确切意图。
-             * 挂在名号旁而不是意图行里 —— 它是**关于这头兽本身**的事实（世世都算数），
-             * 而意图行说的是这一回合。
-             */
-            combat.enemyLoreBadge
-              ? el("b", {
-                  class: "combat__lore",
-                  text: combat.enemyLoreBadge,
-                  attrs: { "data-lore-badge": "1" },
-                  title: "历代与它照过面，且已以血统参透 —— 它的意图读得出确数。",
-                })
-              : null,
-          ]),
-          /*
-           * 意图宣告：这一行是整个搏杀屏的意义所在（它相当于追猎屏的风标 ＋ 命中率）。
-           * 读得出意图的 build 看到的是内容写的那句话＋一笔受伤账；读不出的只看到粗档
-           * 「似要动手」＋一句「灵犀之类的器官才读得清」——**差别必须写在脸上**，
-           * 否则器官白给（P1 第一条教训）。
-           */
-          el(
-            "div",
-            {
-              class: `combat__intent${combat.intentHot ? " is-hot" : ""}${combat.intentKnown ? "" : " is-vague"}`,
-              attrs: { "data-intent": combat.intentKnown ? "exact" : "vague" },
-            },
-            [
-              el("b", { class: "combat__intent-text", text: combat.intentLabel }),
-              el("em", { class: "combat__intent-detail", text: combat.intentDetail }),
-            ],
-          ),
-        ]),
-      ]),
-      el("div", { class: "combat__bars" }, [
-        hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
-        hpBar("我", "此身", combat.playerHp, combat.playerHpMax, combat.playerPercent, "self"),
-      ]),
-      /*
-       * [S1] **遁走从滚动网格里搬到形势那一行旁边**（`combat__stand`）。
-       *
-       * 两个理由，一个是实机量出来的、一个是设计上的：
-       * 1. 技能池长到 5〜8 颗（极端 build 十几颗）之后，网格必须能滚，而滚动会把**末尾**
-       *    那颗顶出可视区 —— 末尾正好是遁走。「什么时候该逃」是搏杀屏三道题之一，
-       *    它的按钮不能是要滚才找得到的那一颗。
-       * 2. 「还撑得住约 3 合 · 它还需 4 下」就是这道题的算式。按钮挨着它的依据放，
-       *    才读得成一句话。
-       */
-      el("div", { class: "combat__stand" }, [
-        el("div", {
-          class: `combat__outlook${combat.outlookHot ? " is-hot" : ""}`,
-          text: combat.outlook,
-          attrs: { "data-outlook": "1" },
-        }),
-        ...(flee ? [combatButton(flee, props)] : []),
-      ]),
-      log,
-      el("div", { class: "combat__acts" }, grid.map((action) => combatButton(action, props))),
-    ],
-  );
+  return el("div", { class: "enc__body enc__body--clash" }, [
+    el("div", { class: "combat__bars" }, [
+      hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
+      hpBar("我", "此身", combat.playerHp, combat.playerHpMax, combat.playerPercent, "self"),
+    ]),
+    /*
+     * [S1] **遁走从滚动网格里搬到形势那一行旁边**（`combat__stand`）。
+     *
+     * 两个理由，一个是实机量出来的、一个是设计上的：
+     * 1. 技能池长到 5〜8 颗（极端 build 十几颗）之后，网格必须能滚，而滚动会把**末尾**
+     *    那颗顶出可视区 —— 末尾正好是遁走。「什么时候该逃」是交锋屏三道题之一，
+     *    它的按钮不能是要滚才找得到的那一颗。
+     * 2. 「还撑得住约 3 合 · 它还需 4 下」就是这道题的算式。按钮挨着它的依据放，
+     *    才读得成一句话。
+     */
+    el("div", { class: "combat__stand" }, [
+      el("div", {
+        class: `combat__outlook${combat.outlookHot ? " is-hot" : ""}`,
+        text: combat.outlook,
+        attrs: { "data-outlook": "1" },
+      }),
+      ...(flee ? [combatButton(flee, props)] : []),
+    ]),
+    el("div", { class: "combat__marks" }, combat.marks.map((mark) => el("i", { class: "combat__mark", text: mark }))),
+    el("div", { class: "combat__acts" }, grid.map((action) => combatButton(action, props))),
+  ]);
 }
 
 /** 一颗搏杀指令按钮 —— 网格与「形势那一行」共用这一份（两处长得必须一样）。 */
@@ -769,79 +924,32 @@ function stalkTrack(stalk: StalkVm): HTMLElement {
   ]);
 }
 
-function stalkCard(stalk: StalkVm, key: string, props: PlayProps): HTMLElement {
-  return el("section", { class: "card card--stalk", attrs: { "data-key": key } }, [
-    el("div", { class: "stalk__head" }, [
-      el("figure", { class: "foe foe--stalk" }, [
-        el("img", {
-          class: "foe__img",
-          attrs: {
-            src:
-              stalk.preyPortrait?.src ??
-              inkArt("event", `prey:${stalk.preyName}`, { width: 768, height: 768 }),
-            alt: "",
-            "data-prey": "1",
-          },
-        }),
-      ]),
-      el("div", { class: "stalk__intro" }, [
-        el("div", { class: "stalk__kicker" }, [
-          el("span", { text: "追猎" }),
-          el("em", { text: stalk.roundLabel }),
-          el(
-            "b",
-            {
-              class: `stalk__wind${stalk.windAgainst ? " is-bad" : ""}${stalk.windVisible ? "" : " is-vague"}`,
-              title: stalk.windHint,
-            },
-            [
-              el("span", { text: stalk.windLabel }),
-              stalk.windMulLabel ? el("i", { text: stalk.windMulLabel }) : null,
-            ],
-          ),
-        ]),
-        el("div", { class: "stalk__nameline" }, [
-          el("h2", { class: "stalk__name", text: stalk.preyName }),
-          // 「会反扑」一直挂在名号旁边：它决定要不要在这头身上花五个回合
-          stalk.preyBadge
-            ? el("b", {
-                class: "stalk__badge",
-                text: stalk.preyBadge,
-                title: "追猎失手或它受惊时，它不会逃 —— 会转成一场搏杀。",
-              })
-            : null,
-          /*
-           * [S3] 「已入图鉴」：花血统点参透过这一头，所以这一屏读得出确切警觉与命中率。
-           * 与「会反扑」并列而不是二选一 —— 一头兽可以既会反扑又已参透，而两件事
-           * 玩家都要知道。挂在名号旁而不是量表里，理由同「会反扑」：它是**关于这头兽本身**
-           * 的事实，不随这一息变。
-           */
-          stalk.preyLoreBadge
-            ? el("b", {
-                class: "stalk__lore",
-                text: stalk.preyLoreBadge,
-                attrs: { "data-lore-badge": "1" },
-                title: "历代与它照过面，且已以血统参透 —— 警觉与命中率读得出确数。",
-              })
-            : null,
-        ]),
-        el("p", { class: "stalk__desc", text: stalk.preyDesc }),
-      ]),
-    ]),
-
+function stalkBody(stalk: StalkVm, props: PlayProps): HTMLElement {
+  return el("div", { class: "enc__body enc__body--approach" }, [
     stalkTrack(stalk),
     el("div", { class: "stalk__meters" }, [
       stalkMeter(stalk.distance),
       stalkMeter(stalk.alert),
       stalkMeter(stalk.stamina),
+      el(
+        "div",
+        {
+          class: `smeter smeter--wind${stalk.windAgainst ? " is-hot" : ""}${stalk.windVisible ? "" : " is-vague"}`,
+          title: stalk.windHint,
+        },
+        [
+          el("div", { class: "smeter__head" }, [
+            el("b", { class: "smeter__zi", text: "风" }),
+            el("span", { class: "smeter__read" }, [
+              el("em", { class: "smeter__band", text: stalk.windLabel }),
+            ]),
+          ]),
+          el("div", { class: "smeter__note" }, [
+            el("em", { text: stalk.windMulLabel ?? "绕一圈可保准是逆风" }),
+          ]),
+        ],
+      ),
     ]),
-
-    el(
-      "ol",
-      { class: "combat__log stalk__log" },
-      stalk.log.slice(-6).map((line) => el("li", { text: line })),
-    ),
-
     el(
       "div",
       { class: "stalk__acts" },
@@ -862,7 +970,7 @@ function stalkCard(stalk: StalkVm, key: string, props: PlayProps): HTMLElement {
             el("span", { class: "sact__seal", text: action.glyph }),
             el("span", { class: "sact__text" }, [
               el("b", { text: action.label }),
-              // 预期效果**恒在**：没有预览的按钮就是翻牌，这一行是整个追猎屏的意义所在
+              // 预期效果**恒在**：没有预览的按钮就是翻牌，这一行是整个接近阶段的意义所在
               el("em", { class: "sact__effect", text: action.effect }),
               action.warning ? el("i", { class: "sact__warn", text: action.warning }) : null,
             ]),
@@ -1040,10 +1148,8 @@ function centerNode(props: PlayProps): HTMLElement {
   switch (props.center.kind) {
     case "event":
       return eventCard(props.center.card, props.center.key, props);
-    case "combat":
-      return combatCard(props.center.combat, props);
-    case "stalk":
-      return stalkCard(props.center.stalk, props.center.key, props);
+    case "encounter":
+      return encounterCard(props.center.chrome, props.center.body, props.center.key, props);
     default:
       return narrationCard(props.center, props);
   }
@@ -1064,8 +1170,12 @@ function centerNode(props: PlayProps): HTMLElement {
  */
 export function renderPlay(props: PlayProps): HTMLElement {
   const kind = props.center.kind;
-  const fullscreen = kind === "stalk" || kind === "combat";
-  const mode = kind === "stalk" ? " play--stalk" : kind === "combat" ? " play--combat" : "";
+  const fullscreen = kind === "encounter";
+  const phase = props.center.kind === "encounter" ? props.center.body.kind : null;
+  // 两个阶段共用 `play--encounter`（一套语汇），再各带一个用来微调中段排版的类
+  const mode = fullscreen
+    ? ` play--encounter play--${phase === "approach" ? "stalk" : "combat"}`
+    : "";
   /*
    * 引导链与详情浮层都**不进两个战术全屏**：那两屏的按钮带两行说明、纵向已经量到极限
    * （P2 那次实测卡片 608px／舞台 588px），再插一行或压一张浮层就是重犯「新元素把按钮

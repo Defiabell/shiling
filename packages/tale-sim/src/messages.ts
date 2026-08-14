@@ -64,6 +64,20 @@ export const ENGINE_MESSAGES = {
   combatBraceHold: "{{enemy}}这一下砸在合拢的鳞上，一分力也没进来。",
   combatWin: "{{enemy}}毙于爪牙之下，吞其精气。",
   combatWinRecord: "搏杀{{enemy}}，食其精气。",
+  /**
+   * [M2-B1] 三条来路各自的开场白 —— 一场遭遇是怎么起的，玩家第一行字就该读到。
+   *
+   * 三条走同一个 `beginEncounter`，措辞不同是因为**主动权不同**：我盯上了它／它扑了我／
+   * 撞到一处。主动权正是起手势的来源（见 `EncounterState.momentum`），所以它必须写在脸上。
+   */
+  encounterAmbush: "{{enemy}}自暗处扑出 —— 它先动的手。",
+  encounterEvent: "{{enemy}}当道，避之不得。",
+  /** [M2-B1] 接近阶段转交锋时结转的势 */
+  encounterCarry: "潜到这一步才失手 —— 身上还留着一股势。",
+  /** [M2-B1] 敌人进入新的行为段（兜底；内容 `EnemyStageDef.text` 优先） */
+  encounterStage: "{{enemy}}换了打法。",
+  /** [M2-B1] 打赢留下的食余 */
+  combatWinSurplus: "尸首拖回穴口，够吃{{seasons}}季。",
   combatFleeOk: "觑得一隙遁去，未损分毫。",
   combatFleeFail: "去路已绝，遁而不得脱。",
 
@@ -204,6 +218,24 @@ export const COMBAT_MESSAGES = {
   ],
   /** 咬腿拦住了它的退路 */
   fleeBlocked: ["{{enemy}}想走，那条腿却不听使唤 —— 它没走成。"],
+  /** [M2-B1] 腿伤累到「再也逃不掉」那一层 —— 与 `fleeBlocked`（一时的迟滞）分开 */
+  legCrippled: ["{{enemy}}的后腿已经拖在地上，它这辈子都追不上你，也走不了了。"],
+  /** [M2-B1] 眼伤累到「不再反击」那一层 */
+  eyeRuined: ["{{enemy}}的两眼糊成一片红，它只能凭声音乱扑了。"],
+  /** [M2-B1] 决杀（攒够势的一记） */
+  finisher: [
+    "势已在身，整个身子压着这一记落下 —— {{enemy}}受创{{dmg}}，护也护不住。",
+    "攒了几合的力气尽数吐出，{{enemy}}被掀翻在地，受创{{dmg}}。",
+  ],
+  /** [M2-B1] 暴击（德之气运） */
+  crit: ["这一下不偏不倚正落在筋节上。"],
+  /** [M2-B1] 闪避（德之气运）—— 整下躲开 */
+  dodge: [
+    "身子先于念头偏了半寸，{{enemy}}这一下擦着毛尖过去。",
+    "不知怎么就侧开了 —— {{enemy}}扑了个空。",
+  ],
+  /** [M2-B1] 识破弱点（兜底；内容 `EnemyDef.weakness.text` 优先） */
+  weakness: ["看出来了 —— {{enemy}}的{{part}}是它护不住的地方。"],
   /** 器官技还在冷却（前置校验用不到，留给界面文案对齐） */
   skillCooling: ["{{skill}}还使不出来，得再等{{rounds}}合。"],
   /** 意图宣告的兜底池（内容 `combatFlavor.intent` 优先） */

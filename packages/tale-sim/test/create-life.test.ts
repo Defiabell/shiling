@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCursor, createLife, rollPremise } from "../src/index.js";
+import { clashOf, createCursor, createLife, rollPremise } from "../src/index.js";
 import { FIXTURE_CONTENT, FIXTURE_SEED_ID, FIXTURE_SEED_ORGAN_ID, makeContent } from "./fixtures.js";
 
 describe("createLife 出生", () => {
@@ -72,7 +72,7 @@ describe("createLife 出生", () => {
     expect(life.season).toBe(0);
     expect(life.alive).toBe(true);
     expect(life.ending).toBeNull();
-    expect(life.combat).toBeNull();
+    expect(clashOf(life)).toBeNull();
     expect(life.flags).toEqual([]);
     expect(life.firedOnceIds).toEqual([]);
   });
