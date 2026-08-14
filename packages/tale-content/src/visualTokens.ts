@@ -209,6 +209,75 @@ const TOKEN_DEFS = {
     name: "穷奇",
     desc: "虎身猬毛、肩生小翼、啼声如婴的穷奇幼崽",
   },
+
+  // — [M2-B3] 新增十三头。B4 没为它们出图（各自借一张老兽的脸，见 `EnemyDef.artId`），
+  //   但**形貌仍然只在这里写一次**：具名形貌一旦在别处各写一遍，同一头兽在两条事件里
+  //   就会长成两个样子。这十三条现在是它们外形的唯一正本 —— 补图那一轮直接照这里画。
+  guanguan: {
+    id: "guanguan",
+    name: "灌灌",
+    desc: "青羽赤喙、成对而鸣、其声如人相呵的灌灌",
+  },
+  chiru: {
+    id: "chiru",
+    name: "赤鱬",
+    desc: "鱼身而生人面、赤鳍白腹的赤鱬",
+  },
+  lushu: {
+    id: "lushu",
+    name: "鹿蜀",
+    desc: "马身白首、身有虎纹、赤尾曳地的鹿蜀",
+  },
+  xuangui: {
+    id: "xuangui",
+    name: "旋龟",
+    desc: "黑甲厚重、生鸟首而曳虺尾的旋龟",
+  },
+  lili: {
+    id: "lili",
+    name: "狸力",
+    desc: "状如豚而前足生距、鬃短毛硬、爪缝嵌土的狸力",
+  },
+  luoyu: {
+    id: "luoyu",
+    name: "蠃鱼",
+    desc: "鱼身而生鸟翼、鳞背泛光的蠃鱼",
+  },
+  bifang: {
+    id: "bifang",
+    name: "毕方",
+    desc: "状如鹤而独足、赤文青质、白喙衔火的毕方",
+  },
+  gudiao: {
+    id: "gudiao",
+    name: "蛊雕",
+    desc: "雕形而额生双角、翼展蔽日的蛊雕",
+  },
+  mingshe: {
+    id: "mingshe",
+    name: "鸣蛇",
+    desc: "蛇身而生四翼、鳞色土黄、颈侧有孔的鸣蛇",
+  },
+  huahuai: {
+    id: "huahuai",
+    name: "猾褢",
+    desc: "人形而颈背生彘鬣、两臂粗短、周身覆土的猾褢",
+  },
+  tulou: {
+    id: "tulou",
+    name: "土蝼",
+    desc: "羊身而生四角朝四方、蹄下扬灰的土蝼",
+  },
+  shuhu: {
+    id: "shuhu",
+    name: "孰湖",
+    desc: "马身鸟翼、生人面而曳蛇尾的孰湖",
+  },
+  jiuweihu: {
+    id: "jiuweihu",
+    name: "九尾狐",
+    desc: "白狐之形而尾分九条、目色微金的九尾狐",
+  },
 } as const satisfies Record<string, VisualToken>;
 
 export type VisualTokenId = keyof typeof TOKEN_DEFS;

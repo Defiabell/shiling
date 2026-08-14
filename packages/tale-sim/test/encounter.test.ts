@@ -25,6 +25,7 @@ import {
   createLife,
   encounterPreview,
   performAction,
+  recommendCombatAct,
   stalkAct,
   type CombatAct,
   type EnemyDef,
@@ -35,8 +36,12 @@ import {
   ALWAYS_POUNCE,
   ENEMY_QIONG_QI,
   ENEMY_YE_ZHI,
+  ORGAN_GOU_CHI,
   ORGAN_JI_ZU,
+  ORGAN_WU_MU,
   FIXTURE_CONTENT,
+  makePart,
+  withOrgans,
   FIXTURE_SEED_ID,
   NEVER_POUNCE,
   UNCLAMPED_CHANCE,
@@ -763,5 +768,173 @@ describe("[M2-B1] 纪律：不可变、确定性、预览不消耗抽取", () =>
     expect(turn.over).toBe("caught");
     // 得手不进交锋：一顿肉就是一顿肉，不必再打一架
     expect(turn.state.encounter).toBeNull();
+  });
+});
+
+/**
+ * ===== [M2-B3] 敌人扩容：借来的脸、食之所偏、势满才发 =====
+ *
+ * 三条都是「错了也不吵」的那一类：
+ * 借脸写歪只会渲染成一块空框、偏好写歪只是屏幕上少一行、
+ * 决杀一到门槛就发的话，灵性 build 买到的那个上限**在结算上完全不存在**
+ * （B3 的克制矩阵就是这么量出来的：灵系与基础 build 平均胜率只差 0.1 个点）。
+ */
+describe("[M2-B3] 借来的脸与食之所偏", () => {
+  /** 三件部件的最小内容：产出它们的器官分属三型，好让「精气型」那一列有信噪比。 */
+  function biasContent(partBias: readonly string[], enemyOverrides: Partial<EnemyDef> = {}) {
+    return contentWithoutEvents({
+      parts: [
+        makePart("bp-chi", "齿", ORGAN_GOU_CHI, {
+          open: { damageMul: 1.4, text: "齿起手" },
+          essenceType: "meng",
+        }),
+        makePart("bp-mu", "目", ORGAN_WU_MU, {
+          addon: { effect: "insight", text: "目附加" },
+          essenceType: "lin",
+        }),
+      ],
+      enemies: FIXTURE_CONTENT.enemies.map((enemy) =>
+        enemy.id === ENEMY_QIONG_QI ? { ...enemy, partBias, ...enemyOverrides } : enemy,
+      ),
+    });
+  }
+
+  it("食之所偏逐项给出名号、精气型，以及「产出它的器官在不在身上」", () => {
+    const content = biasContent(["bp-chi", "bp-mu"]);
+    const bare = fighting(content);
+    expect(encounterPreview(bare, content).partBias).toEqual([
+      { partId: "bp-chi", partName: "齿", essenceType: "meng", owned: false },
+      { partId: "bp-mu", partName: "目", essenceType: "lin", owned: false },
+    ]);
+    // 蜕出了产出「齿」的那件器官 → 只有那一件转「已在手」
+    const armed = withOrgans(bare, ORGAN_GOU_CHI);
+    expect(encounterPreview(armed, content).partBias.map((bias) => bias.owned)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it("顺序恒按内容写的那一份（不因已得与否重排）", () => {
+    const content = biasContent(["bp-mu", "bp-chi"]);
+    const state = withOrgans(fighting(content), ORGAN_GOU_CHI);
+    expect(encounterPreview(state, content).partBias.map((bias) => bias.partId)).toEqual([
+      "bp-mu",
+      "bp-chi",
+    ]);
+  });
+
+  it("悬空的部件 id 抛错（少一行不会有别的测试变红）", () => {
+    const content = biasContent(["bp-chi", "bp-nope"]);
+    expect(() => encounterPreview(fighting(content), content)).toThrow(/bp-nope/);
+  });
+
+  it("没写偏好的兽给空数组（界面据此整行不渲染）", () => {
+    const content = biasContent([]);
+    expect(encounterPreview(fighting(content), content).partBias).toEqual([]);
+  });
+
+  it("头像 id：缺省是自己，声明了 artId 就是借来的那一头", () => {
+    const own = biasContent([]);
+    expect(encounterPreview(fighting(own), own).enemyArtId).toBe(ENEMY_QIONG_QI);
+    const borrowed = biasContent([], { artId: ENEMY_YE_ZHI });
+    expect(encounterPreview(fighting(borrowed), borrowed).enemyArtId).toBe(ENEMY_YE_ZHI);
+  });
+});
+
+describe("[M2-B3] 「腿」这个部位按兽换词", () => {
+  /** 它在守（不出手）→ 日志里只剩「我咬了哪里」那几句，好逐字比。 */
+  function legContent(): TaleContent {
+    return calm({ woundCap: 3 });
+  }
+
+  function logOf(legWord: string | undefined): string[] {
+    const base = legContent();
+    const content: TaleContent = {
+      ...base,
+      enemies: base.enemies.map((enemy) =>
+        enemy.id === ENEMY_QIONG_QI
+          ? { ...enemy, ...(legWord === undefined ? {} : { legWord }) }
+          : enemy,
+      ),
+    };
+    const state = fighting(content, { enemyHp: 400, guardPart: "eye" });
+    return combatAct(state, BITE("leg"), content).roundLog;
+  }
+
+  it("缺省仍是「后腿」（既有八头一个字没变）", () => {
+    expect(logOf(undefined).join("｜")).toContain("后腿");
+  });
+
+  it("自报了就按它念，且屏幕上再不出现「后腿」", () => {
+    const line = logOf("翼根").join("｜");
+    expect(line).toContain("翼根");
+    expect(line).not.toContain("后腿");
+  });
+
+  it("换词**不改结算**（同一种子同一动作，伤害与部位伤逐字相同）", () => {
+    const base = legContent();
+    const swap = (legWord?: string): TaleContent => ({
+      ...base,
+      enemies: base.enemies.map((enemy) =>
+        enemy.id === ENEMY_QIONG_QI
+          ? { ...enemy, ...(legWord === undefined ? {} : { legWord }) }
+          : enemy,
+      ),
+    });
+    const a = combatAct(fighting(swap(), { enemyHp: 400 }), BITE("leg"), swap());
+    const withWord = swap("下身");
+    const b = combatAct(fighting(withWord, { enemyHp: 400 }), BITE("leg"), withWord);
+    expect(clashOf(b.state)?.enemyHp).toBe(clashOf(a.state)?.enemyHp);
+    expect(b.state.encounter?.wounds).toEqual(a.state.encounter?.wounds);
+  });
+});
+
+describe("[M2-B3] 决杀：势满才发", () => {
+  /** 势的上限跟着灵走，所以两组 build 只差灵。 */
+  function momentumContent() {
+    return calm({
+      encounterMomentumBase: 4,
+      encounterMomentumMaxPerLing: 8,
+      encounterFinisherMomentum: 4,
+    });
+  }
+
+  it("`finisher.atMax` 报的是「再攒也是白攒」", () => {
+    const content = momentumContent();
+    const mid = fighting(content, {}, { momentum: 4, momentumMax: 8 });
+    expect(combatPreview(mid, content).finisher.ready).toBe(true);
+    expect(combatPreview(mid, content).finisher.atMax).toBe(false);
+    const full = fighting(content, {}, { momentum: 8, momentumMax: 8 });
+    expect(combatPreview(full, content).finisher.atMax).toBe(true);
+  });
+
+  it("势够门槛但没满 → 推荐链不发决杀；满了才发", () => {
+    const content = momentumContent();
+    // 血厚到不会触发「收官」与「保命」两条早退（那两条本来就该无视攒势）
+    const clash = { enemyHp: 400, playerHp: 400, guardPart: "eye" as const };
+    const notFull = fighting(content, clash, { momentum: 4, momentumMax: 8 });
+    expect(recommendCombatAct(combatPreview(notFull, content))).not.toEqual(FINISH);
+    const full = fighting(content, clash, { momentum: 8, momentumMax: 8 });
+    expect(recommendCombatAct(combatPreview(full, content))).toEqual(FINISH);
+  });
+
+  it("上限越低越早满 —— 于是「上限」这一位真的改变了打法", () => {
+    const content = momentumContent();
+    const clash = { enemyHp: 400, playerHp: 400, guardPart: "eye" as const };
+    // 同样攒到 4 点：上限 4 的 build 已经满了（该发），上限 8 的还该继续攒
+    const low = fighting(content, clash, { momentum: 4, momentumMax: 4 });
+    expect(recommendCombatAct(combatPreview(low, content))).toEqual(FINISH);
+    const high = fighting(content, clash, { momentum: 4, momentumMax: 8 });
+    expect(recommendCombatAct(combatPreview(high, content))).not.toEqual(FINISH);
+  });
+
+  it("没满也发的两个出口：这一记打得死它，或再拖就没命了", () => {
+    const content = momentumContent();
+    const lethal = fighting(
+      content,
+      { enemyHp: 2, playerHp: 400, guardPart: "eye" },
+      { momentum: 4, momentumMax: 8 },
+    );
+    expect(recommendCombatAct(combatPreview(lethal, content))).toEqual(FINISH);
   });
 });

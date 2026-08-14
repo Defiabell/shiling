@@ -1,5 +1,6 @@
 /**
- * 内容 schema 校验 —— 44 事件 ＋ 12 器官 ＋ 10 组合 ＋ 3 神种 ＋ 8 敌人 ＋ 列传模板 ＋ tuning 的静态体检。
+ * 内容 schema 校验 —— 70 事件 ＋ 12 器官 ＋ 10 组合 ＋ 3 神种 ＋ 21 敌人 ＋ 15 部件 ＋ 6 去处
+ * ＋ 列传模板 ＋ tuning 的静态体检。
  *
  * 这些断言不是形式主义：本库全是手写数据，**一个拼错的 id 或 tag 不会让任何运行时报错，
  * 只会静默变成一条永远不入池的事件、一个永远置灰的按钮、或一个永远拿不到的器官**。
@@ -38,6 +39,7 @@ import {
   HUNT_EVENTS,
   ORGANS,
   ORIGINS,
+  PARTS,
   PLACE_EVENTS,
   PREMISE_EVENTS,
   PREY_IDS,
@@ -183,10 +185,20 @@ describe("引用完整性", () => {
     for (const flag of TUNING.restHealFlags) expect(FLAG_SET.has(flag)).toBe(true);
   });
 
-  it("每个敌人都够得着（在猎物表里，或被某个 startCombat 引用）", () => {
+  /**
+   * [M2-B3] 第三条来路：**去处的 `denizens`**（S2 的探索遇袭）。
+   *
+   * 这一批把敌人从 8 加到 21，而新兽绝大多数只从去处的遇袭里来 —— 若这条测试还只认
+   * 「猎物表 ＋ startCombat」，那它会把十三头全判成不可达，或者（更糟）被人为了让它变绿
+   * 而给每头新兽硬塞一条事件。denizens 本来就是一条真的召唤路径，补上它才是对的。
+   */
+  it("每个敌人都够得着（猎物表／某个 startCombat／某处的 denizens）", () => {
     const summoned = new Set<string>(PREY_IDS);
     for (const effects of allEffects()) {
       if (effects.startCombat) summoned.add(effects.startCombat);
+    }
+    for (const dest of DESTINATIONS) {
+      for (const denizen of dest.denizens ?? []) summoned.add(denizen.enemyId);
     }
     for (const enemy of ENEMIES) {
       expect(summoned.has(enemy.id), `敌人 ${enemy.id} 在本世界里永远不会出现`).toBe(true);
@@ -515,8 +527,163 @@ describe("数量与分布", () => {
     }
   });
 
-  it("8 敌人，含 ≥1 divine，数值量程合理", () => {
-    expect(ENEMIES.length).toBe(8);
+  /*
+   * ===== [M2-B3] 敌人扩容的四条不变量 =====
+   *
+   * 全部是「错了也不吵」的那一类：借错脸只会渲染成一块空框、偏好写歪只是屏幕上少一行、
+   * 坡度断了要玩到第五世才觉出不对 —— 没有一条会让别的测试变红。
+   */
+
+  it("[M2-B3] 难度是一条连续的坡：从教具到墙，每一档都有兽", () => {
+    /*
+     * 判据不是「有多少头」，是**相邻两档之间的空档有多大**。B1 的遗留 3 说的正是这件事：
+     * 8 头兽里从岩羊（meng 10）直接跳到草狐（14）再跳到山魈（20）、玄蟒（32）——
+     * 中段那一片没有兽，于是「必胜」与「打不过」之间没有过渡。
+     *
+     * 这里用 `meng × hp` 当难度的粗代理（它是敌人出伤与耐打的乘积，和实测胜率单调相关；
+     * 真正的胜率矩阵在 `--lab matrix` 里量，那要跑 400 场，不适合放进单测）。
+     */
+    const scores = ENEMIES.map((enemy) => enemy.meng * enemy.hp).sort((a, b) => a - b);
+    expect(scores.length).toBeGreaterThanOrEqual(20);
+    /*
+     * **教具层刻意不进这条判据**（分数 <200：野雉／穴鼠／文鳐／灌灌／赤鱬）。
+     * 它们与真正要打的兽之间本来就该有一道坎 —— 一只鸟不该是「岩羊的下一档」，
+     * 它是另一件东西（那一段的题目是追猎，不是搏杀）。所以这里量的是**搏杀那条坡**。
+     */
+    const teaching = scores.filter((score) => score < 200);
+    expect(teaching.length, "教具层（三四合可下的）少于四头").toBeGreaterThanOrEqual(4);
+    const fights = scores.filter((score) => score >= 200);
+    for (let i = 1; i < fights.length; i += 1) {
+      const prev = fights[i - 1]!;
+      const gap = fights[i]! / Math.max(1, prev);
+      expect(
+        gap,
+        `难度坡上有一处断层：${prev} → ${fights[i]}（相邻两档不许拉开一半以上）`,
+      ).toBeLessThanOrEqual(1.5);
+    }
+    // 中段（打得赢之上、墙之下）必须真的有一批兽，否则「坡」只是首尾两端连了一条线
+    const mid = fights.filter((score) => score >= 250 && score <= 1300);
+    expect(mid.length, "中段（要动脑才赢的那一档）少于六头").toBeGreaterThanOrEqual(6);
+  });
+
+  it("[M2-B3] 头像：借的那一头真实存在、自己不再借，且 8 张老图全被指着", () => {
+    const byId = new Map(ENEMIES.map((enemy) => [enemy.id, enemy]));
+    for (const enemy of ENEMIES) {
+      if (enemy.artId === undefined) continue;
+      const lender = byId.get(enemy.artId);
+      expect(lender, `${enemy.id} 借的 ${enemy.artId} 不是一头真的兽`).toBeDefined();
+      expect(lender?.artId, `${enemy.id} 借的那一头自己也在借（不许接力）`).toBeUndefined();
+      expect(enemy.artId, `${enemy.id} 借了自己`).not.toBe(enemy.id);
+    }
+    // 自己有图的恰好是 B4 画过的那 8 头 —— 多一头没借就是漏配
+    const own = ENEMIES.filter((enemy) => enemy.artId === undefined);
+    expect(own.length, "自带头像的不是 8 头（B4 只出了 8 张）").toBe(8);
+  });
+
+  it("[M2-B3] 食之所偏：部件真实、精气型对得上、最大的那一型必被列到", () => {
+    const partById = new Map(PARTS.map((part) => [part.id, part]));
+    const seedOrganIds = new Set(SEEDS.map((seed) => seed.organ.id));
+    let withBias = 0;
+    for (const enemy of ENEMIES) {
+      const bias = enemy.partBias;
+      if (!bias || bias.length === 0) continue;
+      withBias += 1;
+      const types = new Set<string>();
+      for (const partId of bias) {
+        const part = partById.get(partId);
+        expect(part, `${enemy.id} 的 partBias 指向不存在的部件 ${partId}`).toBeDefined();
+        if (!part) continue;
+        /*
+         * 神种产出的三件（蕴／血／胎）不许出现在这里：它们不从精气开奖来，
+         * 而「食之所偏」写的正是「吃了它，攒的是哪一件的本钱」——
+         * 一件根本买不到的东西写在那儿是一句假承诺。
+         */
+        expect(
+          seedOrganIds.has(part.organId),
+          `${enemy.id} 把神种部件 ${part.name} 写进了食之所偏（那一件不是精气买得到的）`,
+        ).toBe(false);
+        expect(
+          Object.prototype.hasOwnProperty.call(enemy.essence, part.essenceType),
+          `${enemy.id} 偏向 ${part.name}（${part.essenceType} 型），可它自己不产这一型精气`,
+        ).toBe(true);
+        types.add(part.essenceType);
+      }
+      const richest = Object.entries(enemy.essence).sort(
+        (a, b) => (b[1] ?? 0) - (a[1] ?? 0),
+      )[0]?.[0];
+      expect(
+        richest !== undefined && types.has(richest),
+        `${enemy.id} 产出最多的是 ${richest} 型，而食之所偏一件都没落在那一型上 —— 这一行就成了装饰`,
+      ).toBe(true);
+    }
+    expect(withBias, "有一头兽没写食之所偏").toBe(ENEMIES.length);
+
+    // 反过来：精气开奖得到的每一件部件，都至少有一头兽是它的本钱来源
+    const covered = new Set(ENEMIES.flatMap((enemy) => [...(enemy.partBias ?? [])]));
+    for (const part of PARTS) {
+      if (seedOrganIds.has(part.organId)) continue;
+      const organ = ORGANS.find((item) => item.id === part.organId);
+      // 龙涎那类事件专属器官（affinity 全空）不进开奖池，猎哪一头都攒不出来
+      const inMoltPool = Object.values(organ?.affinity ?? {}).some((weight) => (weight ?? 0) > 0);
+      if (!inMoltPool) continue;
+      expect(
+        covered.has(part.id),
+        `部件 ${part.name} 没有任何一头兽是它的本钱来源 —— 玩家无从知道该去猎什么`,
+      ).toBe(true);
+    }
+  });
+
+  it("[M2-B3] 没有后腿的兽必须自报「腿」该叫什么（否则旁白会说鱼有后腿）", () => {
+    /*
+     * 引擎的咬腿旁白原来写死「后腿」，而这一批把鱼／鸟／蛇／带甲的东西都放进了可打的名册
+     * —— 实机当场读到「蠃鱼的后腿已经拖在地上」。这条测试钉住的是**内容那一半的责任**：
+     * 凡带这几个 tag 的兽都得自报一个词。它不会有别的测试变红（旁白照样渲染，只是错的）。
+     */
+    const NO_HIND_LEG = ["fish", "bird", "venom", "shell"];
+    for (const enemy of ENEMIES) {
+      if (!enemy.tags.some((tag) => NO_HIND_LEG.includes(tag))) continue;
+      expect(
+        enemy.legWord,
+        `${enemy.id} 带 ${enemy.tags.join("/")} 却没写 legWord —— 咬腿那几句会说它有后腿`,
+      ).toBeDefined();
+      expect(enemy.legWord?.length ?? 0).toBeGreaterThan(0);
+      expect(enemy.legWord).not.toBe("后腿");
+    }
+  });
+
+  it("[M2-B3] 守备与弱点是配对定的（护着的那一处不许同时是软肋所在的最优解）", () => {
+    /*
+     * B1 立下的规矩只卡了「弱点部位撑不撑得起」（倍率 > 0.8）。这一批加的是**配对**那一半：
+     * 一头护喉的兽，弱点若也在喉，那它识破前后都只该咬喉 —— 顺序没有变化，
+     * 「看懂了」这件事就没有兑现处。所以：**护得最重的那一处，不许同时是弱点所在**，
+     * 除非那一处是喉（喉是全库唯一「识破后倍率 2.56 远高于一切」的部位，
+     * 玄蟒与九尾狐那种「它护着的正是软肋」恰恰是这套机制最好的一处兑现）。
+     */
+    for (const enemy of ENEMIES) {
+      const weakness = enemy.weakness;
+      const guard = enemy.guardBias;
+      if (!weakness || !guard) continue;
+      if (weakness.part === "throat") continue;
+      /*
+       * 并列时的 tie-break 写成**显式**的（按部位名排序再取最大），而不是靠
+       * `Object.entries` 的插入顺序 —— 九尾狐正好是 `throat 4 / eye 4` 并列。
+       * 那一头今天不受这条判据影响（它的弱点在腿，两边都豁免），
+       * 但一条判据的结论取决于一个字段的书写顺序，是下一次改内容时的静默陷阱。
+       */
+      const entries = (Object.entries(guard) as [string, number][]).sort((a, b) =>
+        b[1] - a[1] || a[0].localeCompare(b[0]),
+      );
+      const top = entries[0]!;
+      expect(
+        top[0] === weakness.part && top[1] > 2,
+        `${enemy.id} 护得最重的是 ${top[0]}（权重 ${top[1]}），而弱点也在那儿 —— ` +
+          `识破前后都只该咬别处，那个破绽兑现不出来`,
+      ).toBe(false);
+    }
+  });
+
+  it("21 敌人，含 ≥1 divine，数值量程合理", () => {
+    expect(ENEMIES.length).toBe(21);
     expect(ENEMIES.some((enemy) => enemy.tags.includes("divine"))).toBe(true);
     for (const enemy of ENEMIES) {
       expect(enemy.meng).toBeGreaterThan(0);
@@ -739,10 +906,29 @@ describe("视觉 token", () => {
     }
   });
 
-  it("token 表没有死条目（每个 token 至少被一条 brief 用到）", () => {
+  /**
+   * [M2-B3] 判据加了**第二个消费方**：`packages/gen` 的 `enemyJobs()`。
+   *
+   * 它按「敌人名里包含的最长 token name」取形貌去生头像 —— 于是一头兽的 token 即使
+   * 一条 brief 都没引用，也照样是活的（它是那头兽将来那张脸的正本）。
+   * 这一批加了十三头新兽的形貌，全部属于这一类。判据仍然是「不许有死条目」，
+   * 只是死的定义从「没进 brief」改成「**两个消费方都用不到**」。
+   */
+  it("token 表没有死条目（进了某条 brief，或是某头敌人的形貌来源）", () => {
     const briefs = EVENTS.map((event) => event.illustrationBrief ?? "").join("\n");
+    // 与 artManifest.tokenDescForEnemy 同一条规则：敌人名里包含的最长 token name
+    const usedByEnemy = new Set<string>();
+    for (const enemy of ENEMIES) {
+      const hit = [...VISUAL_TOKENS]
+        .filter((token) => enemy.name.includes(token.name))
+        .sort((a, b) => b.name.length - a.name.length)[0];
+      if (hit) usedByEnemy.add(hit.id);
+    }
     for (const token of VISUAL_TOKENS) {
-      expect(briefs.includes(token.desc), `token ${token.id} 从未被任何 brief 引用`).toBe(true);
+      expect(
+        briefs.includes(token.desc) || usedByEnemy.has(token.id),
+        `token ${token.id} 既没进任何 brief，也不是任何一头敌人的形貌来源`,
+      ).toBe(true);
     }
   });
 

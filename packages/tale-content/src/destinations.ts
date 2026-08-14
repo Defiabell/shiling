@@ -45,9 +45,22 @@
 
 import type { DestinationDef } from "@shiling/tale-sim";
 import {
+  ENEMY_BI_FANG,
   ENEMY_CAO_HU,
+  ENEMY_CHI_RU,
+  ENEMY_GU_DIAO,
+  ENEMY_GUAN_GUAN,
+  ENEMY_HUA_HUAI,
+  ENEMY_JIU_WEI_HU,
+  ENEMY_LI_LI,
+  ENEMY_LU_SHU,
+  ENEMY_LUO_YU,
+  ENEMY_MING_SHE,
   ENEMY_QIONG_QI,
   ENEMY_SHAN_XIAO,
+  ENEMY_SHU_HU,
+  ENEMY_TU_LOU,
+  ENEMY_XUAN_GUI,
   ENEMY_XUAN_MANG,
   ENEMY_YAN_YANG,
 } from "./enemies.js";
@@ -84,8 +97,18 @@ export const DESTINATIONS: readonly DestinationDef[] = [
     desc: "青丘诸兽踏了不知多少年的旧路。走得熟，也就走不出什么新东西。",
     requiresOrganIds: [],
     peril: "calm",
-    // 兽径唯一的兽是草狐：它跟你吃同一口食，会跟你抢，但不至于要你的命
-    denizens: [{ enemyId: ENEMY_CAO_HU, weight: 100 }],
+    /*
+      * [M2-B3] 兽径从「只有草狐」变成四头，但**这一处的身份没有变**：全是打得赢的兽。
+      * 加的三头各补一格 —— 灌灌是教具（比草狐轻得多）、狸力是「拦得住腿才打得完」的一课、
+      * 旋龟是全库第一头**只靠咬打不动**的兽（护喉六成、血 44）。一条常路上撞见一只乌龟
+      * 不该要命，但它会让一个只会咬喉的玩家第一次觉得「这么打好像不对」。
+      */
+    denizens: [
+      { enemyId: ENEMY_CAO_HU, weight: 34 },
+      { enemyId: ENEMY_LI_LI, weight: 30 },
+      { enemyId: ENEMY_GUAN_GUAN, weight: 24 },
+      { enemyId: ENEMY_XUAN_GUI, weight: 12 },
+    ],
     treasure: {
       id: TREASURE_LU_HEN,
       name: "熟径",
@@ -101,9 +124,17 @@ export const DESTINATIONS: readonly DestinationDef[] = [
     desc: "青丘北面的石脊，一路只上不下。风大，落脚的地方比爪子宽不了多少。",
     requiresOrganIds: [ORGAN_JI_ZU],
     peril: "wary",
-    // 险峰的兽是岩羊而不是山魈：石脊上撞下来的是有角的东西，不是从暗处摸上来的东西。
-    // （岩羊是八头里唯一会反扑的猎物 —— 在这儿它反过来先扑你。）
-    denizens: [{ enemyId: ENEMY_YAN_YANG, weight: 100 }],
+    /*
+      * 险峰的兽是有角的与有翼的：石脊上撞下来的东西，不是从暗处摸上来的东西。
+      * [M2-B3] 岩羊与鹿蜀是「打得赢」那一档（它们也在猎物表里，在这儿反过来先扑你），
+      * 蛊雕与孰湖是这一处真正的价钱 —— 高处的东西是从上面掉下来的。
+      */
+    denizens: [
+      { enemyId: ENEMY_YAN_YANG, weight: 30 },
+      { enemyId: ENEMY_LU_SHU, weight: 25 },
+      { enemyId: ENEMY_GU_DIAO, weight: 27 },
+      { enemyId: ENEMY_SHU_HU, weight: 18 },
+    ],
     treasure: {
       id: TREASURE_YUN_GEN,
       name: "云根",
@@ -119,9 +150,15 @@ export const DESTINATIONS: readonly DestinationDef[] = [
     desc: "林子深处一片没人管的旧祀之地：断碑、骨坛、坟丘，都朝着同一个方向。",
     requiresOrganIds: [ORGAN_LING_XI],
     peril: "wary",
+    /*
+      * [M2-B3] 古祠是**九尾狐**的家。青丘的旧祀之地，供的本来就是它 ——
+      * 全库护得最密的一头（喉与眼都护、三段、血 68），也是灵系 build 整条线的兑现处。
+      */
     denizens: [
-      { enemyId: ENEMY_SHAN_XIAO, weight: 70 },
-      { enemyId: ENEMY_CAO_HU, weight: 30 },
+      { enemyId: ENEMY_SHAN_XIAO, weight: 40 },
+      { enemyId: ENEMY_JIU_WEI_HU, weight: 24 },
+      { enemyId: ENEMY_CAO_HU, weight: 22 },
+      { enemyId: ENEMY_LI_LI, weight: 14 },
     ],
     treasure: {
       id: TREASURE_ZHU_JIAN,
@@ -138,7 +175,17 @@ export const DESTINATIONS: readonly DestinationDef[] = [
     desc: "水面静得像一块铁。青丘的兽都只在岸上饮，没有一头下去过。",
     requiresOrganIds: [ORGAN_LIN_JIA, ORGAN_FU_BIAO],
     peril: "wary",
-    denizens: [{ enemyId: ENEMY_XUAN_MANG, weight: 100 }],
+    /*
+      * [M2-B3] 水下四头：玄蟒（墙）／鸣蛇（甲）／蠃鱼（啄）／赤鱬（教具）。
+      * 蠃鱼在这儿是有讲究的 —— 它是全库「体」那一位最值钱的一头兽，
+      * 而幽潭的门槛正好要鳞甲＋浮鳔（两件都在体那条线上）。走到这儿的 build 打得动它。
+      */
+    denizens: [
+      { enemyId: ENEMY_XUAN_MANG, weight: 30 },
+      { enemyId: ENEMY_MING_SHE, weight: 26 },
+      { enemyId: ENEMY_LUO_YU, weight: 28 },
+      { enemyId: ENEMY_CHI_RU, weight: 16 },
+    ],
     treasure: {
       id: TREASURE_YUAN_ZHU,
       name: "渊心珠",
@@ -154,9 +201,13 @@ export const DESTINATIONS: readonly DestinationDef[] = [
     desc: "山腹里连成一片的暗洞。进去之后没有一处是亮的，出来的路也不是进去那条。",
     requiresOrganIds: [ORGAN_WU_MU, ORGAN_YE_TONG],
     peril: "grim",
+    // [M2-B3] 穴居的东西：猾褢冬蛰于此（「壁」型），其余三头是摸黑撞上的
     denizens: [
-      { enemyId: ENEMY_XUAN_MANG, weight: 70 },
-      { enemyId: ENEMY_SHAN_XIAO, weight: 30 },
+      { enemyId: ENEMY_HUA_HUAI, weight: 32 },
+      { enemyId: ENEMY_XUAN_MANG, weight: 24 },
+      { enemyId: ENEMY_MING_SHE, weight: 22 },
+      { enemyId: ENEMY_SHAN_XIAO, weight: 14 },
+      { enemyId: ENEMY_JIU_WEI_HU, weight: 8 },
     ],
     treasure: {
       id: TREASURE_DI_XIN,
@@ -187,9 +238,13 @@ export const DESTINATIONS: readonly DestinationDef[] = [
      * 于是那条道的最后一步是纯运气。焦原把它变成一个**可以主动去的地方**，
      * 代价写在按钮上（此地有穷奇幼崽 · 绝境 · 三成遇袭）。
      */
+    // [M2-B3] 火烧过的地方剩下的都是硬东西：毕方衔火、土蝼四角、猾褢从灰下爬出来
     denizens: [
-      { enemyId: ENEMY_QIONG_QI, weight: 40 },
-      { enemyId: ENEMY_SHAN_XIAO, weight: 60 },
+      { enemyId: ENEMY_QIONG_QI, weight: 26 },
+      { enemyId: ENEMY_TU_LOU, weight: 24 },
+      { enemyId: ENEMY_BI_FANG, weight: 24 },
+      { enemyId: ENEMY_SHAN_XIAO, weight: 16 },
+      { enemyId: ENEMY_HUA_HUAI, weight: 10 },
     ],
     treasure: {
       id: TREASURE_LEI_SUI,

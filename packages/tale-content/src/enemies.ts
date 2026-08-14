@@ -1,22 +1,74 @@
 /**
- * 8 敌人（青丘食物链）。
+ * 21 敌人（青丘食物链）。
  *
  * ## 分两层
- * - **猎物层**（`PREY_IDS`，进 `tuning.huntPreyIds`）：野雉／文鳐鱼／穴鼠／岩羊。起追时
- *   从这四个里等权抽一，扑中即吞其 `essence`。岩羊（meng 10／hp 14，且 `retaliates`）
- *   留在表里是**故意**的：狩猎不是纯运气，判断失误时会撞上一场真打。
- * - **强敌层**：草狐／山魈／玄蟒／穷奇幼崽。只由事件的 `startCombat` 引来，越往后越像一堵墙。
+ * - **猎物层**（`PREY_IDS`，进 `tuning.huntPreyIds`）：野雉／文鳐鱼／穴鼠／岩羊／灌灌／
+ *   赤鱬／鹿蜀。起追时从这七头里等权抽一，扑中即吞其 `essence`。表里**两头会反扑**
+ *   （岩羊、鹿蜀）是故意的：狩猎不是纯运气，判断失误时会撞上一场真打。
+ * - **强敌层**：其余十四头。由事件的 `startCombat` 或**去处的 `denizens`**（S2 的探索遇袭）
+ *   引来 —— 后者才是 M2-B3 之后的主路，见 `destinations.ts` 里那张按风险档铺开的表。
+ *
+ * ## [M2-B3] 8 → 21：这一批加的十三头各自解决一个问题
+ * B1 的遗留 3 说得很直白：中低阶敌人对基础 build 变得太好打（实验台：岩羊 100%／草狐 100%），
+ * 于是「一世前半段全是白给的架」。原因不是数值调歪了，是**表太短** —— 从「必胜」到「打不过」
+ * 中间只有玄蟒一头兽。这一批补的是那一段坡。
+ *
+ * | 档 | 兽（meng／hp） | 它在坡上是哪一格 |
+ * |---|---|---|
+ * | 教具 | 野雉 4/10 · 穴鼠 4/11 · 文鳐 5/12 · 灌灌 5/13 · 赤鱬 7/16 | 三四合可下，本来就不是给你打的 |
+ * | 早期 | 岩羊 18/30 · 鹿蜀 20/30 · 草狐 22/36 · 狸力 24/32 · 旋龟 24/48 | 打得赢（基础 build 94〜100%），但要按对顺序 |
+ * | **中段** | 山魈 24/46 · 毕方 26/34 · 蛊雕 28/40 · 鸣蛇 28/46 · 蠃鱼 28/48 | **要动脑才赢**（基础 build 24〜97%）—— 这一批补的正是这一段 |
+ * | 后段 | 土蝼 28/52 · 猾褢 30/52 · 孰湖 30/56 · 玄蟒 32/60 | 中期带技才谈得上打（基础 build 22〜76%） |
+ * | 墙 | 九尾狐 36/68 · 穷奇幼崽 42/78 | 该判断的是「逃不逃」（基础 build 11%／0.3%） |
+ *
+ * ⚠️ 上表的数**是 `--lab matrix` 校准出来的最终值，不是第一版拍的数**。第一版照「档位表」
+ * 拍完之后矩阵当场报「中段 5 头、必胜档 12 头、交叉 0 对」—— 因为 `combatDamageMengDivisor` 是 8，
+ * **meng 14 与 meng 26 的敌人出伤只差 2 点**（4 vs 6，减掉体的减免只差 1〜2）。
+ * 中段的难度不在数量上，在那条曲线的斜率上：最后靠把中段兽的 meng 抬到 24〜30
+ * ＋ 给「重」型抬晚段倍率（1.3 → 1.8〜2.0）解决。**改这一段任何一个数之后都要重跑那一台。**
+ *
+ * ⚠️ **六头老兽的 `meng` 也抬了一档**（岩羊 10→18、草狐 14→22、山魈 20→24……）。
+ * 理由不是「让新兽显得合理」：岩羊的注里写着「扑之前要先算赌注」、草狐的注里写着
+ * 「早期必须考虑逃」，而 B1 的实测是**两头都 100%** —— 注释说的事没有发生，
+ * 那是数值配在「只有八头」的世界里的遗留。三条整世护栏在这之后全部复量过（见 b3-report）。
+ *
+ * ## [M2-B3] 形成与 build 的克制关系：四个原型，各克一种 build
+ * 克制不是给敌人贴个属性标签，是**让不同的 build 在不同的兽身上各自值钱**。
+ * 四项属性在交锋里各自接的那条线（见 `EncounterStats`）决定了原型该怎么摆：
+ *
+ * | 原型 | 怎么摆 | 谁吃它 | 为什么（机制，不是设定） |
+ * |---|---|---|---|
+ * | **啄** 蠃鱼／灌灌／赤鱬 | 单次伤极轻、一合不停、血还厚 | **体系** | 受伤减免是**每一下固定减 N**：一场十几下小伤的架里它抵掉的是整条命 |
+ * | **重** 蛊雕／毕方／土蝼／穷奇 | 扑得多（×2.2）、伤极重、血不厚 | **猛系** | 固定减免在一记重扑面前读不出来；唯一的解是抢在它换段之前打完 |
+ * | **甲** 旋龟／鸣蛇／九尾狐／玄蟒 | 护得死、血厚、有一处真弱点 | **灵系** | 决杀与识破后的那一咬**都无视守备**，而灵管着势上限与识破早晚 |
+ * | **壁** 猾褢／山魈／孰湖 | 守备均等、无捷径、输出稳 | **猛系**（吞吐） | 没有哪一咬恒被减半，也就没有哪一咬恒占便宜 —— 只剩谁先打完 |
+ *
+ * 还有一格是**反着的**，而它必须存在：`fleeBias` 高、逃意入池的兽（鸣蛇、土蝼、九尾狐）
+ * 在**德**高的 build 手里胜率反而更低 —— 德抬的是「它的退意」（`combatEnemyFleePerDe`），
+ * 于是打到一半它走了，算不上一场胜。一条属性若在每一头兽身上都是好事，那它就不是取舍。
+ * 实测矩阵：`pnpm -C packages/gen balance -- --lab matrix --lives 400`。
+ *
+ * ## [M2-B3] 头像：新兽借老兽的脸（`artId`）
+ * B4 只出了 8 张敌人胸像。缺图时 `<img>` 不报错，玩家看到的只是一块空框 —— 所以十三头
+ * 新兽**逐个显式**声明借哪一头的脸（鸟借野雉、鱼借文鳐、带甲借玄蟒、人形借山魈……），
+ * 而不是靠一条「文件不在就退占位」的兜底：兜底会把「忘了配图」与「有意复用」写成同一件事。
+ *
+ * ## [M2-B3] 食之所偏（`partBias`）
+ * 凝招（B2）要的是部件，部件跟着器官走，器官跟着精气型开奖 —— 于是「我要凝一手齿起手的招」
+ * 等价于「我得去猎猛精气的兽」。那条链此前一个字都没上屏。`partBias` 把它写成遭遇屏上
+ * 一句可读的话（`食之所偏　齿 · 鬃`），于是**去哪儿打什么**成了凝招的上游决定。
+ * 纪律见 `EnemyDef.partBias` 的注释（schema 测试逐条钉着）。
  *
  * ## [饥饿节奏批 2026-08-14] 猎物有多大 ＝ 它留下几季食余
- * 四头猎物此前只有「好不好追」的差别（起手距离／警觉／会不会反扑），没有「有多少肉」的
- * 差别 —— 得手一律 +32 饱食。`surplusSeasons` 补上后一半：
+ * 猎物此前只有「好不好追」的差别（起手距离／警觉／会不会反扑），没有「有多少肉」的差别
+ * —— 得手一律 +32 饱食。`surplusSeasons` 补上后一半：
  *
  * | 猎物 | 食余 | 为什么 |
  * |---|---|---|
- * | 穴鼠 | 1 季 | 最好追的一头（近、不反扑、洞口就能堵）—— 代价是只够一顿 |
- * | 野雉 | 1 季 | 一只鸟就地吃完 |
- * | 文鳐鱼 | 2 季 | 一尾大鳐够两季，但鱼肉不经放 |
- * | **岩羊** | **4 季** | 全表最大，也是唯一会反扑的 —— 风险与回报落在同一头兽身上 |
+ * | 穴鼠 · 野雉 · 灌灌 | 1 季 | 最好追的几头（近、不反扑）—— 代价是只够一顿 |
+ * | 文鳐鱼 · 赤鱬 | 2 季 | 一尾大鱼够两季，但鱼肉不经放 |
+ * | **鹿蜀** | **3 季** | 「岩羊之下、草狐之上」那一格：会反扑，回报也跟着抬一档 |
+ * | **岩羊** | **4 季** | 全表最大，风险与回报落在同一头兽身上 |
  *
  * 这张表是「狩猎该是偶尔的场面戏」这条设计的落点：追到一头岩羊，此后一年不必再为吃发愁；
  * 而**速猎**（一次点击那条路）无论摇到哪一头都**不留食余** —— 那是「盯上一头拖回穴里」
@@ -30,21 +82,17 @@
  * ## [M2-B1] 战斗强度参照（playerHp ＝ round(体×1.6)，起手 42；玩家每回合伤害 3＋floor(猛/8)，
  * 咬喉再 ×1.6）
  *
- * 八头的血量在这一批整体上调（约 ×1.8），目标是**一场架 5〜10 合**：M1-P2 的 2〜5 合装不下
+ * 八头老兽的血量在 B1 整体上调（约 ×1.8）、**meng 在 B3 又抬了一档**，目标是**一场架 5〜10 合**：M1-P2 的 2〜5 合装不下
  * 势、部位伤、行为段与弱点这四条跨回合的线 —— 一场三回合的架里，任何「经营」都还没开始
  * 就结束了。血量上调的同时敌人出伤打了折（见 tuning），所以拉长的是**双方**的耐打，
- * 不是把玩家的伤害调废。
- *
- * 野雉/穴鼠/文鳐鱼 = 三四合可下（它们本来就不是给你打的）；岩羊 = 五六合，扑空那一场真打；
- * 草狐 = 早期必须考虑逃；山魈/玄蟒 = 中期带技才谈得上打；穷奇幼崽 = 全库最硬的一堵墙，
- * 也是唯一没有弱点的一头 —— 它那道题的答案是「逃不逃」。
+ * 不是把玩家的伤害调废。十三头新兽照同一把尺定的数。
  *
  * ## [M2-B1] 行为段与弱点
- * 八头全部填了 `stages`（2〜3 段），七头有 `weakness`。两件事分工不同：
+ * 二十一头全部填了 `stages`（2〜3 段），二十头有 `weakness`。两件事分工不同：
  * - **行为段**回答「这场架的第 6 合与第 2 合有什么不一样」（它血过半会换打法，且当场宣告）；
  * - **弱点**回答「我这几合到底学到了什么」（识破之后那一处 ×1.6 且**无视守备**）。
  *
- * 弱点刻意有两头落在**它自己护着的地方**（玄蟒护喉而七寸在喉、草狐偶尔护喉而细颈在喉）——
+ * 弱点刻意有几头落在**它自己护着的地方**（玄蟒护喉而七寸在喉、九尾狐护喉而软肋在尾根）——
  * 那是这套机制最好的一处兑现：同一颗按钮在同一头兽身上，从「减半＋招反击」翻成「翻倍且
  * 护不住」，靠的只是「你看懂了没有」。
  *
@@ -55,19 +103,43 @@
  * | 部位 | 识破后的倍率 | 撑不撑得起弱点 |
  * |---|---|---|
  * | 喉 ×1.6 | **2.56** | 撑得起（它护喉时收益最大） |
- * | 腿 ×0.7 | **1.12** | 撑得起，但只在**它常护咽喉**的兽身上才是最优（岩羊、山魈） |
+ * | 腿 ×0.7 | **1.12** | 撑得起，但只在**它常护咽喉**的兽身上才是最优（岩羊、土蝼、九尾狐） |
  * | 眼 ×0.35 | 0.56 | **撑不起** —— 连 0.8 都不到，那个弱点永远不会是最优解 |
  *
- * 第一版把穴鼠与草狐的弱点放在眼上（「它护着的正是它的软肋」听着漂亮），实机抄屏当场抓到：
- * 识破之后推荐链照旧咬喉，屏幕上那句「破绽在此」是一句没人会照做的话。
- * 这条规矩现在由 `schema.test.ts` 的「弱点必须打得过一记被护住的咬喉」钉着。
+ * B1 的第一版把穴鼠与草狐的弱点放在眼上（「它护着的正是它的软肋」听着漂亮），实机抄屏当场
+ * 抓到：识破之后推荐链照旧咬喉，屏幕上那句「破绽在此」是一句没人会照做的话。
+ * 这条规矩现在由 `schema.test.ts` 的「弱点必须打得过一记被护住的咬喉」钉着，
+ * **且这一批把「守备 × 弱点」当成一对来定**，全表三种搭配各有各的题：
+ *
+ * | 搭配 | 谁 | 那道题是什么 |
+ * |---|---|---|
+ * | 护喉／均等 → 弱点在**腿** | 岩羊、山魈、土蝼、九尾狐、猾褢 | 喉被封死（0.8），于是那条低伤的腿（1.12）成了全场最优 —— **玩家第一次被迫放弃最高伤那一颗** |
+ * | 护腿护眼 → 弱点在**喉** | 鹿蜀、狸力、毕方、蠃鱼、孰湖 ＋ 五头教具 | 喉本来就是最高伤（1.6），识破把它抬到 2.56 —— 回报是「更快」 |
+ * | **护喉 而弱点也在喉** | 玄蟒（七寸）、旋龟（首甲之隙）、鸣蛇（磬眼） | 这是这套机制**最强的一处兑现**：同一颗按钮从「减半 ＋ 招反击」（0.8）翻成「2.56 且护不住」＝ **3.2 倍**。三头都是「甲」型，也正是灵系 build 那条线的落点 |
+ *
+ * 唯一被 schema 测试**拦着**的是第四种：护喉而弱点在腿或眼**且那一处正是它护得最重的地方**
+ * —— 那样识破前后都只该咬别处，「你看懂了」这件事就没有兑现处。
  *
  * ## [M2-B1] 强敌也留食余
  * 草狐 2／山魈 3／玄蟒 4／穷奇 5 季（打赢按 `combatWinSurplusMul` 打七折落账）。
  * 一场硬仗换来此后几季不必出猎 —— 这是「遭遇变长」那几次点击的抵消项。
+ * 十三头新兽照同一条尺给（2〜5 季，越硬的兽管得越久）。
  */
 
 import type { EnemyDef } from "@shiling/tale-sim";
+import {
+  PART_BIAO,
+  PART_CHI,
+  PART_DU,
+  PART_HUI,
+  PART_LIN,
+  PART_MU,
+  PART_SU,
+  PART_TONG,
+  PART_XI,
+  PART_ZHAO,
+  PART_ZONG,
+} from "./parts.js";
 
 /*
  * ## 追猎战术档案（M1-P1）
@@ -84,9 +156,12 @@ import type { EnemyDef } from "@shiling/tale-sim";
  * | 山魈 | 32 | 30 | 是 | — |
  * | 玄蟒 | 20 | 8 | 是 | 「不追不扑，只等你自己走进它的一圈」＝ 极近、极钝、极险 |
  * | 穷奇幼崽 | 38 | 20 | 是 | — |
+ * | 灌灌 | 26 | 20 | 否 | 一直在看你：逃意全库最重，屏息买不回多少 |
+ * | 赤鱬 | 30 | 12 | 否 | 隔着水、又钝又好奇 —— 三头鱼里最经得起等的一头 |
+ * | 鹿蜀 | 38 | 10 | **是** | 与岩羊同一档的赌注，但它一路唱着走，位置一直在变 |
  *
- * 后四头目前只由事件的 `startCombat` 引来（不进 `huntPreyIds`），字段先按性格填好：
- * M1 之后若把它们放进猎场，数值与文案已经在位，不必再回来补一遍。
+ * 强敌层不进 `huntPreyIds`，字段照样按性格填全：S2 之后它们会在**探索遇袭**里出现
+ * （`DestinationDef.denizens`），起手距离与警觉在那条路上一样要用。
  *
  * **`retaliates` 是故意做成确定的**（不是概率）：玩家在扑之前就能从预览里看到「失手要打」，
  * 于是「扑还是再等一息」变成一道算得清的题。掷骰决定要不要打，就又回到翻牌了。
@@ -96,7 +171,8 @@ import type { EnemyDef } from "@shiling/tale-sim";
  * ## 搏杀战术档案（M1-P2）
  *
  * 两个字段决定「同一套按钮，面对不同兽要打出不同的顺序」—— 这是「三个部位各有适用局面」
- * 唯一的来源。若八头兽的守备与意图分布一样，那三颗咬击按钮就退化成「挑伤害最高那颗」。
+ * 唯一的来源。若所有兽的守备与意图分布一样，那三颗咬击按钮就退化成「挑伤害最高那颗」。
+ * [M2-B3] 十三头新兽逐个照这条填过，且**守备与弱点是配对定的**（见文件头注最后一节）。
  *
  * | 敌人 | 常护 | 意图偏好 | 它逼玩家怎么打 |
  * |---|---|---|---|
@@ -108,6 +184,19 @@ import type { EnemyDef } from "@shiling/tale-sim";
  * | 山魈 | 咽喉（两臂护在胸前） | 扑与咬各半 | 硬碰硬：靠姿态与器官技 |
  * | 玄蟒 | 咽喉，其次眼 | **守最多、绝不逃** | 守势多 → 用它的守回合免费换姿态 |
  * | 穷奇幼崽 | 均等 | 扑极多、绝不逃 | 伤害最高的一堵墙：扑眼买回合，或干脆逃 |
+ * | 灌灌 | 眼 | 逃最多 | 同野雉：拦腿，否则只剩一地青羽 |
+ * | 赤鱬 | 眼（那张人面） | 常规咬、也会溜 | 咬喉两下就完，前提是别去啃那张脸 |
+ * | 鹿蜀 | 后腿（跑与踢都在腿上） | 扑与咬各半 | 与岩羊互为镜像：它护蹄，软肋在颈 |
+ * | 旋龟 | 咽喉（六成权重） | **守最多** | 「甲」型：只靠咬打不动，要决杀或先识破 |
+ * | 狸力 | 后腿（靠距刨地） | 咬多、想跑 | 拦腿，然后照颈上那道旧痕打 |
+ * | 蠃鱼 | 眼 | **咬极多、几乎不扑** | 「啄」型：一合不停的小伤 —— 熬得住才赢 |
+ * | 毕方 | 后腿（一足是它的命） | 扑很多 | 「重」型：赶在它衔火那一段之前结束 |
+ * | 蛊雕 | 略偏眼 | **扑最多** | 「重」型的正主：血不厚，抢在婴啼那一段前打完 |
+ * | 鸣蛇 | 咽喉，其次眼 | 守多、会退 | 「甲」型：德高反而把它逼走，咬腿封逃才是解 |
+ * | 猾褢 | **均等** | 扑与咬各半 | 「壁」型：没有捷径，只剩谁先打完 |
+ * | 土蝼 | 咽喉（四角环护） | 扑很多 | 同岩羊：喉封死了，照那条撑着四角的腿打 |
+ * | 孰湖 | 眼（人面是它读你的地方） | 扑与咬各半 | 三段越打越快 —— 考的是「这一场还剩几合」 |
+ * | 九尾狐 | 喉与眼都护 | 均衡、会守 | 「甲」型顶格：灵系早两合识破，那一咬护不住 |
  *
  * 权重是**相对**的（同一头兽内部比大小），缺省吃 `tuning.combatIntentWeights`。
  * 「逃」还额外受 `combatFleeIntentHpRatio` 约束：血厚时根本不入池。
@@ -122,16 +211,35 @@ export const ENEMY_SHAN_XIAO = "shan-xiao";
 export const ENEMY_XUAN_MANG = "xuan-mang";
 export const ENEMY_QIONG_QI = "qiong-qi-you";
 
+// — [M2-B3] 新增十三头 —
+export const ENEMY_GUAN_GUAN = "guan-guan";
+export const ENEMY_CHI_RU = "chi-ru";
+export const ENEMY_LU_SHU = "lu-shu";
+export const ENEMY_XUAN_GUI = "xuan-gui";
+export const ENEMY_LI_LI = "li-li";
+export const ENEMY_LUO_YU = "luo-yu";
+export const ENEMY_BI_FANG = "bi-fang";
+export const ENEMY_GU_DIAO = "gu-diao";
+export const ENEMY_MING_SHE = "ming-she";
+export const ENEMY_HUA_HUAI = "hua-huai";
+export const ENEMY_TU_LOU = "tu-lou";
+export const ENEMY_SHU_HU = "shu-hu";
+export const ENEMY_JIU_WEI_HU = "jiu-wei-hu";
+
 export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_YE_ZHI,
     name: "野雉",
     meng: 4,
     hp: 10,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "细爪",
     tags: ["beast", "prey", "bird"],
     essence: { zu: 16, lin: 4 },
     fleeBias: -12,
     desc: "羽色斑驳，惊则疾走十余步方起，起则不远。",
+    // 食之所偏：一副硬喙、两条会跑的腿 —— 足之精气那条线（坚喙／疾足）
+    partBias: [PART_HUI, PART_SU],
     startDistance: 24,
     wariness: 18,
     // [饥饿节奏批] 一只鸟就地吃完，剩下一把骨头 —— 食余那张表里最小的一档（见表头注）
@@ -199,10 +307,14 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: "文鳐鱼",
     meng: 5,
     hp: 12,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "鳍根",
     tags: ["beast", "prey", "fish"],
     essence: { lin: 20 },
     fleeBias: -8,
     desc: "银鳞，胸鳍宽张如翼，夜则跃出水面滑行数丈。",
+    // 鱼腹里那一囊气是浮鳔的正主
+    partBias: [PART_BIAO, PART_MU],
     startDistance: 34,
     wariness: 10,
     // [饥饿节奏批] 鱼肉不经放，但一尾大鳐够两季 —— 中档
@@ -263,6 +375,8 @@ export const ENEMIES: readonly EnemyDef[] = [
     essence: { xue: 18, zu: 2 },
     fleeBias: -10,
     desc: "土黄短毛，前爪宽厚，一惊便往地下去，地下是它的天。",
+    // 「前爪宽厚」四个字就是穴爪的来处
+    partBias: [PART_ZHAO, PART_TONG],
     startDistance: 22,
     wariness: 16,
     // [饥饿节奏批] 一只鼠只够一顿。它是最好追的一头（近、不反扑）—— 代价就落在这一位上
@@ -315,12 +429,16 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_YAN_YANG,
     name: "岩羊",
-    meng: 10,
-    hp: 26,
+    // [M2-B3] 10/26 → **18/30**：B1 实测基础 build 对它 100% 胜（它本该是「扑之前先算赌注」的正主）。
+    // 18 是 `--lab matrix` 校准出来的最终值 —— 中途从 13 抬过两次，见文件头注那条 ⚠️
+    meng: 18,
+    hp: 30,
     tags: ["beast", "prey", "horn"],
     essence: { meng: 10, zu: 10 },
     fleeBias: 4,
     desc: "青灰皮毛，双角后弯。逼到崖边它就不再退，回头顶来。",
+    // 猛与足各一半：颈背那片硬毛，和一双能在碎石上站住的蹄
+    partBias: [PART_ZONG, PART_SU],
     startDistance: 36,
     wariness: 8,
     // 唯一一头会反扑的猎物：远、沉稳、扑空就是一场真打 —— 「值不值得扑」这道题的正主
@@ -409,12 +527,15 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_CAO_HU,
     name: "草狐",
-    meng: 14,
-    hp: 34,
+    // [M2-B3] 14 → **22**：注里写着「早期必须考虑逃」，而实测基础 build 对它 100% —— 那句话得是真的。
+    // 22 是 `--lab matrix` 校准出来的最终值（中途 18 时它还在 100%）
+    meng: 22,
+    hp: 36,
     tags: ["beast"],
     essence: { zu: 12, meng: 10 },
     fleeBias: 0,
     desc: "瘦削，毛色枯黄，眼极亮。青丘的狐都记仇，也都记路。",
+    partBias: [PART_SU, PART_CHI],
     startDistance: 30,
     wariness: 44,
     retaliates: true,
@@ -455,12 +576,13 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_SHAN_XIAO,
     name: "山魈",
-    meng: 20,
-    hp: 48,
+    meng: 24,
+    hp: 46,
     tags: ["beast", "humanoid"],
     essence: { meng: 16, xue: 8 },
     fleeBias: 6,
     desc: "人形，赤面无毛，两臂过膝。夜行山间，专拣落单者。",
+    partBias: [PART_ZONG, PART_ZHAO],
     startDistance: 32,
     wariness: 30,
     retaliates: true,
@@ -498,10 +620,14 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: "玄蟒",
     meng: 32,
     hp: 60,
+    // [M2-B3] 蛇无腿：B1 的注里说「咬下身的措辞已在兜底池里兼容」，实机读到的其实还是「后腿」
+    legWord: "下身",
     tags: ["beast", "venom"],
     essence: { xue: 20, lin: 12 },
     fleeBias: 12,
     desc: "黑鳞泛紫，身粗如柱。不追不扑，只等你自己走进它的一圈。",
+    // 全库鳞甲最厚的一头 —— 它是「鳞」这条线最直接的来处
+    partBias: [PART_LIN, PART_TONG],
     startDistance: 20,
     wariness: 8,
     retaliates: true,
@@ -557,6 +683,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     essence: { meng: 32, xue: 8 },
     fleeBias: 16,
     desc: "虎身猬毛，肩生小翼，啼声如婴。虽幼，已知食人，且专食有理者。",
+    partBias: [PART_CHI, PART_ZHAO],
     startDistance: 38,
     wariness: 20,
     retaliates: true,
@@ -594,6 +721,779 @@ export const ENEMIES: readonly EnemyDef[] = [
       },
     },
   },
+
+  // ===== [M2-B3] 新增十三头 =====
+  //
+  // 这一段的排序与上面八头**同一条**：按「打起来有多硬」从轻到重。
+  // 每一头的头注只写一件事：**它逼玩家改什么**（那是它存在的理由），数值的量纲见文件头注。
+
+  {
+    id: ENEMY_GUAN_GUAN,
+    name: "灌灌",
+    meng: 5,
+    hp: 13,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "细爪",
+    tags: ["beast", "prey", "bird"],
+    essence: { lin: 14, zu: 6 },
+    fleeBias: -12,
+    desc: "状如鸠，赤喙青羽，其音若人相呵。佩其羽者不惑 —— 青丘的兽都想要那几根。",
+    // 「佩之不惑」那句话的数值形态：它是雾目那条线（看得见隐微）最早的一笔本钱
+    partBias: [PART_MU, PART_HUI],
+    artId: ENEMY_YE_ZHI,
+    startDistance: 26,
+    wariness: 20,
+    surplusSeasons: 1,
+    // 它一直在看你 —— 护眼，且逃意最重的一头鸟
+    guardBias: { throat: 1, leg: 1, eye: 3 },
+    intentBias: { pounce: 4, bite: 30, guard: 10, flee: 44 },
+    stages: [
+      { at: 1, name: "相呵", text: "" },
+      {
+        at: 0.45,
+        name: "噤声",
+        text: "{{enemy}}忽然不叫了。整片林子跟着静下来 —— 它在等你先动。",
+        intentBias: { pounce: 22, bite: 52, guard: 22, flee: 4 },
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "鸣囊",
+      text: "看清了：{{enemy}}颈前鼓着一小囊，叫的时候一涨一缩 —— 那儿没有骨头。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}平地拔起两尺，翅锋朝下压来。", "它抖开双翼，忽然大了一圈。"],
+        bite: ["{{enemy}}探颈来啄。", "赤喙一点，冲着你的耳根去。"],
+        guard: ["{{enemy}}把双翅拢成一堵，只露出眼。", "它压低身子，羽毛全立了起来。"],
+        flee: ["{{enemy}}朝高处叫了一声 —— 它想走了。", "它的爪已经松开了树根。"],
+      },
+    },
+    stalkFlavor: {
+      begin: [
+        "林梢上一串「呵、呵」的声音，像有人在低声说话 —— 是灌灌。",
+        "两只青羽的鸟在枝上对叫，其中一只落到了低处。",
+        "灌灌歪着头听自己的回声，脚下的枝一颤一颤。",
+      ],
+      creep: [
+        "趁它开口那一声盖住动静，你挪近{{steps}}步。",
+        "顺着树影底下的暗处，近了{{steps}}步。",
+        "每一步都踩在它叫的那一刻，前进了{{steps}}步。",
+      ],
+      circle: [
+        "绕到风的上头去 —— 它闻不到你，也就少一层疑。",
+        "退开半圈从背光那侧上来，风迎面了。",
+      ],
+      wait: [
+        "灌灌叫了三声，没听见回应，又低下头去。",
+        "你伏着不动。它把头埋进翅膀里理羽。",
+        "它侧耳听了很久，林子里什么也没有。",
+      ],
+      stir: ["它换到更高的一根枝上，远了{{steps}}步。", "灌灌跳了两跳，位置偏了{{steps}}步。"],
+      catch: [
+        "扑上去时它的叫声断在半途 —— 剩下的半声留在了林子里。",
+        "一口咬住那副还在震的鸣囊，青羽落了满地。",
+      ],
+      miss: [
+        "它叫着冲上枝头，那声音听起来像在笑。",
+        "爪下只有几根青羽，灌灌已经在三丈之上。",
+      ],
+      escape: [
+        "两只灌灌一前一后飞过山脊，一路呵个不停。",
+        "它落到你上不去的高枝上，从此只肯对着你叫。",
+      ],
+    },
+  },
+  {
+    id: ENEMY_CHI_RU,
+    name: "赤鱬",
+    meng: 7,
+    hp: 16,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "鳍根",
+    tags: ["beast", "prey", "fish"],
+    essence: { xue: 14, lin: 6 },
+    fleeBias: -6,
+    desc: "鱼身而人面，音如鸳鸯。食之不疥 —— 但先要看住那张脸，它会看着你。",
+    partBias: [PART_LIN, PART_BIAO],
+    artId: ENEMY_WEN_YAO,
+    startDistance: 30,
+    wariness: 12,
+    surplusSeasons: 2,
+    // 那张人面是它唯一护着的东西
+    guardBias: { throat: 1, leg: 1, eye: 4 },
+    intentBias: { pounce: 6, bite: 44, guard: 18, flee: 24 },
+    stages: [
+      { at: 1, name: "浮面", text: "" },
+      {
+        at: 0.5,
+        name: "作人语",
+        text: "{{enemy}}的嘴动了 —— 那不是鱼该有的口型。它在说一句你差点听懂的话。",
+        intentBias: { pounce: 10, bite: 58, guard: 26, flee: 6 },
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "颔下三鳞",
+      text: "看清了：{{enemy}}那张脸底下接着鱼身的地方，有三片鳞是反着长的。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}整个身子弹出水面，人面正对着你。", "它借一股回流冲了上来。"],
+        bite: ["{{enemy}}张开那张嘴 —— 里面全是齿。", "它侧身贴过来咬。"],
+        guard: ["{{enemy}}沉下半身，只把脸留在水线上。", "它把鳍收拢，像一块石头。"],
+        flee: ["{{enemy}}的尾已经转向深水。", "它往下沉了一寸，眼睛还盯着你。"],
+      },
+    },
+    stalkFlavor: {
+      begin: [
+        "浅水里浮着一张脸。看久了才发现，脸底下接的是鱼身。",
+        "水湾里传来鸳鸯似的叫声，可这个时节不该有鸳鸯。",
+        "赤鱬贴着水面漂着，那双眼睛一直没有闭。",
+      ],
+      creep: [
+        "顺着岸边的石缝挪近{{steps}}步，尽量不搅动水面。",
+        "踩着水底的沙一步一步涉过去，近了{{steps}}步。",
+        "借着一丛水草的影子，前进了{{steps}}步。",
+      ],
+      circle: [
+        "绕到上游去 —— 气味顺水走，不再往它那边送。",
+        "退到湾口另一侧，风与水都从它那头过来了。",
+      ],
+      wait: [
+        "赤鱬叫了一声，又归于沉默。水面重新平了。",
+        "你伏在石上不动，那张脸慢慢转向别处。",
+        "等了一阵，它闭上了眼 —— 鱼原来也会闭眼。",
+      ],
+      stir: ["它顺着水流漂开{{steps}}步。", "赤鱬翻了个身，位置偏了{{steps}}步。"],
+      catch: [
+        "爪子按住那张脸的一瞬，叫声停了。剩下的只是一条鱼。",
+        "一口咬在颔下那三片反鳞上，它连挣都没挣。",
+      ],
+      miss: [
+        "水面炸开，它沉进深处 —— 那张脸最后还朝你笑了一下。",
+        "只抓到一把水草，赤鱬已经不见了。",
+      ],
+      escape: [
+        "它游进潭心，脸朝上浮着，看了你很久才沉下去。",
+        "赤鱬钻进石底的暗流，水面只剩一圈涟漪。",
+      ],
+    },
+  },
+  {
+    id: ENEMY_LU_SHU,
+    name: "鹿蜀",
+    meng: 20,
+    hp: 30,
+    tags: ["beast", "prey", "horn"],
+    essence: { zu: 18, meng: 6 },
+    fleeBias: 2,
+    desc: "状如马而白首，其文如虎，赤尾。行则其音如歌，一路唱着走，也一路唱着踢人。",
+    partBias: [PART_SU, PART_ZONG],
+    artId: ENEMY_YAN_YANG,
+    startDistance: 38,
+    wariness: 10,
+    // 第二头会反扑的猎物：它比岩羊好追，但踢起来更快
+    retaliates: true,
+    surplusSeasons: 3,
+    /*
+     * 它靠腿吃饭（跑与踢都在腿上），所以护腿；弱点因此在喉。
+     * 与岩羊正好互为镜像：岩羊护喉而软肋在蹄，鹿蜀护蹄而软肋在颈 ——
+     * 两头长得像的兽要打成两套顺序，这是最省事也最讲得通的一种分法。
+     */
+    guardBias: { throat: 1, leg: 4, eye: 1 },
+    intentBias: { pounce: 30, bite: 34, guard: 16, flee: 20 },
+    stages: [
+      { at: 1, name: "长歌", text: "" },
+      {
+        at: 0.5,
+        name: "断歌",
+        text: "{{enemy}}的歌声断了。它把白首低下来，赤尾绷得笔直。",
+        intentBias: { pounce: 48, bite: 40, guard: 12, flee: 0 },
+        damageMul: 1.15,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "白首之下",
+      text: "看清了：{{enemy}}唱的时候喉头一鼓一鼓 —— 那一段的皮跟白首一样薄。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}后蹄一蹬，整个身子横着撞过来。", "它扬起前蹄 —— 这一下要落在你背上。"],
+        bite: ["{{enemy}}甩头来撞。", "它侧身，用肩把你往石壁上挤。"],
+        guard: ["{{enemy}}把四蹄收拢站定，赤尾护住后腿。", "它绕着你打转，蹄子始终对着你。"],
+        flee: ["{{enemy}}朝坡下看了一眼。", "它的歌声忽然轻了 —— 那是要走的调子。"],
+      },
+    },
+    stalkFlavor: {
+      begin: [
+        "坡上传来一段歌 —— 不是人唱的。虎纹白首的鹿蜀正低头吃草。",
+        "草坡尽头立着一头马样的兽，尾巴红得刺眼。",
+        "鹿蜀边走边唱，那调子在山谷里绕了两圈才散。",
+      ],
+      creep: [
+        "趁它唱到高处那一句，你挪近{{steps}}步。",
+        "沿着坡脊的背面上行，近了{{steps}}步。",
+        "踩着它自己的蹄声，前进了{{steps}}步。",
+      ],
+      circle: [
+        "横切过草坡绕到上风 —— 它的鼻子比耳朵灵。",
+        "退下半坡从另一头包上去，风终于迎面了。",
+      ],
+      wait: [
+        "它抬头看了看远处，歌没有停。",
+        "你伏在草里。鹿蜀踱了两步，又低下头去。",
+        "等它那一段唱完，警觉也跟着落下去了。",
+      ],
+      stir: ["它一路唱着走远了{{steps}}步。", "鹿蜀换了一处草皮，横移{{steps}}步。"],
+      catch: [
+        "扑上去时歌声断在喉里 —— 那是它最后半个音。",
+        "一口咬住白首下的颈子，赤尾抽了两下就垂了。",
+      ],
+      miss: [
+        "它一个错步让开，蹄铁般的后腿从你耳边扫过。",
+        "只咬到一嘴虎纹的皮毛，鹿蜀已经转过身来。",
+      ],
+      retaliate: [
+        "鹿蜀不走。它把白首低下来，唱起了另一个调子。",
+        "它绕了半圈重新面对你 —— 这一头马是会踢人的。",
+      ],
+      escape: [
+        "鹿蜀一路唱着上了坡顶，再没回头。",
+        "它三两步跨过溪去，歌声隔着水传回来。",
+      ],
+    },
+  },
+  {
+    id: ENEMY_XUAN_GUI,
+    name: "旋龟",
+    meng: 24,
+    hp: 48,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "前肢",
+    tags: ["beast", "shell"],
+    essence: { xue: 18, lin: 10 },
+    fleeBias: 14,
+    desc: "状如龟而鸟首虺尾，其音如判木。它不快，也不狠，只是很难打完。",
+    partBias: [PART_LIN, PART_MU],
+    artId: ENEMY_XUAN_MANG,
+    startDistance: 22,
+    wariness: 6,
+    retaliates: true,
+    surplusSeasons: 3,
+    /*
+     * **「甲」型的第一头**：护得死、伤极低、血厚、几乎不逃。
+     *
+     * 它是这一批唯一一头**只靠咬打不动**的中阶兽 —— 护喉权重 6，一记咬喉十有八九被减半，
+     * 而它的血是野雉的四倍。正解是「决杀无视守备」或「先识破弱点」，
+     * 于是它是灵系 build 的第一块试金石（见文件头注的克制关系那一节）。
+     */
+    guardBias: { throat: 5, leg: 1, eye: 1 },
+    intentBias: { pounce: 4, bite: 46, guard: 44, flee: 6 },
+    stages: [
+      { at: 1, name: "缩甲", text: "" },
+      {
+        at: 0.45,
+        name: "出首",
+        text: "{{enemy}}的鸟首从甲下探了出来，虺尾在地上敲出判木一样的声音。",
+        intentBias: { pounce: 16, bite: 62, guard: 20, flee: 2 },
+        damageMul: 1.2,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "首甲之隙",
+      text: "看清了：{{enemy}}的鸟首缩回去时，颈甲要错开一线 —— 那一线只留半息。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}整片甲壳压了过来 —— 它是要把你顶翻。", "虺尾从侧后抽了过来。"],
+        bite: ["{{enemy}}的鸟首一啄。", "它伸颈来咬，动作慢得几乎可笑。"],
+        guard: ["{{enemy}}把头尾全收进甲里，只剩一块石头。", "它伏低，甲缘扣死在地上。"],
+        flee: ["{{enemy}}朝水边挪了半寸。", "它的四足换了方向。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_LI_LI,
+    name: "狸力",
+    meng: 24,
+    hp: 32,
+    tags: ["beast", "digger"],
+    essence: { meng: 12, xue: 10 },
+    fleeBias: -4,
+    desc: "状如豚而有距，音如狗吠。见则其县多土功 —— 它到哪儿，哪儿的地就要翻一遍。",
+    partBias: [PART_ZHAO, PART_CHI],
+    artId: ENEMY_XUE_SHU,
+    startDistance: 24,
+    wariness: 14,
+    retaliates: true,
+    surplusSeasons: 2,
+    // 它靠那副距刨地，也靠它跑：护腿。弱点因此在喉（同鹿蜀那条镜像规矩）
+    guardBias: { throat: 1, leg: 4, eye: 2 },
+    intentBias: { pounce: 20, bite: 46, guard: 16, flee: 24 },
+    stages: [
+      { at: 1, name: "刨土", text: "" },
+      {
+        at: 0.5,
+        name: "陷阵",
+        text: "{{enemy}}把自己半个身子埋进了新翻的土里 —— 它不打算跑，它在扎根。",
+        intentBias: { pounce: 34, bite: 52, guard: 14, flee: 0 },
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "颈上旧痕",
+      text: "看清了：{{enemy}}颈侧有一道被石头磨出来的旧痕，土都嵌进去了。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}拱起背，整头撞了过来。", "它把距抵在土里 —— 要弹出来了。"],
+        bite: ["{{enemy}}低头来啃你的前腿。", "它张开嘴，那副獠牙比豚该有的长。"],
+        guard: ["{{enemy}}把身子塞进自己刨的坑里。", "它侧过身，用厚背对着你。"],
+        flee: ["{{enemy}}的前爪已经开始刨了。", "土屑往后飞 —— 它要往地下去。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_LUO_YU,
+    name: "蠃鱼",
+    meng: 28,
+    hp: 48,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "翼根",
+    tags: ["beast", "fish"],
+    essence: { lin: 16, xue: 10 },
+    fleeBias: 0,
+    desc: "鱼身而鸟翼，出入有光，音如鸳鸯。见则其邑大水 —— 水没到膝时它已经绕了你三圈。",
+    partBias: [PART_BIAO, PART_LIN],
+    artId: ENEMY_WEN_YAO,
+    startDistance: 26,
+    wariness: 10,
+    retaliates: true,
+    surplusSeasons: 3,
+    /*
+     * **「啄」型的正主**：伤单次极轻（meng 15），但一合都不肯停，血还厚。
+     *
+     * 它是「体」那一位最值钱的地方 —— 每次受伤的固定减免在一场十几下小伤的架里
+     * 抵掉的是整整一条命，而同一份减免在穷奇一记重扑面前几乎读不出来。
+     * 克制矩阵里体系 build 最漂亮的一格就在这头兽身上。
+     */
+    guardBias: { throat: 2, leg: 1, eye: 4 },
+    intentBias: { pounce: 8, bite: 70, guard: 14, flee: 8 },
+    stages: [
+      { at: 1, name: "绕游", text: "" },
+      {
+        at: 0.55,
+        name: "起水",
+        text: "{{enemy}}的翼从水里抬了起来 —— 水面开始往你这边涌。",
+        intentBias: { pounce: 14, bite: 74, guard: 10, flee: 2 },
+      },
+      {
+        at: 0.25,
+        name: "落势",
+        text: "水退了下去。{{enemy}}的翼拖在地上，可它还在咬。",
+        intentBias: { pounce: 4, bite: 80, guard: 16, flee: 0 },
+        damageMul: 1.2,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "翼根",
+      text: "看清了：{{enemy}}那对翼扎在鱼身上的地方没有鳞 —— 它自己也够不着那儿。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}贴着水面直冲过来。", "它把双翼一合，像一支箭。"],
+        bite: ["{{enemy}}从侧面掠过，顺口带走一块。", "它绕回来又咬了一下 —— 没停过。"],
+        guard: ["{{enemy}}沉进水里，只剩两片翼梢。", "它把翼拢在身前挡着。"],
+        flee: ["{{enemy}}朝深水那头看了一眼。", "水声往远处去了。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_BI_FANG,
+    name: "毕方",
+    meng: 26,
+    hp: 34,
+    // [M2-B3] 一足：它全身的重量只压在一条腿上，所以那一句读起来格外狠
+    legWord: "那一足",
+    tags: ["beast", "bird", "fire"],
+    essence: { meng: 16, zu: 10 },
+    fleeBias: 8,
+    desc: "状如鹤而一足，赤文青质，白喙。见则其邑有讹火 —— 火不是它放的，是跟着它来的。",
+    partBias: [PART_ZONG, PART_HUI],
+    artId: ENEMY_YE_ZHI,
+    startDistance: 34,
+    wariness: 22,
+    retaliates: true,
+    surplusSeasons: 3,
+    // 一足：那条腿是它的命，护得最紧。弱点在喉
+    guardBias: { throat: 1, leg: 5, eye: 2 },
+    intentBias: { pounce: 46, bite: 30, guard: 18, flee: 6 },
+    stages: [
+      { at: 1, name: "独立", text: "" },
+      {
+        at: 0.5,
+        name: "衔火",
+        text: "{{enemy}}的白喙里透出光来。焦味先到，火才到。",
+        intentBias: { pounce: 60, bite: 30, guard: 10, flee: 0 },
+        damageMul: 1.5,
+      },
+      {
+        at: 0.22,
+        name: "燎原",
+        text: "{{enemy}}把整口火吐了出来，连自己的羽也在烧 —— 它不打算活着走。",
+        intentBias: { pounce: 72, bite: 24, guard: 4, flee: 0 },
+        damageMul: 1.9,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "喙下细颈",
+      text: "看清了：{{enemy}}衔火的时候要仰颈 —— 那一段细得撑不住一口。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}一足离地，整只鸟朝你砸下来。", "白喙先亮了一下 —— 这一下带着火。"],
+        bite: ["{{enemy}}低颈来啄。", "它绕着你单足跳了半圈，忽然出喙。"],
+        guard: ["{{enemy}}把翅收成一面屏，火色在羽下走。", "它单足立定，一动不动。"],
+        flee: ["{{enemy}}把颈子转向山口那边。", "它的翼张了一半 —— 要起了。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_GU_DIAO,
+    name: "蛊雕",
+    meng: 28,
+    hp: 40,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "攫爪",
+    tags: ["beast", "bird"],
+    essence: { meng: 18, zu: 12 },
+    fleeBias: 6,
+    desc: "状如雕而有角，其音如婴儿啼，是食人。听见婴啼就该抬头，那声音总在你头顶。",
+    partBias: [PART_CHI, PART_HUI],
+    artId: ENEMY_YE_ZHI,
+    startDistance: 40,
+    wariness: 26,
+    retaliates: true,
+    surplusSeasons: 4,
+    /*
+     * **「重」型**：扑得极多、伤极重，而血不厚。
+     *
+     * 它是「体」那一位读不出来的地方（一记重扑 ×2.2，固定减免抵不掉几分之一），
+     * 却是「猛」最舒服的一头 —— 抢在它第二段之前把 42 血打完，这一场就没有第二记重扑。
+     * 克制矩阵里猛系与体系在这头兽上的差距最大。
+     */
+    guardBias: { throat: 2, leg: 2, eye: 3 },
+    intentBias: { pounce: 58, bite: 26, guard: 12, flee: 4 },
+    stages: [
+      { at: 1, name: "盘旋", text: "" },
+      {
+        at: 0.55,
+        name: "婴啼",
+        text: "{{enemy}}叫了 —— 那声音是婴儿的。你有一瞬没敢下口，它就是等这一瞬。",
+        intentBias: { pounce: 70, bite: 24, guard: 6, flee: 0 },
+        damageMul: 1.5,
+      },
+      {
+        // 「重」型的收束：拖到这一段就不该再拖了 —— 一记落下来是开场的两倍重
+        at: 0.25,
+        name: "坠击",
+        text: "{{enemy}}升到你看不清的高处，然后连翅膀都不用扇了 —— 它是让自己掉下来的。",
+        intentBias: { pounce: 80, bite: 16, guard: 4, flee: 0 },
+        damageMul: 2,
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "角下攫爪",
+      text: "看清了：{{enemy}}那对角是硬的，可撑着它落地的两只爪不是 —— 折了它就飞不起来。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}收翼直落，角尖朝前。", "头顶的影子忽然变大了。"],
+        bite: ["{{enemy}}擦身掠过，爪上带走一块。", "它侧头来啄你的脊。"],
+        guard: ["{{enemy}}张翼护住胸腹，角横在前面。", "它落在高处，收起翅膀看着你。"],
+        flee: ["{{enemy}}朝山脊那头拍了两下翅。", "婴啼声往高处去了。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_MING_SHE,
+    name: "鸣蛇",
+    meng: 28,
+    hp: 46,
+    // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
+    legWord: "下身",
+    tags: ["beast", "venom"],
+    // 带一点猛：它是全库唯一「毒腺那条线」拿得到本钱的兽（蛇的毒是猛之精气那一型）
+    essence: { xue: 18, lin: 12, meng: 6 },
+    fleeBias: 10,
+    desc: "状如蛇而四翼，其音如磬。见则其邑大旱 —— 它过的地方，井先干。",
+    partBias: [PART_LIN, PART_DU],
+    artId: ENEMY_XUAN_MANG,
+    startDistance: 24,
+    wariness: 12,
+    retaliates: true,
+    surplusSeasons: 4,
+    /*
+     * **「甲」型的中阶版**：守意重、血厚、护得集中，而且有一处真正值钱的弱点。
+     *
+     * 与玄蟒的分别在**它会退**（fleeBias 10 且逃意入池）：一个德高的 build 会把它的退意
+     * 抬到「打到一半它走了」—— 于是同一头兽在德系 build 手里胜率反而更低。
+     * 那不是失手，是矩阵里必须存在的一格：一条属性不该在每一头兽身上都是好事。
+     */
+    guardBias: { throat: 4, leg: 1, eye: 3 },
+    intentBias: { pounce: 18, bite: 44, guard: 28, flee: 10 },
+    stages: [
+      { at: 1, name: "磬鸣", text: "" },
+      {
+        at: 0.6,
+        name: "四翼张",
+        text: "{{enemy}}的四片翼一齐张开，磬声变成了一片乱响。",
+        intentBias: { pounce: 40, bite: 46, guard: 14, flee: 4 },
+      },
+      {
+        at: 0.25,
+        name: "声竭",
+        text: "磬声停了。{{enemy}}的翼垂下来 —— 它开始往地缝那边挪。",
+        intentBias: { pounce: 8, bite: 54, guard: 20, flee: 30 },
+        damageMul: 1.25,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "磬眼",
+      text: "看清了：{{enemy}}颈侧有一处随磬声开合的小孔 —— 声音是从那儿出来的，气也是。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}四翼齐振，整条身子平着射了过来。", "磬声骤急 —— 它要出手了。"],
+        bite: ["{{enemy}}的头从下方绕上来。", "它吐信，头低到与你齐平。"],
+        guard: ["{{enemy}}把身子盘成一叠，四翼合拢盖住。", "磬声慢下来，它不动了。"],
+        flee: ["{{enemy}}的尾梢已经离地。", "它往干裂的地缝里退了半身。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_HUA_HUAI,
+    name: "猾褢",
+    meng: 30,
+    hp: 52,
+    tags: ["beast", "humanoid"],
+    essence: { meng: 20, xue: 10 },
+    fleeBias: 4,
+    desc: "状如人而彘鬣，穴居而冬蛰，其音如斫木。见则其县有大繇 —— 它一醒，人就要服役。",
+    partBias: [PART_ZONG, PART_ZHAO],
+    artId: ENEMY_SHAN_XIAO,
+    startDistance: 28,
+    wariness: 18,
+    retaliates: true,
+    surplusSeasons: 4,
+    /*
+     * **「壁」型**：血厚、守备均等、输出稳而不炸、三段都不换性子。
+     *
+     * 它身上没有捷径 —— 守备均等意味着没有哪一咬恒被减半，也就没有哪一咬恒占便宜；
+     * 弱点在腿（它两臂过膝，全身的力压在腿上），识破之后也只是 1.12 倍。
+     * 于是它是**纯吞吐**那道题：猛系 build 在这儿比灵系快整整两合。
+     */
+    guardBias: { throat: 2, leg: 2, eye: 2 },
+    intentBias: { pounce: 32, bite: 48, guard: 18, flee: 2 },
+    stages: [
+      { at: 1, name: "初醒", text: "" },
+      {
+        at: 0.6,
+        name: "斫木",
+        text: "{{enemy}}开始一下一下地砸 —— 那声音跟伐木一模一样，也一样不肯停。",
+        intentBias: { pounce: 40, bite: 52, guard: 8, flee: 0 },
+        damageMul: 1.15,
+      },
+      {
+        at: 0.25,
+        name: "归穴",
+        text: "{{enemy}}往洞口退了两步，可它挡在那儿不走 —— 它是在护后面的东西。",
+        intentBias: { pounce: 20, bite: 50, guard: 30, flee: 0 },
+        damageMul: 1.2,
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "蛰久的后膝",
+      text: "看清了：{{enemy}}冬蛰了整整一季，那两条后腿还没缓过来，一直在抖。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}举起两臂，整个人压了下来。", "它把彘鬣竖起来 —— 这一下是往死里砸的。"],
+        bite: ["{{enemy}}挥臂来抓。", "它一下一下地砸，像在伐一棵树。"],
+        guard: ["{{enemy}}把两臂交叠护在身前。", "它退回洞口，用背堵住那个洞。"],
+        flee: ["{{enemy}}回头看了看洞里。", "它松了手 —— 但没有走。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_TU_LOU,
+    name: "土蝼",
+    meng: 28,
+    hp: 52,
+    tags: ["beast", "horn"],
+    essence: { meng: 22, zu: 8 },
+    fleeBias: 12,
+    desc: "状如羊而四角，是食人。四只角朝四个方向长，所以它从来不必转身。",
+    partBias: [PART_CHI, PART_SU],
+    artId: ENEMY_YAN_YANG,
+    startDistance: 32,
+    wariness: 16,
+    retaliates: true,
+    surplusSeasons: 5,
+    // 四角环护咽喉，正面无从下口 —— 同岩羊那条：喉被封死，软肋只能在别处
+    guardBias: { throat: 5, leg: 1, eye: 2 },
+    intentBias: { pounce: 50, bite: 36, guard: 12, flee: 2 },
+    stages: [
+      { at: 1, name: "四顾", text: "" },
+      {
+        at: 0.55,
+        name: "合围",
+        text: "{{enemy}}不再挪动了 —— 四只角同时对着你，它站在自己的中心。",
+        intentBias: { pounce: 62, bite: 32, guard: 6, flee: 0 },
+        damageMul: 1.5,
+      },
+      {
+        // 它**会走**，而且走得晚 —— 一个磨得太慢的玩家会看着这一顿肉自己离开（德系的代价）
+        at: 0.24,
+        name: "卸角",
+        text: "{{enemy}}把一只角在焦木上磕断了。轻了之后它忽然快起来 —— 也忽然想走了。",
+        intentBias: { pounce: 44, bite: 30, guard: 8, flee: 34 },
+        damageMul: 1.8,
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "角重之足",
+      text: "看清了：四只角太重了，{{enemy}}每挪一步都要先把重量卸到一条腿上 —— 就是那一条。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}原地一沉，四角同时压了过来。", "它连转身都省了，就这么撞了上来。"],
+        bite: ["{{enemy}}用角尖挑你的肋。", "它甩头，角上带着上一个人的东西。"],
+        guard: ["{{enemy}}把四角收成一团，只剩一个刺球。", "它四蹄扎进灰里，稳住了。"],
+        flee: ["{{enemy}}朝焦木林那头看了一眼。", "它退了半步 —— 只有半步。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_SHU_HU,
+    name: "孰湖",
+    meng: 30,
+    hp: 56,
+    tags: ["beast", "humanoid"],
+    essence: { zu: 20, lin: 14 },
+    fleeBias: 10,
+    desc: "马身而鸟翼，人面蛇尾，是好举人。它把人举起来，然后就不放下来了。",
+    partBias: [PART_SU, PART_MU],
+    artId: ENEMY_SHAN_XIAO,
+    startDistance: 36,
+    wariness: 24,
+    retaliates: true,
+    surplusSeasons: 5,
+    /*
+     * 全库最会「抬」的一头：扑与咬各半，而它护的是眼（那张人面是它读你的地方）。
+     * 弱点在喉，可它血厚且三段越打越快 —— 这一头考的是**这一场还剩几合**的判断。
+     */
+    guardBias: { throat: 2, leg: 2, eye: 5 },
+    intentBias: { pounce: 42, bite: 42, guard: 14, flee: 2 },
+    stages: [
+      { at: 1, name: "相人", text: "" },
+      {
+        at: 0.6,
+        name: "举之",
+        text: "{{enemy}}的蛇尾缠上了你的后腿 —— 它要把你举起来。",
+        intentBias: { pounce: 56, bite: 38, guard: 6, flee: 0 },
+        damageMul: 1.2,
+      },
+      {
+        at: 0.25,
+        name: "坠",
+        text: "翼折了一边。{{enemy}}那张人面第一次露出别的表情 —— 它想走了。",
+        intentBias: { pounce: 24, bite: 46, guard: 12, flee: 28 },
+        damageMul: 1.4,
+      },
+    ],
+    weakness: {
+      part: "throat",
+      name: "人面之颔",
+      text: "看清了：那张人面与马身接得并不严 —— 颔下那一线，是两样东西勉强缝在一起的地方。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}张翼贴地扑来，蛇尾在后面扫。", "它前蹄离地，人面正对着你笑。"],
+        bite: ["{{enemy}}俯下人面来咬。", "蛇尾从侧后抽了过来。"],
+        guard: ["{{enemy}}把双翼合在面前，只露出眼睛。", "它退了半步，尾梢盘住自己的腿。"],
+        flee: ["{{enemy}}的翼扇了两下，抬起了半个身子。", "它把人面转向山那头。"],
+      },
+    },
+  },
+  {
+    id: ENEMY_JIU_WEI_HU,
+    name: "九尾狐",
+    meng: 36,
+    hp: 68,
+    tags: ["beast", "fox"],
+    essence: { lin: 24, meng: 12 },
+    fleeBias: 16,
+    desc: "状如狐而九尾，其音如婴儿，能食人。青丘的老话：见了九尾，先数尾巴 —— 数得清的都还活着。",
+    partBias: [PART_XI, PART_CHI],
+    artId: ENEMY_CAO_HU,
+    startDistance: 34,
+    wariness: 40,
+    retaliates: true,
+    surplusSeasons: 5,
+    /*
+     * **「甲」型的顶格**：护得最密（喉与眼都护）、三段、血 68，而弱点在九尾攒生的那一处。
+     *
+     * 它是灵系 build 整条线的兑现处：灵高则**早两合识破**（`weaknessRevealPerLing`），
+     * 而识破之后那一咬无视它最密的守备；势上限高则**决杀更重**，同样无视守备。
+     * 一个只会咬喉的猛系 build 在这儿有一半的回合是在打它的下巴。
+     */
+    guardBias: { throat: 4, leg: 1, eye: 4 },
+    intentBias: { pounce: 36, bite: 44, guard: 18, flee: 6 },
+    stages: [
+      { at: 1, name: "婴啼", text: "" },
+      {
+        at: 0.6,
+        name: "尾分",
+        text: "九条尾散开了，各朝一个方向 —— {{enemy}}看起来忽然大了三倍。",
+        intentBias: { pounce: 48, bite: 44, guard: 8, flee: 0 },
+        damageMul: 1.2,
+      },
+      {
+        /*
+         * 「狐都记路」在数值上的样子：它到这一段是**真的会走**的（逃意 32）。
+         * 一个磨得慢的 build 会在最后一刻丢掉这一顿 —— 而德抬的正是这一位。
+         */
+        at: 0.22,
+        name: "敛尾",
+        text: "尾一条一条收了回去。{{enemy}}又变回一只狐的大小 —— 它记着回去的路。",
+        intentBias: { pounce: 20, bite: 44, guard: 18, flee: 32 },
+        damageMul: 1.35,
+      },
+    ],
+    weakness: {
+      part: "leg",
+      name: "九尾攒处",
+      text: "看清了：九条尾攒生在同一处，那一处没有毛，也没有力 —— 它护得住喉，护不住那儿。",
+    },
+    combatFlavor: {
+      intent: {
+        pounce: ["{{enemy}}整个身子拔起来，九尾在身后铺成一片。", "它压低前身 —— 这一扑要带走一块。"],
+        bite: ["{{enemy}}贴地绕上来，齿已经露出来了。", "它试探着咬了一口，像在尝味道。"],
+        guard: ["九条尾一齐向前，围成一堵。", "{{enemy}}眯起眼，等你先动。"],
+        flee: ["{{enemy}}朝林子深处看了一眼 —— 狐都记路。", "婴儿的啼声忽然远了半分。"],
+      },
+    },
+  },
 ];
 
 /** 追猎的猎物表 —— 进 `tuning.huntPreyIds`，起追时等权抽一。 */
@@ -602,4 +1502,10 @@ export const PREY_IDS: readonly string[] = [
   ENEMY_WEN_YAO,
   ENEMY_XUE_SHU,
   ENEMY_YAN_YANG,
+  // [M2-B3] 三头新猎物。加它们不是为了「更多」，是为了让**一次起追摇到什么**有分别：
+  // 灌灌与野雉同档（一顿），赤鱬与文鳐同档（两季），鹿蜀补上「岩羊之下、草狐之上」那一格
+  // —— 而它与岩羊一样会反扑，于是七头里仍是两头有赌注，比例与 M1 那会儿一样。
+  ENEMY_GUAN_GUAN,
+  ENEMY_CHI_RU,
+  ENEMY_LU_SHU,
 ];

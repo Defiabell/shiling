@@ -447,6 +447,16 @@ export interface FinisherPreview {
   momentumNeeded: number;
   ready: boolean;
   damage: DamageRange;
+  /**
+   * [M2-B3] 势已经攒满了 —— **再攒也是白攒**（溢出的部分直接丢掉）。
+   *
+   * 它存在的理由是 B3 的克制矩阵量出来的一个空洞：决杀的倍率随势线性走
+   * （`1.4 + 0.22×势`），而灵性 build 买到的正是**更高的上限**；可推荐链一到门槛
+   * （4 点）就发，于是「上限 5」与「上限 9」打出来的是同一记决杀 ——
+   * 灵在整张矩阵上的平均胜率与基础 build **只差 0.1 个点**。
+   * 屏幕上与推荐链都要读得出「满没满」，「攒」才是一个真的动作。
+   */
+  atMax: boolean;
 }
 
 /**
@@ -499,6 +509,21 @@ export interface EncounterPreview {
   enemyId: string;
   enemyName: string;
   enemyDesc: string;
+  /**
+   * [M2-B3] 这一头的头像该用谁的（`EnemyDef.artId ?? id`）—— 界面拼图路径时读它。
+   *
+   * 由引擎给而不是让客户端自己查表：`EncounterPreview` 已经在给 name／desc 这类
+   * 「界面要念的东西」，再让客户端为一个字段单独遍历一次 `content.enemies`，
+   * 就是把同一条查表写在两处。
+   */
+  enemyArtId: string;
+  /**
+   * [M2-B3] 这一头兽的三个部位**该怎么念**（喉与眼对所有兽都一样，腿走 `EnemyDef.legWord`）。
+   *
+   * 由引擎给而不是让客户端拿 `BODY_PART_NAMES` 自己查：那张表里的「后腿」在一条长着鸟翼的鱼
+   * 身上是错的，而客户端若要正确地念就得先拿到 `EnemyDef` —— 那是把同一条查表写在两处。
+   */
+  partNames: Record<BodyPart, string>;
   origin: EncounterOrigin;
   phase: EncounterPhase;
   momentum: number;
@@ -525,8 +550,25 @@ export interface EncounterPreview {
   /** 靠试还差几次咬中识破（同上） */
   weaknessHitsLeft: number;
   stats: EncounterStats;
+  /**
+   * [M2-B3] 食之所偏：吃下这一头，攒的是哪几件部件的本钱（顺序恒按 `EnemyDef.partBias`）。
+   *
+   * 见 `EnemyDef.partBias` 的注释：这是「去哪儿打什么」与「凝得出什么招」之间那条链
+   * 唯一写在屏幕上的地方。空数组 ＝ 内容没给这一头写偏好（界面就不出这一行）。
+   */
+  partBias: readonly EnemyPartBias[];
   /** 整场遭遇的日志（两个阶段同一条） */
   log: string[];
+}
+
+/** [M2-B3] 「食之所偏」的一项 —— 数与判断都由引擎给，措辞归客户端。 */
+export interface EnemyPartBias {
+  partId: string;
+  partName: string;
+  /** 凝这一件起手要付的精气型（＝产出它的那件器官的 affinity） */
+  essenceType: EssenceType;
+  /** 产出它的那件器官**已经在身上**（于是这一件此刻就拼得进招式框） */
+  owned: boolean;
 }
 
 export interface CombatPreview {
@@ -534,6 +576,12 @@ export interface CombatPreview {
   stance: Stance;
   /** 敌人护着的部位（对谁都可见） */
   guardPart: BodyPart;
+  /**
+   * [M2-B3] 这一头兽的三个部位该怎么念（同 `EncounterPreview.partNames`，理由见那一处）。
+   *
+   * 交锋屏上「护 后腿」「它正护着后腿」两句读的就是它 —— 而蠃鱼没有后腿。
+   */
+  partNames: Record<BodyPart, string>;
   /** 敌人这一回合宣告的意图（**精确**值；无 `combatIntentTags` 时界面不该显示 kind 与 text） */
   intent: EnemyIntent;
   /** 读得出确切意图（洞察类器官／明识／[S3] 图鉴知识）—— 否则只该给 `intentClass` 那两档 */
@@ -2388,6 +2436,30 @@ function toughnessOf(stats: Stats, t: TaleTuning): number {
   return Math.max(0, Math.floor(stats.ti / t.combatToughnessPerTi));
 }
 
+/**
+ * [M2-B3] 「腿」在这一头兽身上该叫什么（缺省「后腿」）。
+ *
+ * 见 `EnemyDef.legWord`：这一批之后名册里有鱼、鸟、蛇与带甲的东西，
+ * 而 `BODY_PART_NAMES.leg` 那句写死的「后腿」在它们身上是错的。
+ */
+function legWordOf(enemy: EnemyDef): string {
+  return enemy.legWord ?? BODY_PART_NAMES.leg;
+}
+
+/** [M2-B3] 部位名（腿走 `legWord`，喉与眼对所有兽都是同一个词）。 */
+function bodyPartName(enemy: EnemyDef, part: BodyPart): string {
+  return part === "leg" ? legWordOf(enemy) : BODY_PART_NAMES[part];
+}
+
+/** [M2-B3] 这一头兽的三个部位该怎么念 —— 两个 preview 都带这一份，客户端不再自己查表。 */
+function partNamesOf(enemy: EnemyDef): Record<BodyPart, string> {
+  return {
+    throat: bodyPartName(enemy, "throat"),
+    leg: bodyPartName(enemy, "leg"),
+    eye: bodyPartName(enemy, "eye"),
+  };
+}
+
 /** [M2-B1] 德给的闪避概率（整下躲开，不掉血）。 */
 function dodgeChanceOf(stats: Stats, t: TaleTuning): number {
   return clamp(stats.de * t.combatDodgePerDe, 0, t.combatDodgeMax);
@@ -2570,7 +2642,12 @@ function openClash(
     skillCooldowns: {},
   };
   if (encounter.weaknessFound && enemy.weakness) {
-    log.push(render(enemy.weakness.text, { enemy: enemy.name, part: BODY_PART_NAMES[enemy.weakness.part] }));
+    log.push(
+      render(enemy.weakness.text, {
+        enemy: enemy.name,
+        part: bodyPartName(enemy, enemy.weakness.part),
+      }),
+    );
   }
 }
 
@@ -4052,6 +4129,8 @@ export function encounterPreview(state: TaleState, content: TaleContent): Encoun
     enemyId: enemy.id,
     enemyName: enemy.name,
     enemyDesc: enemy.desc,
+    enemyArtId: enemy.artId ?? enemy.id,
+    partNames: partNamesOf(enemy),
     origin: encounter.origin,
     phase: encounter.phase,
     momentum: encounter.momentum,
@@ -4098,8 +4177,33 @@ export function encounterPreview(state: TaleState, content: TaleContent): Encoun
       enemyFleeMul: 1 + state.stats.de * t.combatEnemyFleePerDe,
       pounceChanceBonus: state.stats.meng * t.stalkPouncePerMeng,
     },
+    partBias: enemyPartBias(state, content, enemy),
     log: [...encounter.log],
   };
+}
+
+/**
+ * [M2-B3] 「食之所偏」查表：把 `EnemyDef.partBias` 的 id 换成屏幕念得出来的三项。
+ *
+ * 悬空 id **抛错**而不是跳过（同 `findTreasureId` 那条）：一条指向不存在部件的偏好
+ * 会让屏幕上少一件东西，而少的那一件不会有任何测试变红。
+ */
+function enemyPartBias(
+  state: TaleState,
+  content: TaleContent,
+  enemy: EnemyDef,
+): readonly EnemyPartBias[] {
+  const owned = new Set(state.organIds);
+  return (enemy.partBias ?? []).map((partId) => {
+    const part = partById(content, partId);
+    if (!part) throw new Error(`enemyPartBias: 敌人 ${enemy.id} 的未知部件 ${partId}`);
+    return {
+      partId: part.id,
+      partName: part.name,
+      essenceType: part.essenceType,
+      owned: owned.has(part.organId),
+    };
+  });
 }
 
 /**
@@ -4257,6 +4361,7 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     damage: finisherReady
       ? damageRange(meng, t, finisherMultiplier(t, combat.stance, encounter.momentum))
       : ZERO_DAMAGE,
+    atMax: encounter.momentum >= encounter.momentumMax,
   };
   const bestBite = Math.max(
     ...bites.map((bite) => bite.damage.mid),
@@ -4268,6 +4373,7 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
   return {
     stance: combat.stance,
     guardPart: combat.guardPart,
+    partNames: partNamesOf(enemy),
     intent: combat.intent,
     // [S1] 「明识」是洞察器官的临时替身；[S3] 「图鉴知识」是它的跨世替身 —— 三个来源，一个判据
     intentKnown:
@@ -4446,7 +4552,20 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
    * 这件事在链上的样子：前几合咬没护着的地方攒势，攒满一记打出去，再从头攒。
    */
   if (preview.finisher.ready && preview.finisher.damage.mid > (bestBite?.damage.mid ?? 0)) {
-    return finisherAct;
+    /*
+     * [M2-B3] **攒满了才发** —— 这一条是 B1 那句「留着不发等于让上限吃掉后面几合的进项」
+     * 的修正版。B1 写它的时候上限（4＋floor(灵/18)）对绝大多数 build 就等于门槛（4），
+     * 于是「一到门槛就发」与「攒满才发」是同一件事；B3 把上限做成灵的主要回报之后，
+     * 两者分了家：一到门槛就发的话，上限 5 与上限 9 打出来是同一记决杀，
+     * 而克制矩阵实测到的正是这个 —— 灵系 build 的平均胜率与基础 build 只差 0.1 个点。
+     *
+     * 现在的规矩是「势满则发」，另加两条不许再等的出口：这一记**打得死**（收官那一档
+     * 已在第 1 条拦掉，这里兜的是 mid 够、min 不够那一档），或者**再拖就没命了**。
+     * 溢出的势是白攒的，所以「满」是唯一不必再等的时刻。
+     */
+    if (preview.finisher.atMax || preview.roundsToLive <= 2 || preview.roundsToKill <= 2) {
+      return finisherAct;
+    }
   }
 
   // 8. 伤害类技比最强的一咬更重就放它（技有冷却，早放早转）
@@ -4542,8 +4661,21 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   const draft = draftOf(state);
   const roundLog: string[] = [];
   const records: LifeRecord[] = [];
+  /*
+   * [M2-B3] `{{leg}}` 也恒给：**「腿」这个部位在不同的兽身上不是同一个词**。
+   *
+   * 这一批把鱼／鸟／蛇／带甲的东西都放进了可打的名册，于是引擎那句写死的「后腿」
+   * 当场在实机里读成「蠃鱼的后腿已经拖在地上」—— 一条长着鸟翼的鱼没有后腿。
+   * 措辞归内容（`EnemyDef.legWord`），缺省仍是「后腿」，引擎只负责把它填进去。
+   */
   const say = (pool: readonly string[], vars: Record<string, string | number> = {}): void => {
-    roundLog.push(render(pickFlavor(cursor, undefined, pool), { enemy: enemy.name, ...vars }));
+    roundLog.push(
+      render(pickFlavor(cursor, undefined, pool), {
+        enemy: enemy.name,
+        leg: legWordOf(enemy),
+        ...vars,
+      }),
+    );
   };
 
   let enemyHp = current.enemyHp;
@@ -4616,7 +4748,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
               rollDamage(cursor, enemy.meng, t, counterMultiplier(t, stance, ward)) - toughness,
             )
           : 0;
-        say(COMBAT_MESSAGES.biteGuarded, { dmg, part: BODY_PART_NAMES[act.part] });
+        say(COMBAT_MESSAGES.biteGuarded, { dmg, part: bodyPartName(enemy, act.part) });
         if (countered) {
           playerHp -= counterDmg;
           unhurt = false;
@@ -4970,7 +5102,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       roundLog.push(
         render(enemy.weakness.text, {
           enemy: enemy.name,
-          part: BODY_PART_NAMES[enemy.weakness.part],
+          part: bodyPartName(enemy, enemy.weakness.part),
         }),
       );
     }
