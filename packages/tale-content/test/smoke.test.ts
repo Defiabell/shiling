@@ -35,6 +35,9 @@ import {
   exploreDestinations,
   performAction,
   recommendCombatAct,
+  recommendForge,
+  forgeSkill,
+  learnLore,
   resolveChoice,
   stalkAct,
   stalkPreview,
@@ -228,6 +231,19 @@ function runLife(seed: number): LifeSummary {
       continue;
     }
     if (!isHurt(state)) restsThisInjury = 0;
+    /*
+     * [M2-B2] 凝招：照引擎的推荐来（`recommendForge` ＝ 玩家屏幕上被提醒的那一手）。
+     * **不算一步**（`steps` 不加）—— 凝招不推进季节，它是随时可做的经营动作。
+     * 一世至多凝满 `forgeSlots` 手，所以这个 while 收敛。
+     */
+    for (let guard = 0; guard < CONTENT.tuning.forgeSlots + 1; guard += 1) {
+      const intent = recommendForge(state, CONTENT);
+      if (intent === null) break;
+      state =
+        intent.kind === "lore"
+          ? learnLore(state, CONTENT, intent.synergyId)
+          : forgeSkill(state, CONTENT, intent.picks);
+    }
     const actions = availableActions(state, CONTENT);
     const action = decideAction(state, actions, roll, restsThisInjury);
     if (action === "rest") restsThisInjury += 1;

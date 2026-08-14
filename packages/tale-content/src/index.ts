@@ -27,6 +27,7 @@ import { ENEMIES } from "./enemies.js";
 import { EVENTS } from "./events/index.js";
 import { ORIGINS, SKIES } from "./premises.js";
 import { ORGANS } from "./organs.js";
+import { PARTS } from "./parts.js";
 import { SEEDS } from "./seeds.js";
 import { SIGILS } from "./sigils.js";
 import { SYNERGIES } from "./synergies.js";
@@ -42,6 +43,7 @@ import { TUNING } from "./tuning.js";
 export const TALE_CONTENT: TaleContent = {
   events: [...EVENTS],
   organs: [...ORGANS],
+  parts: [...PARTS],
   seeds: [...SEEDS],
   enemies: [...ENEMIES],
   skies: [...SKIES],
@@ -151,7 +153,33 @@ export {
   ORGAN_XUE_ZHAO,
   ORGAN_YE_TONG,
 } from "./organs.js";
-export { SEED_BAI_ZE, SEED_CHANG_TAI, SEED_YING_LONG, SEEDS } from "./seeds.js";
+export {
+  PARTS,
+  PART_BIAO,
+  PART_CHI,
+  PART_DU,
+  PART_HUI,
+  PART_LIN,
+  PART_MU,
+  PART_SU,
+  PART_TAI,
+  PART_TONG,
+  PART_XI,
+  PART_XIAN,
+  PART_XUE,
+  PART_YUN,
+  PART_ZHAO,
+  PART_ZONG,
+} from "./parts.js";
+export {
+  SEED_BAI_ZE,
+  SEED_CHANG_TAI,
+  SEED_ORGAN_BAI_ZE_XUE,
+  SEED_ORGAN_LING_YUN,
+  SEED_ORGAN_LONG_LIN_TAI,
+  SEED_YING_LONG,
+  SEEDS,
+} from "./seeds.js";
 export {
   SYNERGIES,
   SYN_CHUAN_DI,

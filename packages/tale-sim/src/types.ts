@@ -110,9 +110,9 @@ export interface EnemyIntent {
  * 每回合的必点次数，不做多级菜单）。所以这是一个扁平联合，不是「先选类型再选参数」。
  *
  * ## [S1] `skill` 那一支从 `organId` 换成 `skillId`
- * 技能不再一定属于某一件器官：**组合技**（`SynergyDef`）由 2〜3 件器官凑齐才出现，
- * 它没有自己的器官。`skillId` 的取值见 `combatSkills`（器官技＝器官 id，组合技＝
- * `syn:<synergyId>`）。留 `organId` 会让「这个 id 是器官吗」变成一个要看情况的问题。
+ * 技能不再一定属于某一件器官：**招式册**里那几手（自己凝的／循古法习的）没有自己的器官。
+ * `skillId` 的取值见 `combatSkills`（器官技＝器官 id，招式册＝
+ * [M2-B2] `forge:<序号>`）。留 `organId` 会让「这个 id 是器官吗」变成一个要看情况的问题。
  */
 export type CombatAct =
   | { kind: "bite"; part: BodyPart }
@@ -215,6 +215,14 @@ export interface CombatSkillDef {
   stat?: "meng" | "ling";
   /** [S1] 伤害倍率，缺省 `tuning.organSkillDamageMul`。控制类技压低它，组合技抬高它 */
   damageMul?: number;
+  /**
+   * [M2-B2] 这一手**顺带记一层部位伤**（`EncounterState.wounds`，整场累积）；缺省不记。
+   *
+   * 「断伤」是凝招力道槽的第二样东西。取值只有 `leg`／`eye` 有意义 —— `throat` 不留伤
+   * （`woundOf` 那条：咬喉是爆发档，若它还白拿一条持续线，三颗咬击就退化成挑最高伤那颗）。
+   * 内容侧的 schema 测试盯着「没有任何部件把断伤指向喉」。
+   */
+  woundPart?: BodyPart;
   /** [S1] 代价，缺省＝无代价（本库的 12 件器官与 10 条组合全部显式写了代价） */
   cost?: CombatSkillCost;
   /**
@@ -259,6 +267,135 @@ export interface SynergyDef {
    */
   reveal: string;
   desc: string;
+}
+
+// ===== 凝招：部件拼装（M2-B2）=====
+
+/**
+ * [M2-B2] 招式框的三个槽。**顺序即界面顺序**（`FORGE_SLOTS`），别改。
+ *
+ * 三个槽各管一句话，合起来正好是「这一手是什么」：
+ * - `open` 起手：**定基础动作与伤害系数**（还定这一手按猛还是按灵算，以及付哪一型精气）；
+ * - `force` 力道：**定加成与断伤**（定额伤害 ＋ 顺带断它一处）；
+ * - `addon` 附加：**定附带效果**（十档效果里的一档）。
+ *
+ * ## 为什么三个槽都必填
+ * 允许空槽的话，「起手一件」就是一手最便宜的招 —— 而它没有任何附带效果、伤害又低于
+ * 一记咬喉（1.6 倍、零代价、零冷却），于是它是一颗**花了精气买到的、比免费按钮更差的
+ * 按钮**。那不是取舍，是陷阱。三槽必填之后，任何一手凝成的招至少带一档效果，
+ * 而三颗咬击一档都没有 —— 两者从此不可比（这也是占优闸门跑得出 0 的结构性原因）。
+ */
+export type ForgeSlot = "open" | "force" | "addon";
+
+/**
+ * [M2-B2] 一件器官产出的**部件**。
+ *
+ * ## 它为什么是内容而不是从器官算出来的
+ * 「狩齿产出齿部件」这件事没有可推导的规则 —— 齿在起手上是 1.5 倍、在力道上是定额 +3、
+ * 在附加上什么也不是，这三件事都是**设计判断**。写成表才改得动、才 diff 得出来，
+ * 也才让 schema 测试有东西可盯。
+ *
+ * ## 一个部件只在它擅长的槽里有 payload
+ * `open`／`force`／`addon` 三项**可缺**（缺 ＝ 这件部件放不进那个槽）。这是「部件有类别」
+ * 的机制形态：齿是打出去的东西（起手／力道），目是看的东西（只有附加），
+ * 鳞是挡的东西（力道／附加）。于是「这一世蜕到了什么」直接决定「拼得出什么」——
+ * 而那正是 owner 要的「用器官产出的部件自己拼装招式」。
+ *
+ * ## 代价不写在这里
+ * 三档代价（精气／势／冷却）全部由 `forgePower` 一条公式从 payload 算出来
+ * （同 `boonCost`／`chartCost` 的「规则而不是价目表」）。手写价目表的后果是：
+ * 一件强 payload 配一个手滑写低的价钱，就是一条严格占优的拼法 —— 而那正是这一批
+ * 必须为 0 的东西。公式单调 ⇒ 更强必然更贵 ⇒ 占优在结构上不可能。
+ */
+export interface PartDef {
+  /** 部件 id（与器官 id 一一对应，但**不等于**器官 id：`part-chi`） */
+  id: string;
+  /** 单字名号：齿／毒／鳞／速／瞳／髓／鬃／爪…… —— 招式默认名号由它拼 */
+  name: string;
+  /** 类别（读起来是「什么样的东西」）：锐／韧／毒／疾／明／灵／气 */
+  kind: string;
+  /** 产出它的器官（含神种器官）。玩家身上有那件器官，这件部件就在手上 */
+  organId: string;
+  /**
+   * 这件部件付的是哪一型精气 —— **只有放在起手槽时算数**（整手招付一型，见 `ForgeCost`）。
+   *
+   * 规则（schema 测试盯着）：等于该器官 `affinity` 最高的那一型；affinity 为空的
+   * 器官（今天只有龙涎）自己声明，因为没有可推的依据。
+   */
+  essenceType: EssenceType;
+  /** 起手 payload；缺 ＝ 这件部件放不进起手槽 */
+  open?: {
+    /** 伤害系数 */
+    damageMul: number;
+    /** 按哪个属性算（缺省猛）—— 灵系 build 的输出手靠它 */
+    stat?: "meng" | "ling";
+    /** 屏幕上那一行：「齿部件：伤 ×1.5」的后半句 */
+    text: string;
+  };
+  /** 力道 payload；缺 ＝ 放不进力道槽 */
+  force?: {
+    /**
+     * 追加到伤害系数上的那一份（0.2 一格，与起手同一把尺）。
+     *
+     * **为什么力道也给系数而不是给定额加成**（第一版是定额，被占优闸门推翻了）：
+     * 定额与系数是两把不可通约的尺 —— 定额每点在所有属性下恒 +1 伤，而 0.2 系数在
+     * 低属性下只值 +0.8、高属性下值 +2。一个整数价钱同时给两把尺定价时，
+     * 必然存在「高系数低定额」与「低系数高定额」同价而其中一边处处不差的组合，
+     * 那就是一条严格占优的拼法。改成同一把尺之后，**一手招的伤害由一个数（总系数）
+     * 唯一决定**，价钱也就跟着它单调走 —— 占优在结构上不可能（见 `forgeDominance`）。
+     */
+    damageMul: number;
+    /** 顺带断它一处（整场累积的部位伤）；null ＝ 只加系数不断伤 */
+    woundPart: BodyPart | null;
+    text: string;
+  };
+  /** 附加 payload；缺 ＝ 放不进附加槽 */
+  addon?: {
+    effect: CombatSkillEffect;
+    text: string;
+  };
+  /** 一句形容（详情浮层与招式册用） */
+  desc: string;
+}
+
+/** [M2-B2] 三个槽各挑了哪件部件（`PartDef.id`）。三槽必填，且三件互不相同。 */
+export interface ForgePicks {
+  open: string;
+  force: string;
+  addon: string;
+}
+
+/** [M2-B2] 一手招的代价：一次性的精气 ＋ 每次发招的势与冷却。 */
+export interface ForgeCost {
+  /** 付哪一型（＝起手部件的 `essenceType`） */
+  essenceType: EssenceType;
+  /** 凝成时一次性扣掉这么多该型精气 —— 它同时是蜕变的本钱，所以这是一道跨系统的取舍 */
+  essence: number;
+  /** 每次发招要花几点势 */
+  momentum: number;
+  /** 冷却回合数 */
+  cooldown: number;
+}
+
+/**
+ * [M2-B2] 招式册里的一手（凝成的自拟招，或直接习得的古法）。
+ *
+ * `skill` 是引擎结算认的**唯一**东西 —— 它与器官技、古法用同一份 `CombatSkillDef` 形状，
+ * 于是整条搏杀结算路径一行都不必为凝招分叉。`partIds`／`loreId` 只是**出处**，
+ * 给界面画那三行、给列传写那一句。
+ */
+export interface ForgedSkill {
+  /** 稳定 id：`forge:<序号>`。序号只增不重用 —— 遗忘再凝成不会撞上旧的冷却键 */
+  id: string;
+  /** 玩家给的名号（未改则是按部件自动拟的） */
+  name: string;
+  /** 自拟招的三件部件；古法为 null */
+  parts: ForgePicks | null;
+  /** 从哪条古法直接习得的（`SynergyDef.id`）；自拟招为 null */
+  loreId: string | null;
+  /** 凝成时付的账（界面在招式册里照写，玩家才知道这一手值不值一个槽） */
+  cost: ForgeCost;
+  skill: CombatSkillDef;
 }
 
 // ===== 探索去处（S2）=====
@@ -793,12 +930,16 @@ export interface TaleEvent {
  * - `combat` = **击杀**（战胜敌人）专用，`refId` = EnemyDef.id；逃脱不写记录（仅 notices）。
  *   composeChronicle 的 killCount 就是 combat 记录数。
  * - `event` = 事件抉择结果，`refId` = TaleEvent.id。狩猎成败不写记录（仅 notices）。
+ * - [M2-B2] `forge` = 凝成／习得一手招，`refId` = `ForgedSkill.id`。
+ *   **不并进 `molt`**：`moltCount` 与 `bloodlineGain` 数的就是 molt 记录数，
+ *   混进去等于每凝一手白拿一点血统。它进列传摘录（那是这一世自己想出来的东西，
+ *   比第三次「蜕生鳞甲」更该被记住）。
  * - `death` 一世最多一条且恒为末条，`refId` 可为击杀者 EnemyDef.id。
  */
 export interface LifeRecord {
   year: number;
   season: Season;
-  kind: "birth" | "event" | "combat" | "molt" | "death";
+  kind: "birth" | "event" | "combat" | "molt" | "forge" | "death";
   /** 列传素材短句 */
   text: string;
   refId?: string;
@@ -1063,7 +1204,7 @@ export interface ClashState {
   /**
    * [M1-P2 ＋ S1] 技能冷却：`skillId` → 还要等几回合（0／缺键＝可用）。
    *
-   * 键是 `combatSkills` 给的 `skillId`（器官技＝器官 id，组合技＝`syn:<id>`），
+   * 键是 `combatSkills` 给的 `skillId`（器官技＝器官 id，[M2-B2] 招式册里的＝`forge:<序号>`），
    * 不再只是器官 id —— 组合技也要各自冷却。
    */
   skillCooldowns: Record<string, number>;
@@ -1181,6 +1322,22 @@ export interface TaleState {
   essence: Record<EssenceType, number>;
   /** [0] 恒为神种器官 */
   organIds: string[];
+  /**
+   * [M2-B2] 招式册：这一世凝成／习得的招（至多 `tuning.forgeSlots` 手，按凝成先后）。
+   *
+   * **一世一册**（转世清空）：它记的是「这一世的这副身子拼出了什么」，而身子本来就
+   * 不跨世。跨世保留的是**知道有这条古法**（`Bloodline.knownSynergyIds`，S1 就有），
+   * 那是「下一世我要去凑什么」；而具体那一手要用这一世的精气重新凝。
+   */
+  forgedSkills: ForgedSkill[];
+  /**
+   * [M2-B2] 已经发过几个招式 id —— 只增不减。
+   *
+   * 不用 `forgedSkills.length` 生成 id 的理由：遗忘一手再凝一手会拿回同一个 id，
+   * 而 `ClashState.skillCooldowns` 是按 id 记的 —— 新招会继承旧招的冷却
+   * （或者更糟：一手刚用过的招被遗忘重凝之后冷却清零，成了无限连发）。
+   */
+  forgeSeq: number;
   flags: string[];
   firedOnceIds: string[];
   /**
@@ -1556,6 +1713,51 @@ export interface TaleTuning {
   weaknessRevealPerLing: number;
   /** 弱点：咬中该部位这么多次就试出来了 */
   weaknessRevealHits: number;
+
+  /*
+   * — [M2-B2] 凝招：一条公式定全部价钱 —
+   *
+   * 三档代价（精气／势／冷却）都从**同一个分量** `forgePower` 单调地算出来：
+   *
+   *   分量 ＝ **总系数**（起手 ＋ 力道）×`forgePowerPerMul`
+   *          ＋（断伤？`forgePowerWound`：0）＋ `forgeEffectPower[附加那一档]`
+   *
+   * （曾经还有一项「定额加成×forgePowerPerBonus」—— 那是被占优闸门推翻的第一版设计，
+   * 见 `tale-content/src/parts.ts` 的头注。字段与那一项一起删了。）
+   *
+   * 为什么不是一张价目表：**单调公式让「严格占优」在结构上不可能**。手写价目表里
+   * 只要有一件强 payload 配一个写低了的价钱，它就让另一件部件从此无人问津 ——
+   * 而那正是这一批必须为 0 的东西（验收第三问）。公式之下「更强必然更贵」，
+   * 于是任意两手招要么在效果集合上不可比，要么一边强一边贵。
+   * 占优闸门（`forgeDominance`）因此不是摆设 ——它盯的是**这几个常数**有没有被调歪。
+   */
+
+  /** 招式册的槽位上限 —— 「是取舍不是白拿」的那一位 */
+  forgeSlots: number;
+  /** 分量：每 1.0 点伤害系数折多少分量（系数一律 0.2 一格 ⇒ 分量恒为整数） */
+  forgePowerPerMul: number;
+  /** 分量：带断伤的力道部件加多少分量 */
+  forgePowerWound: number;
+  /** 分量：十档附带效果各值多少（它们的相对价钱就是这张表） */
+  forgeEffectPower: Record<CombatSkillEffect, number>;
+  /** 势价 ＝ clamp(round(分量 / 这个数), 1, forgeMomentumMax) */
+  forgeMomentumPerPower: number;
+  forgeMomentumMax: number;
+  /** 冷却 ＝ clamp(1 + round(分量 / 这个数), 1, forgeCooldownMax) */
+  forgeCooldownPerPower: number;
+  forgeCooldownMax: number;
+  /**
+   * 古法（现有 10 条组合）的习得**加价**（整数，加而不是乘）。
+   *
+   * 古法按同一条公式估分量（系数 ＋ 每一档效果），再加这个数。加价是有意的：
+   * 古法带两档效果、伤害也高，若与自拟招同价，自拟招就只剩「凑不齐古法时的将就」。
+   *
+   * **加而不是乘**：乘出来的小数要 round，而 round 会让两手分量不同的招落到同一个价钱上 ——
+   * 那正好就是一条严格占优的拼法（这一批的第一版栽在这里，闸门报了 800 多对）。
+   */
+  forgeLoreSurcharge: number;
+  /** 名号最长几个字（超了当场拒绝 —— 一个存进列传的名字不该能撑爆版式） */
+  forgeNameMaxChars: number;
 
   /*
    * — [M2-B1] 四属性在交锋屏上的落点 —

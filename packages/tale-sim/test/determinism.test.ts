@@ -419,6 +419,7 @@ describe("禁用 API 纪律（源码扫描）", () => {
       "events",
       "organs",
       "origins",
+      "parts",
       "seeds",
       "sigils",
       "skies",

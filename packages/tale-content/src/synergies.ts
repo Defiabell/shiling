@@ -127,7 +127,10 @@ export const SYNERGIES: readonly SynergyDef[] = [
       desc: "钻进土里再从它下面上来：它这一下扑空，而你正咬在它腹上。",
       cooldown: 5,
       effects: ["brace"],
-      damageMul: 1.8,
+      // [M2-B2] 1.8 → 2.4：自拟招的总系数上界是 2.0（起手 1.4 ＋ 力道 0.6），
+      // 一条单效果古法若停在 2.0 以内，就存在一副**同效果、同断伤、更便宜**的自拟拼法
+      // 把它整条比下去（占优闸门实测报出来的）。古法是成品，它得比拼得出来的重。
+      damageMul: 2.4,
       cost: { kind: "essence", type: "zu", amount: 10 },
     },
   },
@@ -175,7 +178,8 @@ export const SYNERGIES: readonly SynergyDef[] = [
       desc: "全身的力压在喙尖上撞进骨缝 —— 重伤，且它下一合只守得住。",
       cooldown: 4,
       effects: ["stun"],
-      damageMul: 1.8,
+      // [M2-B2] 1.8 → 2.2，同「穿地」那条：单效果古法必须重过自拟招的总系数上界 2.0
+      damageMul: 2.2,
       cost: { kind: "hp", amount: 3 },
     },
   },
@@ -191,7 +195,8 @@ export const SYNERGIES: readonly SynergyDef[] = [
       desc: "一片腥雾罩住它的头：它看不见，血也凝了。",
       cooldown: 4,
       effects: ["blind", "venom"],
-      damageMul: 0.7,
+      // [M2-B2] 0.7 → 0.8：系数一律 0.2 一格（0.7 会让分量落在半整数上，而分量是整数契约）
+      damageMul: 0.8,
       cost: { kind: "essence", type: "xue", amount: 8 },
     },
   },

@@ -13,7 +13,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  SYNERGY_SKILL_PREFIX,
+  FORGE_SKILL_PREFIX,
+  learnLore,
   boonCost,
   combatAct,
   combatPreview,
@@ -328,6 +329,10 @@ describe("S1 组合技（异变）", () => {
     })),
   });
 
+  /**
+   * [M2-B2] 古法要**习得**才进池 —— 这个 helper 把「凑齐 ＋ 付得起 ＋ 习得」三步并了。
+   * 组合技的机制断言（两条效果同落、冷却独立键）与 S1 逐字相同，变的只有它怎么进的池子。
+   */
   function armedWith(...organIds: string[]): TaleState {
     return enterCombat(
       withOrgans(createLife(1, FIXTURE_SEED_ID, content), ...organIds),
@@ -337,26 +342,36 @@ describe("S1 组合技（异变）", () => {
     );
   }
 
-  it("差一件时池子里没有它；凑齐才出现，且带 syn: 前缀与 synergyId", () => {
+  /** 凑齐配方并习得那条古法（精气给足，因为这一段测的不是价钱）。 */
+  function learned(...organIds: string[]): TaleState {
+    const state = armedWith(...organIds);
+    return learnLore(
+      { ...state, essence: { zu: 99, lin: 99, xue: 99, meng: 99 } },
+      content,
+      "test-syn",
+    );
+  }
+
+  const LORE_ID = `${FORGE_SKILL_PREFIX}0`;
+
+  it("差一件时古法习不得；凑齐并习得之后才进池子，带 forge: 前缀与 synergyId", () => {
     expect(ownedSynergies(armedWith(ORGAN_GOU_CHI), content)).toEqual([]);
+    // [M2-B2] 凑齐了但没习得 —— 池子里仍然只有器官技（S1 时这里会多一条）
     const both = armedWith(ORGAN_GOU_CHI, ORGAN_WU_MU);
-    const pool = combatPreview(both, content).skills;
-    expect(pool.map((skill) => skill.skillId)).toEqual([
+    expect(combatPreview(both, content).skills.map((skill) => skill.skillId)).toEqual([
       ORGAN_GOU_CHI,
-      `${SYNERGY_SKILL_PREFIX}test-syn`,
     ]);
+    const pool = combatPreview(learned(ORGAN_GOU_CHI, ORGAN_WU_MU), content).skills;
+    expect(pool.map((skill) => skill.skillId)).toEqual([ORGAN_GOU_CHI, LORE_ID]);
     const combo = pool[1];
     expect(combo?.synergyId).toBe("test-syn");
     expect(combo?.organId).toBeNull();
+    expect(combo?.forged?.loreId).toBe("test-syn");
     expect(combo?.effects).toEqual(["venom", "stun"]);
   });
 
   it("组合技的**两条效果同时落地** —— 这就是它凭什么比单件器官技强", () => {
-    const turn = combatAct(
-      armedWith(ORGAN_GOU_CHI, ORGAN_WU_MU),
-      SKILL(`${SYNERGY_SKILL_PREFIX}test-syn`),
-      content,
-    );
+    const turn = combatAct(learned(ORGAN_GOU_CHI, ORGAN_WU_MU), SKILL(LORE_ID), content);
     // floor(4 × 2.6) = 10
     expect(clashOf(turn.state)?.enemyHp).toBe(30);
     expect(clashOf(turn.state)?.slow).toBeGreaterThan(0);
@@ -372,12 +387,8 @@ describe("S1 组合技（异变）", () => {
   });
 
   it("组合技的冷却记在自己的键上，不占器官技的键", () => {
-    const after = combatAct(
-      armedWith(ORGAN_GOU_CHI, ORGAN_WU_MU),
-      SKILL(`${SYNERGY_SKILL_PREFIX}test-syn`),
-      content,
-    ).state;
-    expect(clashOf(after)?.skillCooldowns[`${SYNERGY_SKILL_PREFIX}test-syn`]).toBeGreaterThan(0);
+    const after = combatAct(learned(ORGAN_GOU_CHI, ORGAN_WU_MU), SKILL(LORE_ID), content).state;
+    expect(clashOf(after)?.skillCooldowns[LORE_ID]).toBeGreaterThan(0);
     expect(clashOf(after)?.skillCooldowns[ORGAN_GOU_CHI]).toBeUndefined();
   });
 

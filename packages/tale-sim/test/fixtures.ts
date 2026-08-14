@@ -21,6 +21,7 @@ import {
   type DestinationDef,
   type EnemyDef,
   type OrganDef,
+  type PartDef,
   type PremiseDef,
   type SeedDef,
   type ApproachState,
@@ -425,6 +426,9 @@ export const FIXTURE_CONTENT: TaleContent = {
   // [S1] 缺省**没有**组合：既有的两百多条搏杀断言都建立在「技能池里只有器官技」之上。
   // 组合的机制由专测用 `makeContent({ synergies: [...] })` 显式声明（同 fixture 天时的理由）。
   synergies: [],
+  // [M2-B2] 缺省**没有**部件：同上一条 —— 招式册空着，技能池就还是那几颗器官技。
+  // 凝招的机制由专测用 `makeContent({ parts: [...] })` 显式声明。
+  parts: [],
   destinations: FIXTURE_DESTINATIONS,
   // [S3] 缺省**没有**印记：既有断言全部建立在「初始属性就是 tuning 那一份」之上。
   // 要测印记的用 `makeContent({ sigils: [...] })` 显式声明（同 fixture 组合表的理由）。
@@ -437,6 +441,7 @@ export const FIXTURE_CONTENT: TaleContent = {
 export interface ContentOverrides {
   events?: TaleEvent[];
   organs?: OrganDef[];
+  parts?: PartDef[];
   seeds?: SeedDef[];
   enemies?: EnemyDef[];
   skies?: PremiseDef[];
@@ -456,6 +461,7 @@ export function makeContent(overrides: ContentOverrides = {}): TaleContent {
   return {
     events: overrides.events ?? FIXTURE_CONTENT.events,
     organs: overrides.organs ?? FIXTURE_CONTENT.organs,
+    parts: overrides.parts ?? FIXTURE_CONTENT.parts,
     seeds: overrides.seeds ?? FIXTURE_CONTENT.seeds,
     enemies: overrides.enemies ?? FIXTURE_CONTENT.enemies,
     skies: overrides.skies ?? FIXTURE_CONTENT.skies,
@@ -580,6 +586,33 @@ export function makeSynergy(
     skill,
     reveal: `试${skill.name}的因果。`,
     desc: `试用组合${id}。`,
+  };
+}
+
+/**
+ * [M2-B2] 造一件部件：三个槽的 payload 各自可给可不给（不给 ＝ 放不进那个槽）。
+ *
+ * fixture 侧要能造「恰好三件、恰好占满三个槽」的最小局面 —— 真内容那 15 件的自洽
+ * （十档效果一件一档、断伤不指喉、精气型跟 affinity）由 `tale-content` 的
+ * `forge.test.ts` 守，这里只守机制（分量公式、代价、槽位、名号、招式册）。
+ */
+export function makePart(
+  id: string,
+  name: string,
+  organId: string,
+  payload: Pick<PartDef, "open" | "force" | "addon"> & Partial<Pick<PartDef, "essenceType" | "kind">>,
+): PartDef {
+  const { essenceType = "meng", kind = "试", ...slots } = payload;
+  return {
+    id,
+    name,
+    kind,
+    organId,
+    essenceType,
+    ...(slots.open === undefined ? {} : { open: slots.open }),
+    ...(slots.force === undefined ? {} : { force: slots.force }),
+    ...(slots.addon === undefined ? {} : { addon: slots.addon }),
+    desc: `试用部件${name}，只为测机制。`,
   };
 }
 

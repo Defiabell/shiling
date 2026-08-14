@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  FORGE_SKILL_PREFIX,
   WAY_FLAGS,
   chartCost,
   loreCost,
@@ -835,9 +836,12 @@ describe("S1 器官组合表（异变）", () => {
     for (const id of ids) expect(organIds.has(id)).toBe(false);
   });
 
-  it("器官 id 不许以 syn: 开头（skillId 命名空间要分得开）", () => {
+  // [M2-B2] `syn:` 已不再生成（组合表降级成古法，走 `forge:`），但两个前缀都要守住：
+  // 一个漏网的器官 id 会让 `ClashState.skillCooldowns` 的键与招式册撞上
+  it("器官 id 不许以 syn: / forge: 开头（skillId 命名空间要分得开）", () => {
     for (const organ of [...ORGANS, ...SEEDS.map((seed) => seed.organ)]) {
       expect(organ.id.startsWith("syn:"), organ.id).toBe(false);
+      expect(organ.id.startsWith(FORGE_SKILL_PREFIX), organ.id).toBe(false);
     }
   });
 

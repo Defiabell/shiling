@@ -9,7 +9,9 @@ import {
   SYS_FLAG_ASCEND_READY,
   SYS_FLAG_STARVING,
   combatSkills,
-  SYNERGY_SKILL_PREFIX,
+  FORGE_SKILL_PREFIX,
+  learnLore,
+  loreOptions,
   createLife,
   organIndex,
   ownedOrgans,
@@ -104,7 +106,12 @@ describe("器官解析 API（B3 靠它渲染门槛原因与战斗第四按钮）
     ]);
   });
 
-  it("凑齐组合后池子里多一条组合技，skillId 带 syn: 前缀", () => {
+  /*
+   * [M2-B2 契约变更] 凑齐配方**不再**白送一颗按钮。组合表降级成「古法」：凑齐只是让它
+   * 上招式册的货架，要付精气、占一个槽（`learnLore`）才进得了技能池。
+   * 这一条同时钉住新的 id 契约：招式册里的一律是 `forge:<序号>`。
+   */
+  it("凑齐配方只是让古法上货架；习得之后才进池子，且 skillId 带 forge: 前缀", () => {
     const content = makeContent({
       synergies: [
         makeSynergy("test-syn", [ORGAN_GOU_CHI, ORGAN_WU_MU], {
@@ -114,12 +121,20 @@ describe("器官解析 API（B3 靠它渲染门槛原因与战斗第四按钮）
         }),
       ],
     });
-    expect(combatSkills(withOrgans(life(), ORGAN_GOU_CHI), content)).toHaveLength(1);
     const both = withOrgans(life(), ORGAN_GOU_CHI, ORGAN_WU_MU);
-    const pool = combatSkills(both, content);
-    expect(pool.map((entry) => entry.skillId)).toEqual([ORGAN_GOU_CHI, `${SYNERGY_SKILL_PREFIX}test-syn`]);
+    // 凑齐了，但没习得 —— 池子里只有器官技
+    expect(combatSkills(both, content).map((entry) => entry.skillId)).toEqual([ORGAN_GOU_CHI]);
+    const option = loreOptions(both, content)[0];
+    expect(option?.missingOrganIds).toEqual([]);
+    const rich = {
+      ...both,
+      essence: { ...both.essence, [option?.cost.essenceType ?? "meng"]: 99 },
+    };
+    const pool = combatSkills(learnLore(rich, content, "test-syn"), content);
+    expect(pool.map((entry) => entry.skillId)).toEqual([ORGAN_GOU_CHI, `${FORGE_SKILL_PREFIX}0`]);
     expect(pool[1]?.organId).toBeNull();
     expect(pool[1]?.synergyId).toBe("test-syn");
+    expect(pool[1]?.forged?.loreId).toBe("test-syn");
   });
 });
 

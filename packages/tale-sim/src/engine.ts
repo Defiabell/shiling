@@ -45,10 +45,15 @@ import type {
   EndingType,
   EssenceType,
   EventChoice,
+  ForgeCost,
+  ForgePicks,
+  ForgeSlot,
+  ForgedSkill,
   HuntMode,
   LifePremise,
   LifeRecord,
   OrganDef,
+  PartDef,
   PremiseDef,
   PremiseTuningDelta,
   PremiseTuningKey,
@@ -97,6 +102,13 @@ export interface TaleContent {
    * 空的天时池会让 `createLife` 抛错，而空的组合表只是让图鉴显示「已知 0/0」。
    */
   synergies: SynergyDef[];
+  /**
+   * [M2-B2] 部件表（凝招的原料）。**可以为空**（空表＝这一版凝不了招，招式册只剩古法），
+   * 同 `synergies` 而不同于 `skies`。
+   *
+   * 一件器官至多产出一件部件；查不到部件的器官就是「这件器官拆不出东西来」。
+   */
+  parts: PartDef[];
   /**
    * [S2] 探索去处表。**不得为空，且至少有一处无门槛**（`createLife` 不管，
    * `exploreDestinations` 也不管 —— 但 `performAction("explore")` 会因为无处可去而
@@ -379,12 +391,19 @@ export interface StancePreview {
 }
 
 export interface CombatSkillPreview {
-  /** 交给 `combatAct({ kind: "skill", skillId })` 的那个 id（器官技＝器官 id，组合技＝`syn:<id>`） */
+  /** 交给 `combatAct({ kind: "skill", skillId })` 的那个 id（器官技＝器官 id，凝成的＝`forge:<序号>`） */
   skillId: string;
-  /** 器官技的来源器官；组合技为 null */
+  /** 器官技的来源器官；招式册里的为 null */
   organId: string | null;
-  /** [S1] 组合技的来源组合（`SynergyDef.id`）；器官技为 null —— 界面据它打「异变」印记 */
+  /** [S1 ＋ M2-B2] 从哪条古法习得的（`SynergyDef.id`）；器官技与自拟招为 null */
   synergyId: string | null;
+  /**
+   * [M2-B2] 招式册里的那一手（自拟招或古法）；器官技为 null。
+   *
+   * 界面据它打「凝」印、写出三件部件 —— 一颗自己拼出来的按钮必须看得出是自己拼的，
+   * 否则凝招那一屏的所有决定在战斗屏上就消失了。
+   */
+  forged: ForgedSkill | null;
   name: string;
   desc: string;
   /** [S1] 附带效果（可多条；空数组＝纯伤害） */
@@ -410,6 +429,8 @@ export interface CombatSkillPreview {
   hasMomentum: boolean;
   /** 伤害区间（`heal` 类与纯效果类恒为 0） */
   damage: DamageRange;
+  /** [M2-B2] 这一手顺带断的部位（null ＝ 不断伤）—— 按钮上「断腿 1 → 2」那一行 */
+  woundPart: BodyPart | null;
 }
 
 /**
@@ -801,8 +822,14 @@ export function ownedSynergies(state: TaleState, content: TaleContent): SynergyD
   return content.synergies.filter((synergy) => synergy.organIds.every((id) => owned.has(id)));
 }
 
-/** [S1] 组合技的 `skillId` 前缀 —— 器官 id 不许以它开头（内容 schema 测试盯着这条）。 */
-export const SYNERGY_SKILL_PREFIX = "syn:";
+/*
+ * [S1 → M2-B2] `SYNERGY_SKILL_PREFIX`（`"syn:"`）已删。
+ *
+ * 组合技不再自己生成 `skillId`：它们降级成了**古法**，要经 `learnLore` 进招式册，
+ * 拿到的是 `forge:<序号>`（`FORGE_SKILL_PREFIX`）。留着一个不再有人生成的 id 前缀，
+ * 下一个人一定会拿它去查冷却表，然后困惑于为什么永远查不到 —— 同 `combatSkillOrgan`
+ * 那次删除的理由。
+ */
 
 // ===== 探索去处（S2）=====
 
@@ -953,40 +980,924 @@ function newSynergiesBetween(
   return ownedSynergies(after, content).filter((synergy) => !had.has(synergy.id));
 }
 
-/** [S1] 技能池里的一条：一个技 ＋ 它是从哪儿来的。 */
+/** [S1 ＋ M2-B2] 技能池里的一条：一个技 ＋ 它是从哪儿来的。 */
 export interface CombatSkillEntry {
-  /** 交给 `combatAct` 的 id（器官技＝器官 id，组合技＝`syn:<synergyId>`） */
+  /** 交给 `combatAct` 的 id（器官技＝器官 id，招式册里的＝`forge:<序号>`） */
   skillId: string;
   organId: string | null;
+  /** [M2-B2] 这一手是**从哪条古法习得**的（`SynergyDef.id`）；自拟招与器官技为 null */
   synergyId: string | null;
+  /** [M2-B2] 招式册里的那一手（自拟招或古法）；器官技为 null —— 界面据它打「凝」印 */
+  forged: ForgedSkill | null;
   skill: CombatSkillDef;
 }
 
 /**
- * [S1] 这一世**全部可用的技**：器官技（按 `organIds` 顺序）＋ 已凑齐的组合技。
+ * [S1 ＋ M2-B2] 这一世**全部可用的技**：器官技（按 `organIds` 顺序）＋ **招式册**里的那几手。
  *
  * ## 它替掉了 `combatSkillOrgan`
  * 那个函数是 `ownedOrgans(...).find(o => o.combatSkill)` —— **只取第一件**，而且取的是
  * `organIds` 顺序里碰巧最前的那件。身上五件带技器官也只用得上一件，于是「技能组合」
  * 在代码层面根本不存在。删掉而不是留着：留一个「只返回一件」的公开查询，下一个人
  * 一定会拿它去画技能栏，然后困惑为什么另外四件不见了。
+ *
+ * ## [M2-B2] 组合技**不再自动进池**
+ * S1 的写法是「凑齐配方 ＝ 白拿一颗按钮」。B2 把那 10 条降级成**古法**：配方凑齐只是
+ * 让它出现在招式册的货架上，要付精气、要占一个槽才用得上（`learnLore`）。
+ * 理由是 owner 拍板的形态里「槽位上限是取舍不是白拿」—— 若古法照旧白拿，
+ * 自拟招就永远只是「凑不齐古法时的将就」，而这一批的主张恰恰相反。
+ * 发现那一刻的揭示演出照旧（`newSynergiesBetween` 一行未动）：先知道有这条古法，
+ * 再决定要不要为它花精气。
  */
 export function combatSkills(state: TaleState, content: TaleContent): CombatSkillEntry[] {
   const out: CombatSkillEntry[] = [];
   for (const organ of ownedOrgans(state, content)) {
     if (organ.combatSkill) {
-      out.push({ skillId: organ.id, organId: organ.id, synergyId: null, skill: organ.combatSkill });
+      out.push({
+        skillId: organ.id,
+        organId: organ.id,
+        synergyId: null,
+        forged: null,
+        skill: organ.combatSkill,
+      });
     }
   }
-  for (const synergy of ownedSynergies(state, content)) {
+  for (const forged of state.forgedSkills) {
     out.push({
-      skillId: `${SYNERGY_SKILL_PREFIX}${synergy.id}`,
+      skillId: forged.id,
       organId: null,
-      synergyId: synergy.id,
-      skill: synergy.skill,
+      synergyId: forged.loreId,
+      forged,
+      skill: forged.skill,
     });
   }
   return out;
+}
+
+// ===== 凝招：部件拼装（M2-B2）=====
+
+/**
+ * [M2-B2] 招式框三个槽的**固定顺序** —— 界面从上到下就念这个。
+ *
+ * 顺序不是排版偏好：起手定这一手是什么、力道定它多重、附加定它顺带干什么 ——
+ * 从「是什么」到「顺带什么」，玩家换槽时的思路也是这个方向。
+ */
+export const FORGE_SLOTS: readonly ForgeSlot[] = ["open", "force", "addon"];
+
+/** [M2-B2] 招式册里那几手的 `skillId` 前缀 —— 器官 id 不许以它开头（schema 测试盯着）。 */
+export const FORGE_SKILL_PREFIX = "forge:";
+
+/**
+ * [M2-B2] 十档效果各自的**单字**，拼默认名号用（「齿鬃蚀」＝ 齿起手、鬃力道、附毒）。
+ *
+ * 为什么要有默认名号：命名框若空着，凝招就多一次必点（还是打字那种最贵的点）。
+ * 默认名号让「接受它」＝ 0 次点击，而想取名的人照样取得了 —— 同「速猎」那条：
+ * 缺省要落在懒人路径上。
+ */
+const FORGE_EFFECT_CHAR: Record<CombatSkillEffect, string> = {
+  venom: "蚀",
+  bleed: "裂",
+  stun: "顿",
+  blind: "昧",
+  armor: "护",
+  thorns: "棘",
+  brace: "拒",
+  bolt: "遁",
+  insight: "察",
+  heal: "息",
+};
+
+/**
+ * [M2-B2] 一个技在**这一世的属性**下打出来的伤害区间 —— 不需要在交锋中。
+ *
+ * `combatPreview.skills[].damage` 要 `clashOf(state)` 非空（它还要算姿态倍率），
+ * 而招式册摆在主界面上，那时并没有一场架。伤害本身只跟属性与倍率有关，
+ * 所以这一份单独开出来：**招式册里的每一手都要写得出伤**，否则玩家在四手之间挑一手时
+ * 恰恰缺了最该看的那个数（这一条是 code review 抓出来的）。
+ *
+ * 与 `format.skillMulLine`（按倍率读）的分工：那一处用在**跨世**的图鉴与揭示演出上，
+ * 那时没有「这一世的属性」可算；这里有。
+ */
+export function skillDamageRange(
+  state: TaleState,
+  content: TaleContent,
+  skill: CombatSkillDef,
+): DamageRange {
+  const t = lifeTuning(state, content);
+  if (!skillDealsDamage(skill, t)) return ZERO_DAMAGE;
+  return damageRange(skillStatOf(skill, state.stats), t, skill.damageMul ?? t.organSkillDamageMul);
+}
+
+/** [M2-B2] 部件查表（id → def）。 */
+export function partById(content: TaleContent, id: string): PartDef | null {
+  return content.parts.find((part) => part.id === id) ?? null;
+}
+
+/**
+ * [M2-B2] 这一世**手上有的部件**（顺序恒按 `content.parts`，含神种器官产出的那一件）。
+ *
+ * 顺序按内容表而不是按蜕变先后：位置固定，玩家才记得住「附加那一栏第三个是毒」——
+ * 同 S2 去处那一排、S1 图鉴那一列的同一条。
+ *
+ * 判据只有一条：产出它的器官在身上。**不看是怎么来的** —— 蛰伏开出来的、事件送的、
+ * 血脉带来的，一样算（同 `ownedSynergies`）。
+ */
+export function forgeParts(state: TaleState, content: TaleContent): PartDef[] {
+  const owned = new Set(state.organIds);
+  return content.parts.filter((part) => owned.has(part.organId));
+}
+
+/** [M2-B2] 这一世能放进某个槽的部件（顺序恒按 `content.parts`，不因可用与否重排）。 */
+export function forgePartsForSlot(
+  state: TaleState,
+  content: TaleContent,
+  slot: ForgeSlot,
+): PartDef[] {
+  return forgeParts(state, content).filter((part) => part[slot] !== undefined);
+}
+
+/**
+ * [M2-B2] 一手招的**分量** —— 三档代价的唯一来源。
+ *
+ * 见 `TaleTuning` 里 forge 那一组的注释：单调公式让「严格占优」在结构上不可能
+ * （更强必然更贵），而手写价目表做不到这一点。
+ */
+function forgePower(
+  open: NonNullable<PartDef["open"]>,
+  force: NonNullable<PartDef["force"]>,
+  addon: NonNullable<PartDef["addon"]>,
+  t: TaleTuning,
+): number {
+  return (
+    forgeTotalMul(open, force) * t.forgePowerPerMul +
+    (force.woundPart === null ? 0 : t.forgePowerWound) +
+    (t.forgeEffectPower[addon.effect] ?? 0)
+  );
+}
+
+/** [M2-B2] 一手招的**总系数** ＝ 起手给的 ＋ 力道追加的。这一手的伤害只由它一个数决定。 */
+function forgeTotalMul(
+  open: NonNullable<PartDef["open"]>,
+  force: NonNullable<PartDef["force"]>,
+): number {
+  // 0.2 一格的两数相加会留二进制浮点尾巴（0.6+0.2 = 0.7999…），四舍到一位小数消掉它 ——
+  // 否则同一副拼法的分量会随加法顺序差 0.0000001，而分量是**整数契约**（见 tuning 注释）
+  return Math.round((open.damageMul + force.damageMul) * 10) / 10;
+}
+
+/**
+ * [M2-B2] 分量 → 三档代价。精气型由起手那一件决定（整手招付一型，见 `ForgeCost`）。
+ *
+ * **精气价就是分量本身**（不缩放）—— 见 `TaleTuning` 里 forge 那一组的注释：任何缩放
+ * 系数都会把两档不同的分量压到同一个价钱上，而「同价而处处不差」正是一条严格占优的
+ * 拼法的定义。这一条是 `forgeDominance` 恒为 0 的结构性前提，不是随手写的。
+ */
+function forgeCostOf(power: number, essenceType: EssenceType, t: TaleTuning): ForgeCost {
+  return {
+    essenceType,
+    essence: Math.max(1, Math.round(power)),
+    momentum: clamp(Math.round(power / t.forgeMomentumPerPower), 1, t.forgeMomentumMax),
+    cooldown: clamp(1 + Math.round(power / t.forgeCooldownPerPower), 1, t.forgeCooldownMax),
+  };
+}
+
+/**
+ * [M2-B2] 古法的分量：没有部件，所以按它自己那份 `CombatSkillDef` 反推
+ * （系数 ＋ 每一档效果相加），再加 `forgeLoreSurcharge`。
+ *
+ * **同一条公式**是刻意的：古法与自拟招用两套定价，玩家就没法把两边放在一起比，
+ * 而「要不要花这个槽」正是一道比较题。加价而不是乘一个倍率，理由见 tuning 那一节
+ * （乘出来的小数要取整，而取整正是占优的来源）。
+ *
+ * ⚠️ 古法的**势与冷却照抄它自己声明的那一份**（不走公式）：它们是写死在内容里的成品，
+ * 而那两个数（冷却 4〜6）正是「重手」的一半。只有精气价需要一条公式 —— S1 时组合技
+ * 压根不要钱。
+ */
+function lorePower(skill: CombatSkillDef, t: TaleTuning): number {
+  const mul = skill.damageMul ?? t.organSkillDamageMul;
+  const effects = skill.effects ?? [];
+  return (
+    mul * t.forgePowerPerMul +
+    (skill.woundPart === undefined ? 0 : t.forgePowerWound) +
+    effects.reduce((sum, effect) => sum + (t.forgeEffectPower[effect] ?? 0), 0) +
+    t.forgeLoreSurcharge
+  );
+}
+
+/** [M2-B2] 古法的三档代价：精气走公式，势与冷却照抄成品自己声明的那一份。 */
+function loreCostOf(synergy: SynergyDef, content: TaleContent, t: TaleTuning): ForgeCost {
+  const skill = synergy.skill;
+  return {
+    essenceType: loreEssenceType(synergy, content),
+    essence: Math.max(1, Math.round(lorePower(skill, t))),
+    momentum: Math.max(0, Math.round(skill.momentum ?? t.encounterSkillMomentumCost)),
+    cooldown: skill.cooldown ?? t.combatSkillCooldown,
+  };
+}
+
+/**
+ * [M2-B2] 古法习得之后付哪一型精气。
+ *
+ * 规则（不是价目表）：技本身若已声明精气代价就跟着它（读起来是同一件事的两面，
+ * 同 S1「代价的精气型跟着 affinity 走」那条）；付血的那几条按**配方第一件器官**的
+ * 部件精气型算。schema 测试钉住「每一条古法都算得出一个型」。
+ */
+function loreEssenceType(synergy: SynergyDef, content: TaleContent): EssenceType {
+  const cost = synergy.skill.cost;
+  if (cost?.kind === "essence") return cost.type;
+  const firstOrgan = synergy.organIds[0];
+  const part = content.parts.find((candidate) => candidate.organId === firstOrgan);
+  return part?.essenceType ?? "meng";
+}
+
+/** [M2-B2] 三件部件 → 成品的 `CombatSkillDef`（结算只认它）。 */
+function buildForgedSkillDef(
+  name: string,
+  open: NonNullable<PartDef["open"]>,
+  force: NonNullable<PartDef["force"]>,
+  addon: NonNullable<PartDef["addon"]>,
+  cost: ForgeCost,
+  desc: string,
+): CombatSkillDef {
+  return {
+    name,
+    desc,
+    cooldown: cost.cooldown,
+    effects: [addon.effect],
+    ...(open.stat === undefined ? {} : { stat: open.stat }),
+    damageMul: forgeTotalMul(open, force),
+    ...(force.woundPart === null ? {} : { woundPart: force.woundPart }),
+    momentum: cost.momentum,
+    /*
+     * **自拟招没有每次发招的 hp／精气代价** —— 它的钱在凝成那一刻一次付清（精气 ＋ 一个槽）。
+     * 器官技是白拿的按钮，所以每次要付；凝成的招买断了，所以每次只付势与冷却。
+     * 两种经济各管一头，屏幕上也读得出分别（招式册那一行写「已付 猛精气 18」）。
+     */
+  };
+}
+
+/** [M2-B2] 一句自动生成的描述 —— 招式册与按钮上那一行「这一手是什么」。 */
+function forgedDesc(open: PartDef, force: PartDef, addon: PartDef): string {
+  return `${open.name}起手、${force.name}发力、${addon.name}收尾 —— 你自己拼出来的一手。`;
+}
+
+/** [M2-B2] 默认名号：起手字 ＋ 力道字 ＋ 附加那一档的单字（「齿鬃蚀」）。 */
+function defaultForgeNameOf(open: PartDef, force: PartDef, addon: PartDef): string {
+  const tail = FORGE_EFFECT_CHAR[addon.addon?.effect ?? "venom"] ?? "击";
+  return `${open.name}${force.name}${tail}`;
+}
+
+/** [M2-B2] 名号撞车时往后排（「齿鬃蚀」→「齿鬃蚀·二」）—— 招式册里两行同名读不出分别。 */
+function uniqueForgeName(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 20; i += 1) {
+    const candidate = `${base}·${cnNumeral(i)}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}·${taken.size}`;
+}
+
+/**
+ * [M2-B2] 名号校验 —— 空则退回默认。
+ *
+ * 只许汉字（沿用 P2 那道字符集闸门的同一条理由：一个混进外文或半角标点的名字
+ * 会在列传、按钮、招式册三处各难看一次），且不超过 `forgeNameMaxChars` 字。
+ *
+ * @throws 名字非法（界面该先拦，但引擎不许把一个坏名字写进状态）
+ */
+function normalizeForgeName(raw: string | undefined, fallback: string, t: TaleTuning): string {
+  const name = (raw ?? "").trim();
+  if (name === "") return fallback;
+  if (!forgeNameValid(name, t)) {
+    throw new Error(`凝招: 名号只许 ${t.forgeNameMaxChars} 字以内的汉字（「${name}」）`);
+  }
+  return name;
+}
+
+/**
+ * [M2-B2] 这个名号收不收 —— **界面与引擎共用这一份判据**。
+ *
+ * 客户端拿它把「凝成」置灰并说明原因；引擎拿它兜底。各写一份的后果是屏幕上说得通、
+ * 引擎却抛错（而抛错在这个项目里会打到控制台，E2E 的「0 报错」当场变红）。
+ *
+ * 只许汉字沿用 P2 那道字符集闸门的同一条理由：一个混进外文或半角标点的名字，
+ * 在列传、按钮、招式册三处各难看一次。空名不走这里 —— 它退回默认名号。
+ */
+export function forgeNameValid(name: string, t: TaleTuning): boolean {
+  const trimmed = name.trim();
+  if (trimmed === "") return true;
+  return [...trimmed].length <= t.forgeNameMaxChars && /^[一-鿿]+$/u.test(trimmed);
+}
+
+/** 内部：把三个 pick 解成部件定义，并逐条报错（界面先拦，引擎不许静默吞）。 */
+function resolvePicks(
+  state: TaleState,
+  content: TaleContent,
+  picks: ForgePicks,
+): { open: PartDef; force: PartDef; addon: PartDef } {
+  const owned = forgeParts(state, content);
+  const take = (slot: ForgeSlot, id: string): PartDef => {
+    const part = owned.find((candidate) => candidate.id === id);
+    if (!part) throw new Error(`凝招: 身上没有这件部件 ${id}`);
+    if (part[slot] === undefined) throw new Error(`凝招: ${part.name}放不进${FORGE_SLOT_NAMES[slot]}`);
+    return part;
+  };
+  const open = take("open", picks.open);
+  const force = take("force", picks.force);
+  const addon = take("addon", picks.addon);
+  if (open.id === force.id || open.id === addon.id || force.id === addon.id) {
+    throw new Error("凝招: 同一件部件不能占两个槽");
+  }
+  return { open, force, addon };
+}
+
+/** 槽名（报错与界面共用一份，免得两处措辞分家）。 */
+export const FORGE_SLOT_NAMES: Record<ForgeSlot, string> = {
+  open: "起手",
+  force: "力道",
+  addon: "附加",
+};
+
+/**
+ * [M2-B2] 凝不成／习不得的**原因代号**（措辞归客户端）。
+ *
+ * 分这么细是因为每一种对玩家的下一步完全不同：`essence` 是「去猎」，
+ * `slots` 是「先忘掉一手」，`missing` 是「去蜕那件器官」，`learned` 是「已经有了」。
+ * 一个笼统的「不可用」等于什么都没说（S1 那条：不可用的原因必须分得开）。
+ */
+export type ForgeBlock = "ok" | "essence" | "slots" | "missing" | "learned";
+
+/**
+ * [M2-B2] 拼装界面的**全部**只读数 —— 「每换一个部件，预览数值当场更新」的唯一来源。
+ *
+ * 沿用 M1 追猎屏的铁律（没有预览的按钮＝翻牌）：界面不许自己算任何一项，
+ * 否则屏幕上的数与引擎的数会在下一次调参时分家。
+ */
+export interface ForgePreview {
+  picks: ForgePicks;
+  /** 成品（名号已填默认值）—— 效果、势、冷却都从它读 */
+  skill: CombatSkillDef;
+  /** 这一手在当前属性下打出来的伤害区间（系数与定额都算进去了） */
+  damage: DamageRange;
+  cost: ForgeCost;
+  /** 力道那一件顺带断的部位（null ＝ 不断伤）—— 界面据它写「断腿一层」 */
+  woundPart: BodyPart | null;
+  /** 附加那一档效果 */
+  effect: CombatSkillEffect;
+  /** 按部件自动拟的名号（玩家不改就用它 —— 少一次必点） */
+  defaultName: string;
+  /** 这一型精气现有多少（界面画「猛 24 · 需 18」要它） */
+  essenceHave: number;
+  affordable: boolean;
+  /** 招式册用掉几格／共几格 */
+  slotsUsed: number;
+  slotsMax: number;
+  hasSlot: boolean;
+  /** 两个条件都成立才凝得成 */
+  ready: boolean;
+  blocked: ForgeBlock;
+}
+
+/**
+ * [M2-B2] 一条**古法**（现有的 10 条器官组合降级而来）在招式册里的样子。
+ *
+ * 古法是「成品」：配方凑齐即可**直接习得**，不必自己拼。它同时是新玩家的教学
+ * （照着它看得懂三个槽在干什么）与「情理之中」的锚（`reveal` 那一句因果照旧）。
+ * 但它**照样占一个槽、照样要付精气** —— 白拿的成品会让自拟招永远不划算。
+ */
+export interface LoreOption {
+  synergyId: string;
+  name: string;
+  /** 配方器官（全部持有才习得得了） */
+  organIds: readonly string[];
+  /** 还差哪几件（空 ＝ 凑齐了） */
+  missingOrganIds: string[];
+  skill: CombatSkillDef;
+  cost: ForgeCost;
+  damage: DamageRange;
+  essenceHave: number;
+  /** 已经在招式册里了（同一条古法不许习得两次） */
+  learned: boolean;
+  ready: boolean;
+  blocked: ForgeBlock;
+}
+
+/**
+ * [M2-B2] 拼装界面的全部只读数（纯函数、不消耗抽取）。
+ *
+ * 界面每换一个部件就调它一次 —— 「摊开后果」这条铁律在这一批的落点就是：
+ * **伤害区间、势、冷却、精气代价四项当场跟着变**，而它们只有这一处算式。
+ *
+ * @throws 部件不在身上、放错槽、或三槽有重样（界面该先拦住）
+ */
+export function forgePreview(
+  state: TaleState,
+  content: TaleContent,
+  picks: ForgePicks,
+): ForgePreview {
+  const { open, force, addon } = resolvePicks(state, content, picks);
+  const t = lifeTuning(state, content);
+  const openPayload = open.open as NonNullable<PartDef["open"]>;
+  const forcePayload = force.force as NonNullable<PartDef["force"]>;
+  const addonPayload = addon.addon as NonNullable<PartDef["addon"]>;
+  const cost = forgeCostOf(forgePower(openPayload, forcePayload, addonPayload, t), open.essenceType, t);
+  const defaultName = uniqueForgeName(
+    defaultForgeNameOf(open, force, addon),
+    new Set(state.forgedSkills.map((entry) => entry.name)),
+  );
+  const skill = buildForgedSkillDef(
+    defaultName,
+    openPayload,
+    forcePayload,
+    addonPayload,
+    cost,
+    forgedDesc(open, force, addon),
+  );
+  const essenceHave = state.essence[cost.essenceType];
+  const affordable = essenceHave >= cost.essence;
+  const slotsUsed = state.forgedSkills.length;
+  const hasSlot = slotsUsed < t.forgeSlots;
+  return {
+    picks,
+    skill,
+    damage: damageRange(
+      skill.stat === "ling" ? state.stats.ling : state.stats.meng,
+      t,
+      skill.damageMul ?? t.organSkillDamageMul,
+    ),
+    cost,
+    woundPart: forcePayload.woundPart,
+    effect: addonPayload.effect,
+    defaultName,
+    essenceHave,
+    affordable,
+    slotsUsed,
+    slotsMax: t.forgeSlots,
+    hasSlot,
+    ready: affordable && hasSlot,
+    /*
+     * 置灰的按钮必须说明原因，而两种原因对玩家的下一步完全不同：精气不够是「去猎」，
+     * 槽满是「先忘掉一手」。这里只给**代号**，措辞归客户端 —— 引擎不写屏幕上的字
+     * （同 `EncounterStats`：数由引擎给，话由界面说）。
+     */
+    blocked: !hasSlot ? "slots" : affordable ? "ok" : "essence",
+  };
+}
+
+/**
+ * [M2-B2] 凝成一手招 —— 扣精气、入册，**不掷任何骰**。
+ *
+ * 不掷骰是有意的：凝招是玩家自己拼出来的东西，掷骰会把「我算准了」变成「我运气好」。
+ * 副作用是 `rngState` 一个字不动 —— 既存种子的剧本没有被这一批破坏。
+ *
+ * 它也**不推进季节**：凝招是随时可做的经营动作，做成一个「行动」会让它每次都吃掉一季
+ * （而这一批的纪律是不许再推高点击与回合数）。
+ *
+ * @throws 部件不合法、精气不够、招式册已满、名号非法
+ */
+export function forgeSkill(
+  state: TaleState,
+  content: TaleContent,
+  picks: ForgePicks,
+  name?: string,
+): TaleState {
+  const preview = forgePreview(state, content, picks);
+  if (!preview.hasSlot) throw new Error(`凝招: 招式册已满（${preview.slotsMax} 手）`);
+  if (!preview.affordable) {
+    throw new Error(
+      `凝招: ${preview.cost.essenceType} 精气不足（需 ${preview.cost.essence}，现有 ${preview.essenceHave}）`,
+    );
+  }
+  const t = lifeTuning(state, content);
+  const taken = new Set(state.forgedSkills.map((entry) => entry.name));
+  const finalName = uniqueForgeName(
+    normalizeForgeName(name, preview.defaultName, t),
+    taken,
+  );
+  const id = `${FORGE_SKILL_PREFIX}${state.forgeSeq}`;
+  const forged: ForgedSkill = {
+    id,
+    name: finalName,
+    parts: { ...picks },
+    loreId: null,
+    cost: preview.cost,
+    skill: { ...preview.skill, name: finalName },
+  };
+  return {
+    ...state,
+    essence: addEssence(state.essence, { [preview.cost.essenceType]: -preview.cost.essence }),
+    forgedSkills: [...state.forgedSkills, forged],
+    forgeSeq: state.forgeSeq + 1,
+    records: [
+      ...state.records,
+      {
+        year: state.year,
+        season: state.season,
+        kind: "forge",
+        text: render(ENGINE_MESSAGES.forge, { name: finalName, parts: forgePartNames(content, picks) }),
+        refId: id,
+      },
+    ],
+  };
+}
+
+/** 「齿、鬃、毒」—— 记录与界面共用一份措辞。 */
+function forgePartNames(content: TaleContent, picks: ForgePicks): string {
+  return FORGE_SLOTS.map((slot) => partById(content, picks[slot])?.name ?? "？").join("、");
+}
+
+/**
+ * [M2-B2] 古法货架：**全部** 10 条（含配方没凑齐的）。
+ *
+ * 未凑齐的照样返回，且照写它是什么 —— 只有**已经发现过**的才列得出内容，
+ * 那一位由客户端的图鉴（`Bloodline.knownSynergyIds`）把着（引擎不认识跨世资产）。
+ * 顺序恒按 `content.synergies`，不因可否习得重排（同 S2 去处那条：位置固定才记得住）。
+ */
+export function loreOptions(state: TaleState, content: TaleContent): LoreOption[] {
+  const t = lifeTuning(state, content);
+  const owned = new Set(state.organIds);
+  const learned = new Set(
+    state.forgedSkills.map((entry) => entry.loreId).filter((id): id is string => id !== null),
+  );
+  const hasSlot = state.forgedSkills.length < t.forgeSlots;
+  return content.synergies.map((synergy) => {
+    const missingOrganIds = synergy.organIds.filter((id) => !owned.has(id));
+    const cost = loreCostOf(synergy, content, t);
+    const essenceHave = state.essence[cost.essenceType];
+    const already = learned.has(synergy.id);
+    const affordable = essenceHave >= cost.essence;
+    const ready = missingOrganIds.length === 0 && !already && affordable && hasSlot;
+    return {
+      synergyId: synergy.id,
+      name: synergy.name,
+      organIds: synergy.organIds,
+      missingOrganIds,
+      skill: synergy.skill,
+      cost,
+      damage: damageRange(
+        synergy.skill.stat === "ling" ? state.stats.ling : state.stats.meng,
+        t,
+        synergy.skill.damageMul ?? t.organSkillDamageMul,
+      ),
+      essenceHave,
+      learned: already,
+      ready,
+      // 代号而不是措辞（同 `ForgePreview.blocked`）：五种原因对玩家的下一步各不相同
+      blocked: already
+        ? "learned"
+        : missingOrganIds.length > 0
+          ? "missing"
+          : !hasSlot
+            ? "slots"
+            : affordable
+              ? "ok"
+              : "essence",
+    };
+  });
+}
+
+/**
+ * [M2-B2] 直接习得一条古法（成品，不必自己拼）。
+ *
+ * 它与 `forgeSkill` 走同一条账：付精气、占一个槽、写一条 `forge` 记录。
+ * 差别只在**这一手是谁想出来的** —— 古法带 `loreId`，界面据它打「古」印。
+ *
+ * @throws 不认识这条古法、配方没凑齐、已在册中、精气不够、招式册已满
+ */
+export function learnLore(
+  state: TaleState,
+  content: TaleContent,
+  synergyId: string,
+  name?: string,
+): TaleState {
+  const option = loreOptions(state, content).find((entry) => entry.synergyId === synergyId);
+  if (!option) throw new Error(`习得古法: 未知古法 ${synergyId}`);
+  if (option.blocked !== "ok") throw new Error(`习得古法: 此刻习不得（${option.blocked}）`);
+  const t = lifeTuning(state, content);
+  const taken = new Set(state.forgedSkills.map((entry) => entry.name));
+  const finalName = uniqueForgeName(normalizeForgeName(name, option.name, t), taken);
+  const id = `${FORGE_SKILL_PREFIX}${state.forgeSeq}`;
+  const forged: ForgedSkill = {
+    id,
+    name: finalName,
+    parts: null,
+    loreId: synergyId,
+    cost: option.cost,
+    skill: { ...option.skill, name: finalName },
+  };
+  return {
+    ...state,
+    essence: addEssence(state.essence, { [option.cost.essenceType]: -option.cost.essence }),
+    forgedSkills: [...state.forgedSkills, forged],
+    forgeSeq: state.forgeSeq + 1,
+    records: [
+      ...state.records,
+      {
+        year: state.year,
+        season: state.season,
+        kind: "forge",
+        text: render(ENGINE_MESSAGES.forgeLore, { name: finalName, lore: option.name }),
+        refId: id,
+      },
+    ],
+  };
+}
+
+/**
+ * [M2-B2] 忘掉招式册里的一手，腾出槽位。**不退精气** —— 那是已经花掉的钱。
+ *
+ * 退钱会让「先凝一手顶着、回头再换」变成零成本，槽位上限也就不再是取舍。
+ *
+ * @throws 册中没有这一手
+ */
+export function forgetForgedSkill(state: TaleState, forgedId: string): TaleState {
+  if (!state.forgedSkills.some((entry) => entry.id === forgedId)) {
+    throw new Error(`遗忘: 册中没有这一手 ${forgedId}`);
+  }
+  return {
+    ...state,
+    forgedSkills: state.forgedSkills.filter((entry) => entry.id !== forgedId),
+  };
+}
+
+/**
+ * [M2-B2] 打开招式框时**预填**的那一套（付得起的里面分量最大的一手）；拼不出来时 null。
+ *
+ * 它是这一批的点击账里最要紧的一处设计：没有预填，凝一手招要点「开框 ＋ 三个槽 ＋ 凝成」
+ * 五次；有了预填，接受缺省只要「开框 ＋ 凝成」两次。owner 的纪律是「凝招不得显著推高
+ * 一世总点击」，而缺省必须落在懒人路径上（同「速猎」那一颗按钮的理由）。
+ *
+ * 挑法只读玩家看得见的东西（付得起 ＋ 分量最大），不读任何内部估值 ——
+ * 它是**界面缺省**，不是「最优解」；玩家换掉它才是常态。
+ *
+ * ⚠️ **册里已有的那几副拼法排除在外**。没有这一条，缺省恒等于「分量最大的那一副」，
+ * 于是打开招式框、凝成、再打开，四个槽会被同一手招填满 —— 实机跑出来正是
+ * 「蕴鬃蚀／蕴鬃蚀·二／·三／·四」。四手一模一样的招既不是取舍，也让槽位上限失去意义。
+ */
+export function defaultForgePicks(state: TaleState, content: TaleContent): ForgePicks | null {
+  const t = lifeTuning(state, content);
+  const opens = forgePartsForSlot(state, content, "open");
+  const forces = forgePartsForSlot(state, content, "force");
+  const addons = forgePartsForSlot(state, content, "addon");
+  const taken = new Set(
+    state.forgedSkills
+      .map((entry) => entry.parts)
+      .filter((parts): parts is ForgePicks => parts !== null)
+      .map((parts) => FORGE_SLOTS.map((slot) => parts[slot]).join("|")),
+  );
+  let best: { picks: ForgePicks; power: number; affordable: boolean } | null = null;
+  for (const open of opens) {
+    for (const force of forces) {
+      if (force.id === open.id) continue;
+      for (const addon of addons) {
+        if (addon.id === open.id || addon.id === force.id) continue;
+        if (taken.has([open.id, force.id, addon.id].join("|"))) continue;
+        const power = forgePower(
+          open.open as NonNullable<PartDef["open"]>,
+          force.force as NonNullable<PartDef["force"]>,
+          addon.addon as NonNullable<PartDef["addon"]>,
+          t,
+        );
+        const cost = forgeCostOf(power, open.essenceType, t);
+        const affordable = state.essence[open.essenceType] >= cost.essence;
+        const picks: ForgePicks = { open: open.id, force: force.id, addon: addon.id };
+        // 付得起的一律压过付不起的；同一档里挑分量最大的那一手
+        if (
+          best === null ||
+          (affordable && !best.affordable) ||
+          (affordable === best.affordable && power > best.power)
+        ) {
+          best = { picks, power, affordable };
+        }
+      }
+    }
+  }
+  return best?.picks ?? null;
+}
+
+/** [M2-B2] 「现在该凝一手招了吗」的答案：习得一条古法，或按这三件部件凝一手。 */
+export type ForgeIntent =
+  | { kind: "lore"; synergyId: string }
+  | { kind: "forge"; picks: ForgePicks };
+
+/**
+ * [M2-B2] 界面推荐的「该不该凝招」—— 与 `recommendCombatAct` 同一个定位：
+ * **呈现层的建议**，纯函数、不消耗抽取、引擎自己不消费（删掉它引擎照跑）。
+ *
+ * 它在这里而不在客户端，理由与 S1 把推荐链上提的理由逐字相同：三个包
+ * （客户端／`tale-content` 冒烟／`packages/gen` 实验台）都要「一个明理玩家会不会凝这一手」
+ * 这个答案，而手抄三份的后果是**我自己的平衡数据在说谎**（实验台量的凝招节奏与玩家
+ * 屏幕上被推荐的那一手不是同一个）。
+ *
+ * ## 两条链（每一条都只读玩家看得见的东西）
+ * 1. **古法优先**：凑齐了配方、付得起、还有槽 —— 成品比自己拼的强（两档效果），
+ *    而且它是这一批的教学锚。同时可得多条时挑伤害最高的那条。
+ * 2. **自拟招**：`defaultForgePicks` 给的那一套，但要过一道「别花本钱」的闸 ——
+ *    **付的那一型不得是当前存量最高的那一型**，因为那一型正是这一世下一次蜕变的本钱
+ *    （`moltThreshold` 按单型判）。花掉它等于拿一件器官换一手招，而器官既给属性也给部件。
+ *    唯一的例外是**离门槛还远**（不到一半）时：那时它是零钱不是本钱。
+ *
+ * 「不推荐」不等于「不许」：玩家照样凝得了（`forgeSkill` 只看精气与槽位）。
+ * 这里回答的是「界面要不要提醒他」与「机器玩家会不会这么做」。
+ */
+export function recommendForge(state: TaleState, content: TaleContent): ForgeIntent | null {
+  const t = lifeTuning(state, content);
+  if (state.forgedSkills.length >= t.forgeSlots) return null;
+  const lore = loreOptions(state, content)
+    .filter((option) => option.ready)
+    .sort((a, b) => b.damage.mid - a.damage.mid)[0];
+  if (lore) return { kind: "lore", synergyId: lore.synergyId };
+  const picks = defaultForgePicks(state, content);
+  if (picks === null) return null;
+  const preview = forgePreview(state, content, picks);
+  if (!preview.ready) return null;
+  const richest = ESSENCE_ORDER.reduce((top, type) =>
+    state.essence[type] > state.essence[top] ? type : top,
+  );
+  const isSavings =
+    preview.cost.essenceType === richest &&
+    state.essence[richest] >= t.moltThreshold / 2;
+  return isSavings ? null : { kind: "forge", picks };
+}
+
+/**
+ * [M2-B2] 一手招在占优比较里的**向量**（分量越大越好的那些维度）。
+ *
+ * 维度选取的判据是「玩家读得到吗」：伤害区间在按钮上、效果在按钮上、断伤在按钮上，
+ * 三档代价也在按钮上。读不到的东西不进向量 —— 一条玩家看不见的优势不构成「占优」。
+ */
+interface ForgeVector {
+  label: string;
+  /** 伤害（按若干参考属性各算一份 —— 见 `forgeDominance` 的注释） */
+  damage: number[];
+  effects: ReadonlySet<CombatSkillEffect>;
+  woundLeg: number;
+  woundEye: number;
+  /** 代价：越小越好 */
+  essence: number;
+  essenceType: EssenceType;
+  momentum: number;
+  cooldown: number;
+}
+
+/** [M2-B2] 一条被判为严格占优的关系：`winner` 让 `loser` 从此没人会拼。 */
+export interface ForgeDominancePair {
+  winner: string;
+  loser: string;
+  why: string;
+}
+
+/**
+ * [M2-B2] **严格占优闸门** —— 「有没有哪一种拼法让别的拼法从此没人会拼」。
+ *
+ * 手法沿用 P2 那道 AI 抉择闸门（`dominancePairs`）：把每一个候选摊成一个
+ * **收益向量 ＋ 代价向量**，A 占优 B 当且仅当「A 的每一项收益都不低于 B、
+ * 每一项代价都不高于 B，且至少有一项严格更好」。
+ *
+ * ## 三条判据上的讲究（都是这一批实测校准出来的）
+ * 1. **伤害按多组参考属性各算一份**，全部满足才算占优。只按一组算的话，
+ *    「灵犀起手（按灵）」在猛系参考下恒被判为劣 —— 而它对灵系 build 恰恰是唯一的输出手。
+ *    一手招只在**所有** build 上都不如另一手，才谈得上「没人会拼」。
+ * 2. **精气型不同的两手不可比**。付猛精气 18 与付鳞精气 18 是两笔不同的钱
+ *    （而且它们各自还是不同器官线的蜕变本钱）—— 拿它们比大小是把四型精气当成一种货币。
+ * 3. **效果按集合比**（⊇ 才算不低于）。十档效果各有各的局面，没有「更强的效果」这回事。
+ *
+ * 覆盖范围是**全枚举**：`content.parts` 里所有合法的三槽组合（含古法）两两互比，
+ * 不抽样。判据、覆盖数与结论都由 `forgeDominanceReport` 报出来，写进交付报告。
+ *
+ * 它是**内容闸门**，引擎自己不消费它（删掉引擎照跑）—— 同 `recommendCombatAct` 的定位。
+ */
+export function forgeDominance(content: TaleContent, tuning?: TaleTuning): ForgeDominancePair[] {
+  const t = tuning ?? content.tuning;
+  const vectors = forgeVectors(content, t);
+  const pairs: ForgeDominancePair[] = [];
+  for (const a of vectors) {
+    for (const b of vectors) {
+      if (a === b) continue;
+      const why = dominatesForge(a, b);
+      if (why !== null) pairs.push({ winner: a.label, loser: b.label, why });
+    }
+  }
+  return pairs;
+}
+
+/** [M2-B2] 闸门的覆盖数（报告里那一行「查了多少种拼法」）。 */
+export function forgeDominanceReport(
+  content: TaleContent,
+  tuning?: TaleTuning,
+): { combos: number; comparisons: number; pairs: ForgeDominancePair[] } {
+  const t = tuning ?? content.tuning;
+  const combos = forgeVectors(content, t).length;
+  return {
+    combos,
+    comparisons: combos * (combos - 1),
+    pairs: forgeDominance(content, t),
+  };
+}
+
+/**
+ * 参考属性组：占优必须在**每一组**上都成立。
+ *
+ * 三组分别是「刚降世」「猛系中期」「灵系后期」—— 覆盖 `damageMul`（随属性放大）
+ * 与 `damageBonus`（定额）此消彼长的两端：属性低时定额占比大，属性高时系数占比大。
+ * 只取一组会把「低属性一世也拼得出一手能打的招」这条设计判成占优。
+ */
+const FORGE_REF_STATS: readonly { meng: number; ling: number }[] = [
+  { meng: 10, ling: 10 },
+  { meng: 44, ling: 16 },
+  { meng: 16, ling: 60 },
+];
+
+function forgeVectors(content: TaleContent, t: TaleTuning): ForgeVector[] {
+  const out: ForgeVector[] = [];
+  const opens = content.parts.filter((part) => part.open !== undefined);
+  const forces = content.parts.filter((part) => part.force !== undefined);
+  const addons = content.parts.filter((part) => part.addon !== undefined);
+  for (const open of opens) {
+    const openPayload = open.open as NonNullable<PartDef["open"]>;
+    for (const force of forces) {
+      if (force.id === open.id) continue;
+      const forcePayload = force.force as NonNullable<PartDef["force"]>;
+      for (const addon of addons) {
+        if (addon.id === open.id || addon.id === force.id) continue;
+        const addonPayload = addon.addon as NonNullable<PartDef["addon"]>;
+        const cost = forgeCostOf(
+          forgePower(openPayload, forcePayload, addonPayload, t),
+          open.essenceType,
+          t,
+        );
+        out.push({
+          label: `${open.name}·${force.name}·${addon.name}`,
+          damage: FORGE_REF_STATS.map(
+            (stats) =>
+              damageRange(
+                openPayload.stat === "ling" ? stats.ling : stats.meng,
+                t,
+                forgeTotalMul(openPayload, forcePayload),
+              ).mid,
+          ),
+          effects: new Set([addonPayload.effect]),
+          woundLeg: forcePayload.woundPart === "leg" ? 1 : 0,
+          woundEye: forcePayload.woundPart === "eye" ? 1 : 0,
+          essence: cost.essence,
+          essenceType: cost.essenceType,
+          momentum: cost.momentum,
+          cooldown: cost.cooldown,
+        });
+      }
+    }
+  }
+  // 古法一并进比较池：一条定价过低的古法会让整片自拟招从此没人会拼，而那是同一种病
+  for (const synergy of content.synergies) {
+    const skill = synergy.skill;
+    const cost = loreCostOf(synergy, content, t);
+    out.push({
+      label: `古法·${synergy.name}`,
+      damage: FORGE_REF_STATS.map(
+        (stats) =>
+          damageRange(
+            skill.stat === "ling" ? stats.ling : stats.meng,
+            t,
+            skill.damageMul ?? t.organSkillDamageMul,
+          ).mid,
+      ),
+      effects: new Set(skill.effects ?? []),
+      woundLeg: skill.woundPart === "leg" ? 1 : 0,
+      woundEye: skill.woundPart === "eye" ? 1 : 0,
+      essence: cost.essence,
+      essenceType: cost.essenceType,
+      momentum: cost.momentum,
+      cooldown: cost.cooldown,
+      /*
+       * 古法**每次发招还要另付** hp／精气（`skill.cost`），而自拟招不必。那是一项
+       * 只会让古法更贵的代价，闸门里不算它 —— 少算一项代价只会让闸门**更严**
+       * （更容易判古法占优），不会漏报。
+       */
+    });
+  }
+  return out;
+}
+
+/** A 占优 B？返回一句人话的理由，或 null。 */
+function dominatesForge(a: ForgeVector, b: ForgeVector): string | null {
+  // 判据 2：付不同型精气的两手不可比
+  if (a.essenceType !== b.essenceType) return null;
+  // 判据 3：效果按集合比
+  for (const effect of b.effects) if (!a.effects.has(effect)) return null;
+  // 判据 1：每一组参考属性上伤害都不低
+  for (let i = 0; i < a.damage.length; i += 1) {
+    if ((a.damage[i] ?? 0) < (b.damage[i] ?? 0)) return null;
+  }
+  if (a.woundLeg < b.woundLeg || a.woundEye < b.woundEye) return null;
+  if (a.essence > b.essence || a.momentum > b.momentum || a.cooldown > b.cooldown) return null;
+  const better: string[] = [];
+  if (a.damage.some((value, i) => value > (b.damage[i] ?? 0))) better.push("伤害更高");
+  if (a.effects.size > b.effects.size) better.push("效果更多");
+  if (a.woundLeg > b.woundLeg || a.woundEye > b.woundEye) better.push("多断一处");
+  if (a.essence < b.essence) better.push("精气更省");
+  if (a.momentum < b.momentum) better.push("势更省");
+  if (a.cooldown < b.cooldown) better.push("冷却更短");
+  return better.length === 0 ? null : better.join("、");
 }
 
 /**
@@ -1367,6 +2278,9 @@ export function createLife(
     lifespanMax: Math.max(1, lifespan),
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
     organIds,
+    // [M2-B2] 招式册一世一册（转世清空）——「这一副身子拼出了什么」不跨世
+    forgedSkills: [],
+    forgeSeq: 0,
     // 开局变量的专属事件线靠这些 flag 入池。走 contentFlags 过滤：内容侧写错一个
     // `sys:` 前缀不该在降世这一刻就改掉引擎规则（同 applyEffects 的理由）
     flags: contentFlags([...(premise.sky.flags ?? []), ...(premise.origin.flags ?? [])]),
@@ -3290,6 +4204,7 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
       skillId: entry.skillId,
       organId: entry.organId,
       synergyId: entry.synergyId,
+      forged: entry.forged,
       name: skill.name,
       desc: skill.desc,
       effects: skillEffectsOf(skill),
@@ -3304,6 +4219,7 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
       damage: skillDealsDamage(skill, t)
         ? damageRange(skillStatOf(skill, state.stats), t, skillDamageMul(skill, t, combat.stance))
         : ZERO_DAMAGE,
+      woundPart: skill.woundPart ?? null,
     };
   });
 
@@ -3843,6 +4759,12 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
             break;
         }
       }
+      /*
+       * [M2-B2] 断伤 —— 凝招力道槽的第二样东西：这一手顺带记一层部位伤。
+       * 挂在效果之后是因为它跟着**伤害**走（`addWound` 自己会在它已死时退出），
+       * 而效果里有几档是给自己的（护体、明识），两者不该共用一个位置。
+       */
+      if (skill.woundPart !== undefined) addWound(woundOf(skill.woundPart));
       // ＋1 是因为本回合末尾统一减一：写 cooldown+1 才让「冷却 3」真的等 3 个回合
       cooldowns[entry.skillId] = (skill.cooldown ?? t.combatSkillCooldown) + 1;
       break;
@@ -4161,6 +5083,8 @@ export function composeChronicle(state: TaleState, content: TaleContent): Chroni
       (record) =>
         record.kind === "molt" ||
         record.kind === "combat" ||
+        // [M2-B2] 凝招进摘录：一世自己拼出来的那一手是这一世最像「传」的东西
+        record.kind === "forge" ||
         (record.kind === "event" && record.refId !== undefined && onceEventIds.has(record.refId)),
     )
     .slice(0, Math.max(0, lifeTuning(state, content).chronicleMaxExcerpts));
