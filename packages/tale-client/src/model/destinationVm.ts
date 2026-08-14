@@ -51,12 +51,21 @@ export interface DestinationButtonVm {
   denizenLine: string | null;
   /** 「这一季耗饱食 24（含路费 12）」 —— 恒在 */
   costLine: string;
+  /** [S3] 靠图录进得去时那一行说明；否则 null */
+  chartNote: string | null;
   /** 风险档（界面按它上色） */
   peril: PerilTier;
   /** 本世已到过（按钮上给一枚小印，也是「这一世还没去过哪儿」的提示） */
   visited: boolean;
   /** 本世已得此地秘藏 */
   treasureFound: boolean;
+  /**
+   * [S3] 这一处是**靠图录**开的（门槛并没有凑齐）——按钮上要写「图录在手 —— 此番不必其门」。
+   *
+   * 两种「可去」必须在屏幕上读得出分别：不写的话，玩家会以为自己已经凑齐了幽潭那两件器官，
+   * 而下一世图录用掉之后它又灰回去 —— 那是一次没有任何解释的倒退。
+   */
+  chartedOpen: boolean;
 }
 
 /** 三档风险的汉字读法。**只在这里写一次**，界面与测试都别自己拼。 */
@@ -150,9 +159,16 @@ export function buildDestinationVms(
     perilLine: perilLine(preview),
     denizenLine: denizenLine(preview),
     costLine: costLine(preview, content),
+    // 图录开的那一处：把「缺什么」那一行换成「凭什么进得去」（引擎判，界面只挑措辞）
+    chartNote: preview.chartedOpen
+      ? `图录在手 —— 此番不必其门（需 ${preview.def.requiresOrganIds
+          .map((id) => organIndex(content).get(id)?.name ?? id)
+          .join("、")}）`
+      : null,
     peril: preview.def.peril,
     visited: preview.visited,
     treasureFound: preview.treasureFound,
+    chartedOpen: preview.chartedOpen,
   }));
 }
 

@@ -403,6 +403,7 @@ describe("禁用 API 纪律（源码扫描）", () => {
       "organs",
       "origins",
       "seeds",
+      "sigils",
       "skies",
       "synergies",
       "tuning",

@@ -70,6 +70,11 @@ export interface StalkVm {
    * 的前提。这类「关于这头猎物本身」的事实该挂在名号旁边，一直看得见。
    */
   preyBadge: string | null;
+  /**
+   * [S3] 「已入图鉴」的常驻小牌 —— 与 `preyBadge` 分开一位（一头兽可以既会反扑又已参透），
+   * 也与「夜瞳看得清」分开：那是这一世的器官，这是历代攒下来的知识。
+   */
+  preyLoreBadge: string | null;
   preyPortrait: MediaAsset | null;
   /** 「第三息」 */
   roundLabel: string;
@@ -200,9 +205,16 @@ export function buildStalkVm(
     percent: toPercent(stalk.alertness / Math.max(1, t.stalkAlertMax)),
     exact: alertExact,
     hot: stalk.alertness >= 60,
+    /*
+     * [S3] 读得出确数的**两个来源在这里要说得出分别**：器官读的是这一刻（「夜瞳看得清」），
+     * 图鉴读的是历代（「你认得这一头」）。玩家花了血统点买「图鉴知识」，兑现的那一刻
+     * 屏幕上必须有回响 —— 不然那几点花得跟没花一样。
+     */
     hint: alertExact
-      ? `警觉 ${stalk.alertness}／${t.stalkAlertMax}　满则它必走`
-      : "只看得出个大概 —— 夜瞳、灵犀之类的器官才读得出确数。",
+      ? `警觉 ${stalk.alertness}／${t.stalkAlertMax}　满则它必走${
+          preview.loreKnown ? "　（此兽已入图鉴 —— 历代所记，你认得它的每一分神色）" : ""
+        }`
+      : "只看得出个大概 —— 夜瞳、灵犀之类的器官才读得出确数，或以血统参透此兽。",
   };
 
   const distance: StalkMeterVm = {
@@ -318,6 +330,7 @@ export function buildStalkVm(
     preyName: prey?.name ?? stalk.preyId,
     preyDesc: prey?.desc ?? "",
     preyBadge: preview.retaliates ? "会反扑" : null,
+    preyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
     preyPortrait: prey ? { kind: "image", src: enemyArt(prey.id), aspect: "1 / 1" } : null,
     roundLabel: `第 ${stalk.round + 1} 息`,
     distance,

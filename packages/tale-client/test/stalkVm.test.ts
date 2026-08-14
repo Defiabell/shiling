@@ -248,3 +248,58 @@ describe("纪律", () => {
     expect(vmOf(state).log).toEqual(state.stalk?.log);
   });
 });
+
+/**
+ * [S3] 「图鉴知识」在追猎屏上的兑现。
+ *
+ * 这一组量的是**同一头猎物、同一颗种子**下，参透与没参透看到的字有什么不同 ——
+ * 那正是 S3 验收第三问要贴的对照。判据不是「有个字段变了」，是**屏幕上的读数换了一种**：
+ * 档位（「未觉」「参半」）→ 确数（「警觉 23」「四成六」）。
+ */
+describe("[S3] 已参透的异兽：读数从档位换成确数", () => {
+  /** 同一颗种子、同一头猎物，只差一份图鉴知识 */
+  function pair(seed = 20260812) {
+    const born = createLife(seed, SEED_CHANG_TAI, CONTENT);
+    const blind = performAction(born, "hunt", CONTENT).state;
+    if (!blind.stalk) throw new Error("这一季没起追");
+    const preyId = blind.stalk.preyId;
+    const knownBorn = createLife(seed, SEED_CHANG_TAI, CONTENT, { loreEnemyIds: [preyId] });
+    const known = performAction(knownBorn, "hunt", CONTENT).state;
+    return { blind, known, preyId };
+  }
+
+  it("同一头猎物：未识只有档位，已识给确数（且两屏的猎物真是同一头）", () => {
+    const { blind, known, preyId } = pair();
+    expect(known.stalk?.preyId).toBe(preyId);
+
+    const dim = vmOf(blind);
+    const lit = vmOf(known);
+    expect(dim.alert.exact).toBe(false);
+    expect(lit.alert.exact).toBe(true);
+    // 警觉那一格：档位 vs 确数
+    expect(dim.alert.hint).toContain("大概");
+    expect(lit.alert.hint).toContain(`警觉 ${known.stalk!.alertness}`);
+    // 命中率那一行：七档汉字 vs 汉字成数
+    expect(dim.pounceLabel).not.toContain("成");
+    expect(lit.pounceLabel).toContain("成");
+  });
+
+  it("名号旁多一枚「已入图鉴」小牌（与「会反扑」并列，不是二选一）", () => {
+    const { blind, known } = pair();
+    expect(vmOf(blind).preyLoreBadge).toBeNull();
+    expect(vmOf(known).preyLoreBadge).toBe("已入图鉴");
+  });
+
+  it("读不出确数的那一屏要说得出**两条**出路（长器官／参透此兽）", () => {
+    const { blind } = pair();
+    expect(vmOf(blind).alert.hint).toContain("夜瞳");
+    expect(vmOf(blind).alert.hint).toContain("血统");
+  });
+
+  it("参透的是别的兽 → 这一头照旧读不出（不是「买一送全部」）", () => {
+    const born = createLife(20260812, SEED_CHANG_TAI, CONTENT, { loreEnemyIds: ["qiong-qi-you"] });
+    const state = performAction(born, "hunt", CONTENT).state;
+    if (!state.stalk || state.stalk.preyId === "qiong-qi-you") return;
+    expect(buildStalkVm(state, state.stalk, CONTENT).alert.exact).toBe(false);
+  });
+});

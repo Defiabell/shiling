@@ -554,3 +554,55 @@ describe("S1 技能池：每颗技能按钮都写清伤害、效果、冷却与�
     expect(view.intentLabel).toContain("压低");
   });
 });
+
+/**
+ * [S3] 「图鉴知识」在搏杀屏上的兑现 —— 与追猎屏那一组同解。
+ *
+ * 判据是**屏幕上的字换了一种**：粗档（「似要动手」＋「灵犀之类的器官才读得清」）
+ * → 内容写的那句意图宣告 ＋ 一笔受伤账。三个来源（器官／明识／图鉴）在屏幕上分得开。
+ */
+describe("[S3] 已参透的异兽：意图从粗档换成确数", () => {
+  const lore = (state: TaleState): TaleState =>
+    withPatch(state, { loreEnemyIds: ["ye-zhi"] });
+
+  it("未参透只给粗档，已参透给确切意图（同一场架、同一头兽）", () => {
+    const vague = vm({}, newState());
+    const exact = vm({}, lore(newState()));
+    expect(vague.intentKnown).toBe(false);
+    expect(exact.intentKnown).toBe(true);
+    expect(exact.intentLabel).toBe("它向前逼了半步。");
+    expect(vague.intentLabel).not.toBe(exact.intentLabel);
+  });
+
+  it("名号旁多一枚「已入图鉴」小牌；未参透时没有", () => {
+    expect(vm({}, newState()).enemyLoreBadge).toBeNull();
+    expect(vm({}, lore(newState())).enemyLoreBadge).toBe("已入图鉴");
+  });
+
+  it("靠器官读得出意图时**不**挂这枚牌（三个来源在屏幕上分得开）", () => {
+    const view = vm({}, seeing(newState()));
+    expect(view.intentKnown).toBe(true);
+    expect(view.enemyLoreBadge).toBeNull();
+  });
+
+  it("参透的是别的兽 → 这一场照旧读不出", () => {
+    const view = vm({}, withPatch(newState(), { loreEnemyIds: ["qiong-qi-you"] }));
+    expect(view.intentKnown).toBe(false);
+    expect(view.enemyLoreBadge).toBeNull();
+  });
+
+  /**
+   * 两档粗档（`act` 要出手／`hold` 按兵不动）**都**要说得出两条出路。
+   *
+   * 这一条是实机截图抓出来的：第一版只改了 `act` 那一档，而单测的 fixture 缺省意图是
+   * `bite`（＝`act`），于是「hold 那一档漏了」在测试里完全看不见 —— 屏幕上却是一句
+   * 「读不出来。」，一个奔跨世积累的玩家永远不知道图鉴知识治的就是这一行。
+   */
+  it("读不出的那一行要说得出**两条**出路（长器官／参透此兽）—— 两档粗档都要", () => {
+    expect(vm({}, newState()).intentDetail).toContain("血统");
+    const holding = vm({ intent: { kind: "guard", text: "它把身子沉了下去。" } }, newState());
+    expect(holding.intentKnown).toBe(false);
+    expect(holding.intentDetail).toContain("血统");
+    expect(holding.intentDetail).toContain("器官");
+  });
+});

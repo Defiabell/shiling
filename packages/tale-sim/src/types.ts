@@ -744,6 +744,41 @@ export interface ChronicleEntry {
 }
 
 /**
+ * [S3] 一枚「世家印记」—— 血统点唯一能买到的**永久数值**加成。
+ *
+ * ## 为什么它是全批唯一的数值项，且刻意做得这么小
+ * S3 的另外三类消费（血脉／图录／图鉴知识）给的都是**新动作或新信息**：带一件器官、
+ * 开一处门、看清一头兽。印记是唯一「让数字变大」的一类，而 owner 的原话正是
+ * 「积累只让数字变大」—— 所以它一枚只给 +2（门槛在 40〜90 之间），且有
+ * `TaleTuning.sigilCap` 的枚数上限。它要回答的是「跨了十世之后我有没有一点点不同」，
+ * 不是「我现在很强」。
+ *
+ * ## 落账时机：**在神种之前**
+ * 印记是「先祖传下来的底子」，比这一胎的神种更早。落在最前还有一个可验证的好处：
+ * 它不掷任何骰，于是同一颗种子带不带印记，天时／出身／此后每一次抽取**逐字相同**
+ * （`create-life.test.ts` 钉着这一条）。
+ */
+export interface SigilDef {
+  id: string;
+  /** 「世家印记·爪」 */
+  name: string;
+  /** 一句因果（为什么这一族世世代代爪子更硬） */
+  desc: string;
+  /** 血统点价钱 */
+  cost: number;
+  /** 每世降世时叠加的属性（一枚只动一项，读起来才是「一枚印记＝一件事」） */
+  statMods: Partial<Stats>;
+  /**
+   * 每世**起手饱食**的加成（缺省 0）。
+   *
+   * 为什么要这第二种加成形式：头几世的死因压倒性是饿死（`cautious` 500 世实测 54.4%），
+   * 而四项属性一项也治不了它 —— 一份只有属性的货架，对一个还没活过十岁的玩家全是空话。
+   * 上限仍受 `hungerMax` 夹紧（`createLife` 里 `clamp`）。
+   */
+  hungerBonus?: number;
+}
+
+/**
  * [正本 ＋ S1 扩充] 跨世血统资产。持久化（localStorage）归 tale-client。
  *
  * ## [S1] 为什么图鉴与血脉在这里，而不在 `TaleState`
@@ -781,10 +816,40 @@ export interface Bloodline {
   /**
    * [S2] 历代**得过**的秘藏（`TreasureDef.id`）—— 图鉴的「秘藏 N/M」，未得的一格恒为「？」。
    *
-   * S3 的「图录」会拿它当货架（花血统点让下一世直通某处秘境）。**本批只记不卖**：
-   * 消费项的价钱体系要与「血脉」「神种」一起排，混在这一批里排会排出第三份价目表。
+   * S3 的「图录」拿 `knownDestinationIds` 当货架（到过才画得出图），这一份只进图鉴。
    */
   foundTreasureIds: string[];
+  /**
+   * [S3] 历代**照过面**的异兽（`EnemyDef.id`）—— 图鉴的「已识异兽 N/M」，未识的一格恒为「？」。
+   *
+   * 「照面」＝起追或开战（`TaleState.metEnemyIds`），不是「杀过」：一头把你咬死的玄蟒
+   * 当然算你见过它。这一份是「图鉴知识」的货架 —— 没见过的兽买不到它的知识。
+   */
+  knownEnemyIds: string[];
+  /**
+   * [S3] 已买下「图鉴知识」的异兽（`EnemyDef.id`）—— **永久**，此后每一世都算数。
+   *
+   * 它给的是**信息**而不是数值：这头兽在追猎屏读得出确切警觉与命中率、在搏杀屏读得出
+   * 确切意图（同 P1 已验证的「信息即奖励」）。刻意不给任何加成 —— 那会让「多活几世」
+   * 变成堆数值，而这一批要的是「多活几世＝看得更清」。
+   */
+  loreEnemyIds: string[];
+  /**
+   * [S3] 已买下的「世家印记」（`SigilDef.id`）—— **永久**，每一世降世时落账。
+   *
+   * 唯一的一类永久数值加成，所以刻意做得小且**有上限**（`TaleTuning.sigilCap`）：
+   * 一枚 +2，至多三枚。上限不是节流阀，是设计 —— 没有上限的永久加成会让第二十世的
+   * 一切门槛都失去意义，而四条道的门槛正是这游戏的全部题面。
+   */
+  sigilIds: string[];
+  /**
+   * [S3] 已买下、下一世**不必其门也进得去**的那一处（`DestinationDef.id`）；null ＝ 没买。
+   *
+   * 与 `boonOrganId` 逐字同形的一次性消费：`createLife` 用掉它之后由客户端清空。
+   * 为什么是一世一次而不是永久：门槛是 S2 全部欲望的来源（「为了下幽潭去凑浮鳔」），
+   * 永久免门槛等于把那条循环一次性买断。
+   */
+  chartedDestinationId: string | null;
 }
 
 /**
@@ -944,6 +1009,30 @@ export interface TaleState {
   visitedDestinationIds: string[];
   /** [S2] 本世得到的秘藏（`TreasureDef.id`）。跨世那一份同上。 */
   foundTreasureIds: string[];
+  /**
+   * [S3] 本世**照过面**的异兽（`EnemyDef.id`，按第一次照面的先后）。
+   *
+   * 「照面」＝起追（`stalk`）或开战（`combat`）那一刻，与胜负无关。同
+   * `visitedDestinationIds` 的理由放在 `TaleState` 而不是客户端：跨世图鉴那一份由客户端
+   * 从这里抄进 `Bloodline.knownEnemyIds`，而**它必须能从状态重建** ——
+   * 数 `records` 是数不出来的（追猎得手刻意不写 `LifeRecord`，逃掉的那些更不写）。
+   */
+  metEnemyIds: string[];
+  /**
+   * [S3] 这一世带着的「图鉴知识」（`EnemyDef.id`）—— 降世时从 `Bloodline.loreEnemyIds` 抄一份。
+   *
+   * 为什么抄进 `TaleState` 而不是让预览函数去读 `Bloodline`：引擎**不认识**跨世资产
+   * （那是客户端的持久化层），而 `stalkPreview`／`combatPreview` 要据它决定玩家看得见
+   * 什么 —— 同 `StalkState.windKnown` 那条纪律：界面能显示的东西必须能从 state 重建。
+   */
+  loreEnemyIds: string[];
+  /**
+   * [S3] 这一世的「图录」（`DestinationDef.id`）；null ＝ 没有。持有时该处**不必其门也进得去**。
+   *
+   * 只免门槛，**不免路费**：路费与遇袭是三档风险的全部内容，免掉它等于把「往哪走」
+   * 这道题的另一半也一起买断（S2 的按钮上那三个并排可比的量就白摆了）。
+   */
+  chartedDestinationId: string | null;
   alive: boolean;
   ending: EndingType | null;
   /**
@@ -1194,6 +1283,38 @@ export interface TaleTuning {
    * 就被商店买断了。
    */
   bloodlineBoonRareCost: number;
+
+  /*
+   * — [S3] 另外三类血统消费的价钱 —
+   *
+   * 四类消费共用**一份价目表**（这一节），因为它们是同一笔点数的竞争者：
+   * 一世产 3〜8 点，而「血脉 4 ＋ 图录 3」已经吃掉大半 —— 想攒印记就得有几世不带东西下场。
+   * 那道取舍是这一批的主设计，散成四份价目表就无从校准。
+   *
+   * | 类 | 形态 | 价 | 一世能买几次 |
+   * |---|---|---|---|
+   * | 血脉 | 一世一件 | 4／8（事件专属） | 1 |
+   * | 图录 | 一世一处 | 2×门槛件数 ＋ 风险档（险峰古祠 3／焦原 4／幽潭 5／秘窟 6） | 1 |
+   * | 世家印记 | 永久，至多 `sigilCap` 枚 | 见 `SigilDef.cost` | 不限（受上限） |
+   * | 图鉴知识 | 永久，每兽一次 | 2 ＋ floor(猛/10)（野雉 2 … 穷奇 5） | 不限 |
+   */
+
+  /** 「图录」每一件门槛器官的价钱（免门槛，不免路费）—— 双件门槛的去处因此贵一倍 */
+  bloodlineChartPerGate: number;
+  /** 「图录」按风险档加价：越深的地方，那张图越值钱 */
+  bloodlineChartPeril: Record<PerilTier, number>;
+  /** 「图鉴知识」的底价（连野雉都要花一点 —— 白送的东西玩家不会记得自己买过） */
+  bloodlineLoreBase: number;
+  /** 「图鉴知识」按敌人 `meng` 加价的除数：越凶的兽，看清它越值钱也越贵 */
+  bloodlineLoreMengDivisor: number;
+  /**
+   * 「世家印记」的枚数上限。
+   *
+   * 这是**平衡阀**，而且它的值是**量出来的**（见 `tale-content/src/sigils.ts` 的实测表）：
+   * `cautious` 画像不带印记就已经踩在 14.2%，而护栏是 ≤15% —— 永久加成的总预算只有
+   * 0.8 个百分点。三枚 +1 越界（15.3%），两枚 +1 不越界（14.3〜14.9%，20000 世全对扫）。
+   */
+  sigilCap: number;
 
   /** 持任一即**读得出敌人的确切意图**（否则只有「似要动手／按兵不动」两档） */
   combatIntentTags: string[];

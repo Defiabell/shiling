@@ -15,6 +15,9 @@
  *       （--lives 就是每格的场数，缺省沿用整世模式的 200；手感判据的实测值都是按 400 报的）
  *   pnpm -C packages/gen balance -- --stalk-plan rush   # 整世模式里换机器猎手的打法
  *   pnpm -C packages/gen balance -- --lab combat --lives 400  # 搏杀实验台：打法×敌人×build 的胜率
+ *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils   # [S3] 满员印记的天花板
+ *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils sigil-mu,sigil-ren,sigil-gu
+ *   pnpm -C packages/gen balance -- --lives 500 --profile reckless --chart dest-mi-ku  # [S3] 图录直通秘窟
  *   pnpm -C packages/gen balance -- --combat-plan greedy      # 整世模式里换机器打手的打法
  *
  * 纪律：数值不达标只调 `tale-content/src/tuning.ts` 与事件 `effects`，**不改引擎**。
@@ -127,6 +130,18 @@ interface Args {
   lab: "stalk" | "combat" | null;
   stalkPlan: StalkPlan;
   combatPlan: CombatPlan;
+  /**
+   * [S3] 每一世带上的「世家印记」id（`--sigils`）。
+   *
+   * 它回答的是这一批唯一有平衡风险的问题：**永久加成会不会把成道率顶出护栏**。
+   * 缺省空 ＝ 一个没买过印记的新玩家；`--sigils` 不带值 ＝ 按内容表取满 `sigilCap` 枚
+   * （**只是「满员」，不是「最坏」**：最坏的那一对要靠十对全扫才知道，见 `sigils.ts` 头注的
+   * 那张表 —— 单枚最强的两枚凑一对并不等于最坏一对，它们之间有交互）；
+   * 带值 ＝ 指定那几枚（分道试算：奔化灵的买目、奔妖王的买爪）。
+   */
+  sigilIds: readonly string[];
+  /** [S3] 每一世带上的「图录」（`--chart <id>`）—— 免门槛的那一处 */
+  chartedDestinationId: string | null;
 }
 
 const COMBAT_PLANS: readonly CombatPlan[] = ["screen", "throat", "eye", "leg", "greedy", "coward"];
@@ -140,6 +155,8 @@ function parseArgs(argv: readonly string[]): Args {
     lab: null,
     stalkPlan: "patient",
     combatPlan: "screen",
+    sigilIds: [],
+    chartedDestinationId: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -179,6 +196,33 @@ function parseArgs(argv: readonly string[]): Args {
         throw new Error("--stalk-plan 只能是 patient｜screen｜nowait｜rush｜waiter");
       }
       args.stalkPlan = value;
+      i += 1;
+      continue;
+    }
+    if (flag === "--sigils") {
+      const next = argv[i + 1];
+      // 不带值（或下一个就是别的 flag）＝ 取满上限（按内容表顺序）。**这不是最坏组合** ——
+      // 要量天花板得把 C(n, cap) 对全扫一遍，见 `sigils.ts` 头注那张十对全扫的表
+      if (next === undefined || next.startsWith("--")) {
+        args.sigilIds = CONTENT.sigils.slice(0, CONTENT.tuning.sigilCap).map((sigil) => sigil.id);
+      } else {
+        const ids = next.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
+        for (const id of ids) {
+          if (!CONTENT.sigils.some((sigil) => sigil.id === id)) {
+            throw new Error(`--sigils 里的 ${id} 不是印记（可选：${CONTENT.sigils.map((s) => s.id).join("｜")}）`);
+          }
+        }
+        args.sigilIds = ids;
+        i += 1;
+      }
+      continue;
+    }
+    if (flag === "--chart") {
+      const value = argv[i + 1];
+      if (value === undefined || !CONTENT.destinations.some((d) => d.id === value)) {
+        throw new Error(`--chart 需要一个去处 id（${CONTENT.destinations.map((d) => d.id).join("｜")}）`);
+      }
+      args.chartedDestinationId = value;
       i += 1;
       continue;
     }
@@ -577,6 +621,15 @@ function pickChoice(
   return eligible[Math.floor(roll() * eligible.length)] ?? first;
 }
 
+/**
+ * [S3] 跨世资产：整世模式里每一世都带着它们降生。
+ *
+ * 模块级可变量（同 `STALK_PLAN`／`COMBAT_PLAN` 的体例）——`runLife` 的签名已经三个参数，
+ * 再加两个只有平衡台用得上的会让每一处调用点都得写 `[], null`。
+ */
+let SIGIL_IDS: readonly string[] = [];
+let CHARTED_DESTINATION: string | null = null;
+
 function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   // 策略自己的随机源与引擎的 rngState 分开，互不污染（同 seed 仍完全可复现）
   const cursor = createCursor(seed ^ 0x5f3759df);
@@ -589,7 +642,10 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   const waySought: WayId | null =
     profile === "wayseek" ? (WAY_ORDER[index % WAY_ORDER.length] ?? "shen") : null;
 
-  let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
+  let state = createLife(seed, SEED_CHANG_TAI, CONTENT, {
+    sigilIds: SIGIL_IDS,
+    chartedDestinationId: CHARTED_DESTINATION,
+  });
   let steps = 0;
   let restsThisInjury = 0;
   const decisions = { event: 0, action: 0, combat: 0, stalk: 0 };
@@ -1073,6 +1129,8 @@ function main(): number {
   if (args.tune !== null) CONTENT = applyTuneOverrides(args.tune);
   STALK_PLAN = args.stalkPlan;
   COMBAT_PLAN = args.combatPlan;
+  SIGIL_IDS = args.sigilIds;
+  CHARTED_DESTINATION = args.chartedDestinationId;
   if (args.lab === "combat") return runCombatLab(args.lives);
   if (args.lab === "stalk") return runLab(args.lives);
   const lives = Array.from({ length: args.lives }, (_, index) =>
@@ -1222,7 +1280,11 @@ function main(): number {
     return 0;
   }
 
-  console.log(`[平衡] ${report.lives} 世 · 玩家画像 ${report.profile}${args.tune ? ` · 覆写 ${args.tune}` : ""}`);
+  console.log(
+    `[平衡] ${report.lives} 世 · 玩家画像 ${report.profile}${args.tune ? ` · 覆写 ${args.tune}` : ""}` +
+      `${args.sigilIds.length > 0 ? ` · 印记 ${args.sigilIds.join(",")}` : ""}` +
+      `${args.chartedDestinationId ? ` · 图录 ${args.chartedDestinationId}` : ""}`,
+  );
   console.log(
     `结局：饿死 ${report.endings.starve}% / 战死 ${report.endings.slain}%（战斗 ${report.slainSplit.combat}% ＋事件直杀 ${report.slainSplit.event}%） / 寿终 ${report.endings.oldage}% / 登神 ${report.endings.ascend}%`,
   );

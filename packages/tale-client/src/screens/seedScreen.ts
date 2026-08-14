@@ -10,11 +10,15 @@ import { inkArt } from "../art/placeholders.js";
 import { seedArt } from "../art/assets.js";
 import { ENDING_LABELS, formatCountCn, formatYearCn } from "../model/format.js";
 import type {
+  BeastRowVm,
   BoonRowVm,
+  ChartRowVm,
   CodexVm,
+  LoreRowVm,
   PlaceRowVm,
   SeedCardVm,
   SeedScreenVm,
+  SigilRowVm,
   SynergyRowVm,
 } from "../model/seedVm.js";
 import type { EndingType } from "@shiling/tale-sim";
@@ -25,7 +29,48 @@ export interface SeedProps {
   onUnlock(seedId: string): void;
   /** [S1] 买「血脉」：花血统点让下一世起手自带这件器官 */
   onBuyBoon(organId: string): void;
+  /** [S3] 买「图录」：花血统点让下一世直通这一处（免门槛） */
+  onBuyChart(destinationId: string): void;
+  /** [S3] 受「世家印记」：永久小加成，至多三枚 */
+  onBuySigil(sigilId: string): void;
+  /** [S3] 参透一头异兽：此后追猎／搏杀读得出确数 */
+  onBuyLore(enemyId: string): void;
   onBack(): void;
+}
+
+/**
+ * [S3] 货架上那颗按钮 —— 四类消费共用一份写法。
+ *
+ * 三种字样在四处必须完全一致（同 S1 血脉那条：界面的置灰是规则的镜像，不许更严也不许更松）：
+ * 已买／买得起（写价）／买不起（写价 ＋ **还差多少**）。写清还差多少，玩家才知道
+ * 「再活一世够不够」。
+ */
+function buyButton(opts: {
+  cls: string;
+  attr: string;
+  id: string;
+  cost: number;
+  owned: boolean;
+  ownedLabel: string;
+  affordable: boolean;
+  shortfall: number;
+  buyLabel: string;
+  onBuy(id: string): void;
+}): HTMLElement {
+  return el("button", {
+    class: `btn btn--ghost ${opts.cls}${opts.owned ? " is-chosen" : ""}`,
+    text: opts.owned
+      ? opts.ownedLabel
+      : opts.shortfall > 0
+        ? `血统 ${opts.cost}（尚差 ${opts.shortfall}）`
+        : `${opts.buyLabel} ${opts.cost}`,
+    attrs: {
+      type: "button",
+      disabled: opts.owned || !opts.affordable,
+      [opts.attr]: opts.id,
+    },
+    on: { click: () => opts.onBuy(opts.id) },
+  });
 }
 
 function seedCard(card: SeedCardVm, props: SeedProps): HTMLElement {
@@ -210,35 +255,202 @@ function placeRow(row: PlaceRowVm): HTMLElement {
   );
 }
 
-function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
-  return el("section", { class: "seed__codex", attrs: { "data-codex": "1" } }, [
+/**
+ * [S3] 异兽图鉴一行。
+ *
+ * 与异变那一行同一条铁律：**未照面的只渲染一个「？」**——不给 id、不给名字、不给数值。
+ * 「青丘有几头兽」是分母（那不算泄露），「第六头叫穷奇幼崽、猛 34」是内容（那算）。
+ */
+function beastRow(row: BeastRowVm): HTMLElement {
+  if (!row.known) {
+    return el("li", { class: "codex__row is-unknown", attrs: { "data-beast": "unknown" } }, [
+      el("b", { class: "codex__name", text: "？" }),
+      el("em", { class: "codex__note", text: row.note }),
+    ]);
+  }
+  return el("li", { class: "codex__row is-known", attrs: { "data-beast": row.id ?? "" } }, [
+    el("div", { class: "codex__head" }, [
+      el("span", { class: `codex__seal beast__seal${row.lore ? " is-found" : ""}`, text: "兽" }),
+      el("b", { class: "codex__name", text: row.name }),
+      el("span", { class: "codex__recipe", text: row.meta }),
+      row.lore ? el("em", { class: "place__been", text: "已参透" }) : null,
+    ]),
+    el("p", { class: "codex__note", text: row.note }),
+  ]);
+}
+
+/** [S3] 图录一行：一处已到过、有门槛的去处 ＋ 标价。 */
+function chartRow(row: ChartRowVm, props: SeedProps): HTMLElement {
+  return el("li", { class: `boon__row${row.chosen ? " is-chosen" : ""}` }, [
+    el("div", { class: "boon__main" }, [
+      el("b", { class: "boon__name", text: row.name }),
+      el("span", { class: "boon__meta", text: row.gate }),
+    ]),
+    buyButton({
+      cls: "boon__buy",
+      attr: "data-chart",
+      id: row.destinationId,
+      cost: row.cost,
+      owned: row.chosen,
+      ownedLabel: "下一世直通",
+      affordable: row.affordable,
+      shortfall: row.shortfall,
+      buyLabel: "以血统",
+      onBuy: props.onBuyChart,
+    }),
+  ]);
+}
+
+/** [S3] 世家印记一行：机制那一句恒在（「每世 灵 +2」），因果那一句在下面。 */
+function sigilRow(row: SigilRowVm, props: SeedProps): HTMLElement {
+  return el("li", { class: `boon__row${row.owned ? " is-chosen" : ""}` }, [
+    el("div", { class: "boon__main" }, [
+      el("b", { class: "boon__name", text: row.name }),
+      el("span", { class: "boon__meta", text: row.effect }),
+      el("em", { class: "boon__skill", text: row.desc }),
+    ]),
+    buyButton({
+      cls: "boon__buy",
+      attr: "data-sigil",
+      id: row.sigilId,
+      cost: row.cost,
+      owned: row.owned,
+      ownedLabel: "已受此印",
+      affordable: row.affordable,
+      shortfall: row.shortfall,
+      buyLabel: "以血统",
+      onBuy: props.onBuySigil,
+    }),
+  ]);
+}
+
+/** [S3] 图鉴知识一行：买到的是**信息**，所以那一行写的是「读得出什么」而不是「+X」。 */
+function loreRow(row: LoreRowVm, props: SeedProps): HTMLElement {
+  return el("li", { class: `boon__row${row.owned ? " is-chosen" : ""}` }, [
+    el("div", { class: "boon__main" }, [
+      el("b", { class: "boon__name", text: row.name }),
+      el("span", { class: "boon__meta", text: row.gain }),
+    ]),
+    buyButton({
+      cls: "boon__buy",
+      attr: "data-lore",
+      id: row.enemyId,
+      cost: row.cost,
+      owned: row.owned,
+      ownedLabel: "已参透",
+      affordable: row.affordable,
+      shortfall: row.shortfall,
+      buyLabel: "以血统",
+      onBuy: props.onBuyLore,
+    }),
+  ]);
+}
+
+/** 一段货架的通用外壳（题头 ＋ 一句说明 ＋ 行；空货架给一句而不是留白）。 */
+function shelf(opts: {
+  title: string;
+  caption: string;
+  captionAttr?: string;
+  emptyNote: string | null;
+  rows: HTMLElement[];
+  cls?: string;
+}): HTMLElement {
+  return el("div", { class: opts.cls ?? "seed__boon" }, [
+    el("div", { class: "seed__boon-head" }, [
+      el("h3", { text: opts.title }),
+      el("span", {
+        text: opts.caption,
+        ...(opts.captionAttr ? { attrs: { [opts.captionAttr]: "1" } } : {}),
+      }),
+    ]),
+    opts.emptyNote !== null
+      ? el("p", { class: "seed__boon-empty", text: opts.emptyNote })
+      : el("ul", { class: "boon__list" }, opts.rows),
+  ]);
+}
+
+/**
+ * [S3] 「血　统」——四类消费的统一货架。
+ *
+ * 摆在图鉴**之前**：图鉴回答「我见过什么」，货架回答「这几点花在哪」，而玩家进这一屏
+ * 手里正攥着刚结算的血统点。四段的顺序按「离这一世多近」排：
+ * 血脉与图录是**这一世**的装备（一世一次），印记与知识是**世世**的底子（永久）。
+ */
+function bloodlineShop(codex: CodexVm, points: number, props: SeedProps): HTMLElement {
+  return el("section", { class: "seed__shop", attrs: { "data-shop": "1" } }, [
     el("div", { class: "seed__codex-head" }, [
-      el("h2", { text: "异　变" }),
-      el("span", { attrs: { "data-codex-count": "1" }, text: codex.caption }),
+      el("h2", { text: "血　统" }),
+      el("span", { attrs: { "data-shop-points": "1" }, text: `可用 ${points} 点` }),
     ]),
     el("p", {
       class: "seed__codex-lede",
-      text: "某几件器官凑在一处会生出新的一手。配方不载于图鉴 —— 凑齐的那一刻自会知道。",
+      text: "四样可花：血脉与图录只管下一世（用掉即无），世家印记与图鉴知识世世都在。一世产三到八点，四样加起来永远买不全 —— 这一世先要哪一样，是你的事。",
     }),
-    el("ul", { class: "codex__list" }, codex.rows.map(synergyRow)),
-    el("div", { class: "seed__boon" }, [
+    shelf({
+      title: "血　脉",
+      caption:
+        codex.chosenBoonName === null
+          ? "下一世起手自带一件已见过的器官（一世只带一件）"
+          : `下一世自带　${codex.chosenBoonName} —— 一世只带一件，这一世的血脉已定`,
+      emptyNote: codex.boonEmptyNote,
+      rows: codex.boons.map((row) => boonRow(row, props)),
+    }),
+    shelf({
+      title: "图　录",
+      caption:
+        codex.chosenChartName === null
+          ? "下一世直通某处已到过的秘境，不必其门（只免门槛，不免路费；一世一处）"
+          : `下一世直通　${codex.chosenChartName} —— 一世一处，这一世的图录已定`,
+      emptyNote: codex.chartEmptyNote,
+      rows: codex.charts.map((row) => chartRow(row, props)),
+    }),
+    shelf({
+      title: "世家印记",
+      caption: codex.sigilCaption,
+      captionAttr: "data-sigil-count",
+      emptyNote: null,
+      rows: codex.sigils.map((row) => sigilRow(row, props)),
+    }),
+    shelf({
+      title: "图鉴知识",
+      caption: codex.loreCaption,
+      captionAttr: "data-lore-count",
+      emptyNote: codex.loreEmptyNote,
+      rows: codex.lores.map((row) => loreRow(row, props)),
+    }),
+  ]);
+}
+
+/**
+ * [S1＋S2＋S3] 「图　鉴」——四录，一颗按钮都没有。
+ *
+ * 总览那一条（四个分数并排）是这一屏「摸得着的发展方向」的入口：分母摆在一起，
+ * 玩家一眼看得出「异变才 3/10，而山川已经 5/6」——「该往哪使劲」的第一层答案就在那一行。
+ */
+function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
+  return el("section", { class: "seed__codex", attrs: { "data-codex": "1" } }, [
+    el("div", { class: "seed__codex-head" }, [
+      el("h2", { text: "图　鉴" }),
+      el("span", { attrs: { "data-codex-summary": "1" }, text: codex.summary }),
+    ]),
+    el("p", {
+      class: "seed__codex-lede",
+      text: "见过的都记在这里，没见过的一律是问号 —— 图鉴只记你亲身遇到的，不替你剧透。",
+    }),
+    el("div", { class: "seed__places" }, [
       el("div", { class: "seed__boon-head" }, [
-        el("h3", { text: "血　脉" }),
-        el("span", {
-          text:
-            codex.chosenBoonName === null
-              ? "花血统点，让下一世起手自带一件已见过的器官（一世只带一件）"
-              : `下一世自带　${codex.chosenBoonName} —— 一世只带一件，这一世的血脉已定`,
-        }),
+        el("h3", { text: "异　变" }),
+        el("span", { attrs: { "data-codex-count": "1" }, text: codex.caption }),
       ]),
-      codex.boonEmptyNote !== null
-        ? el("p", { class: "seed__boon-empty", text: codex.boonEmptyNote })
-        : el("ul", { class: "boon__list" }, codex.boons.map((row) => boonRow(row, props))),
+      el("p", {
+        class: "seed__boon-empty",
+        text: "某几件器官凑在一处会生出新的一手。配方不载于图鉴 —— 凑齐的那一刻自会知道。",
+      }),
+      el("ul", { class: "codex__list" }, codex.rows.map(synergyRow)),
     ]),
     /*
-     * [S2] 山川：去处与秘藏。摆在血脉**之后**是因为它回答的是同一个问题的下一半 ——
-     * 血脉是「这一世带什么」，山川是「带上它能去哪儿、那儿还有什么没拿到」。
-     * S3 的「图录」（花血统点直通某处秘境）会长在这一段里。
+     * [S2] 山川：去处与秘藏。与异变的信息分配刚好相反 —— 门槛恒可见（欲望展示位），
+     * 秘藏未得则恒为「？」。
      */
     el("div", { class: "seed__places" }, [
       el("div", { class: "seed__boon-head" }, [
@@ -250,6 +462,18 @@ function codexSection(codex: CodexVm, props: SeedProps): HTMLElement {
         text: "去处的门槛写在明处 —— 凑齐了才进得去。而每一处藏着什么，只有到过才知道。",
       }),
       el("ul", { class: "codex__list" }, codex.places.map(placeRow)),
+    ]),
+    /* [S3] 异兽：照过面的才有名字。这一段同时是「图鉴知识」那个货架的货源。 */
+    el("div", { class: "seed__places" }, [
+      el("div", { class: "seed__boon-head" }, [
+        el("h3", { text: "异　兽" }),
+        el("span", { attrs: { "data-beast-count": "1" }, text: codex.beastCaption }),
+      ]),
+      el("p", {
+        class: "seed__boon-empty",
+        text: "追过、打过、或者被它咬死过，都算照面。参透过的那几头，此后追猎与搏杀读得出确数。",
+      }),
+      el("ul", { class: "codex__list" }, codex.beasts.map(beastRow)),
     ]),
   ]);
 }
@@ -293,8 +517,22 @@ export function renderSeedSelect(props: SeedProps): HTMLElement {
       vm.next.advice
         ? el("p", { class: "nextlife__advice", text: vm.next.advice, attrs: { "data-advice": "1" } })
         : null,
+      /*
+       * [S3] 「这一世可以试着凑 X」—— 三条以内的**具体**建议，全部由图鉴与上一世的
+       * 擦肩而过推出来（`composeQuests`）。`advice` 说的是换哪条道（目标），
+       * 这几条说的是下一步干什么（手段）。owner 的原话是「不知道要怎么发展」，
+       * 治的就是这一行 —— 所以它排在天时之下、神种卡之上：按下「承此种降世」之前读到。
+       */
+      vm.next.quests.length > 0
+        ? el("ul", { class: "nextlife__quests", attrs: { "data-quests": "1" } },
+            vm.next.quests.map((quest) =>
+              el("li", { class: "nextlife__quest", attrs: { "data-quest": "1" }, text: quest }),
+            ),
+          )
+        : null,
     ]),
     el("div", { class: "seed__grid" }, vm.cards.map((card) => seedCard(card, props))),
+    bloodlineShop(vm.codex, vm.points, props),
     codexSection(vm.codex, props),
     vm.chronicle.length > 0
       ? el("section", { class: "seed__past" }, [

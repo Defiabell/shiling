@@ -23,6 +23,7 @@ import {
   type PremiseDef,
   type SeedDef,
   type StalkState,
+  type SigilDef,
   type SynergyDef,
   type TaleContent,
   type TaleEvent,
@@ -398,6 +399,9 @@ export const FIXTURE_CONTENT: TaleContent = {
   // 组合的机制由专测用 `makeContent({ synergies: [...] })` 显式声明（同 fixture 天时的理由）。
   synergies: [],
   destinations: FIXTURE_DESTINATIONS,
+  // [S3] 缺省**没有**印记：既有断言全部建立在「初始属性就是 tuning 那一份」之上。
+  // 要测印记的用 `makeContent({ sigils: [...] })` 显式声明（同 fixture 组合表的理由）。
+  sigils: [],
   tuning: FIXTURE_TUNING,
   chronicleTemplates: FIXTURE_CHRONICLE,
 };
@@ -412,6 +416,7 @@ export interface ContentOverrides {
   origins?: PremiseDef[];
   synergies?: SynergyDef[];
   destinations?: DestinationDef[];
+  sigils?: SigilDef[];
   tuning?: Partial<TaleTuning>;
   chronicleTemplates?: ChronicleTemplates;
 }
@@ -430,6 +435,7 @@ export function makeContent(overrides: ContentOverrides = {}): TaleContent {
     origins: overrides.origins ?? FIXTURE_CONTENT.origins,
     synergies: overrides.synergies ?? FIXTURE_CONTENT.synergies,
     destinations: overrides.destinations ?? FIXTURE_CONTENT.destinations,
+    sigils: overrides.sigils ?? FIXTURE_CONTENT.sigils,
     tuning: { ...FIXTURE_CONTENT.tuning, ...overrides.tuning },
     chronicleTemplates: overrides.chronicleTemplates ?? FIXTURE_CONTENT.chronicleTemplates,
   };

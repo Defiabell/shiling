@@ -612,7 +612,22 @@ function combatCard(combat: CombatVm, props: PlayProps): HTMLElement {
             el("b", { class: "combat__stance" }, [el("span", { text: combat.stanceLabel })]),
             ...combat.marks.map((mark) => el("i", { class: "combat__mark", text: mark })),
           ]),
-          el("h2", { class: "combat__name", text: combat.enemyName }),
+          el("div", { class: "combat__nameline" }, [
+            el("h2", { class: "combat__name", text: combat.enemyName }),
+            /*
+             * [S3] 「已入图鉴」：花血统点参透过这一头，所以这一场读得出确切意图。
+             * 挂在名号旁而不是意图行里 —— 它是**关于这头兽本身**的事实（世世都算数），
+             * 而意图行说的是这一回合。
+             */
+            combat.enemyLoreBadge
+              ? el("b", {
+                  class: "combat__lore",
+                  text: combat.enemyLoreBadge,
+                  attrs: { "data-lore-badge": "1" },
+                  title: "历代与它照过面，且已以血统参透 —— 它的意图读得出确数。",
+                })
+              : null,
+          ]),
           /*
            * 意图宣告：这一行是整个搏杀屏的意义所在（它相当于追猎屏的风标 ＋ 命中率）。
            * 读得出意图的 build 看到的是内容写的那句话＋一笔受伤账；读不出的只看到粗档
@@ -785,6 +800,20 @@ function stalkCard(stalk: StalkVm, key: string, props: PlayProps): HTMLElement {
                 title: "追猎失手或它受惊时，它不会逃 —— 会转成一场搏杀。",
               })
             : null,
+          /*
+           * [S3] 「已入图鉴」：花血统点参透过这一头，所以这一屏读得出确切警觉与命中率。
+           * 与「会反扑」并列而不是二选一 —— 一头兽可以既会反扑又已参透，而两件事
+           * 玩家都要知道。挂在名号旁而不是量表里，理由同「会反扑」：它是**关于这头兽本身**
+           * 的事实，不随这一息变。
+           */
+          stalk.preyLoreBadge
+            ? el("b", {
+                class: "stalk__lore",
+                text: stalk.preyLoreBadge,
+                attrs: { "data-lore-badge": "1" },
+                title: "历代与它照过面，且已以血统参透 —— 警觉与命中率读得出确数。",
+              })
+            : null,
         ]),
         el("p", { class: "stalk__desc", text: stalk.preyDesc }),
       ]),
@@ -886,7 +915,7 @@ function destinationBar(props: PlayProps): HTMLElement {
         el(
           "button",
           {
-            class: `dest dest--${dest.peril}${dest.enabled ? "" : " is-locked"}${dest.visited ? " is-visited" : ""}`,
+            class: `dest dest--${dest.peril}${dest.enabled ? "" : " is-locked"}${dest.visited ? " is-visited" : ""}${dest.chartedOpen ? " is-charted" : ""}`,
             attrs: {
               type: "button",
               disabled: !dest.enabled || props.busy,
@@ -910,6 +939,13 @@ function destinationBar(props: PlayProps): HTMLElement {
               el("i", { text: dest.costLine }),
             ]),
             dest.disabledReason ? el("i", { class: "dest__lock", text: dest.disabledReason }) : null,
+            /*
+             * [S3] 靠图录进得去的那一处：把「凭什么进得去」写出来。
+             * 不写的后果是玩家会以为自己已经凑齐了那两件器官，而下一世图录用掉之后
+             * 它又灰回去 —— 那是一次没有任何解释的倒退（同 legibility 那条：
+             * 界面不许让玩家自己去猜规则）。
+             */
+            dest.chartNote ? el("i", { class: "dest__chart", text: dest.chartNote }) : null,
           ],
         ),
       ),

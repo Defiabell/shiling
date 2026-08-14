@@ -58,6 +58,10 @@ function realBloodline(): Bloodline {
     boonOrganId: null,
     knownDestinationIds: [],
     foundTreasureIds: [],
+    knownEnemyIds: [],
+    loreEnemyIds: [],
+    sigilIds: [],
+    chartedDestinationId: null,
   };
 }
 
@@ -71,6 +75,10 @@ function bloodline(patch: Partial<Bloodline> = {}): Bloodline {
     boonOrganId: null,
     knownDestinationIds: [],
     foundTreasureIds: [],
+    knownEnemyIds: [],
+    loreEnemyIds: [],
+    sigilIds: [],
+    chartedDestinationId: null,
     ...patch,
   };
 }
@@ -437,5 +445,236 @@ describe("[S2] 山川图鉴", () => {
       foundTreasureIds: [PLACE.treasure.id],
     });
     expect(codex.placeCaption).toBe(`已至之地 2/6 · 秘藏 1/6`);
+  });
+});
+
+/**
+ * [S3] 异兽图鉴 ＋ 三个新货架 ＋ 「这一世可以试着凑 X」。
+ *
+ * 三条断言最要紧（其余是形状）：
+ * ① 未照面的兽**连名字都不许进 VM**（S1 铁律的第三次落地）；
+ * ② 建议只从**已发现**的组合里推 —— 拿一条没撞见的配方去写建议等于把这一批的本钱送掉；
+ * ③ 四类货架的置灰与 persist 层的 `buyX` 逐条同形（S1 血脉那条教训）。
+ */
+describe("[S3] 异兽图鉴 · 血统货架 · 转世建议", () => {
+  const REAL = TALE_CONTENT;
+  const BEAST = REAL.enemies[0]!;
+  const FIERCE = [...REAL.enemies].sort((a, b) => b.meng - a.meng)[0]!;
+  const SIGIL = REAL.sigils[0]!;
+  const GATED = REAL.destinations.find((place) => place.requiresOrganIds.length > 0)!;
+  const GATELESS = REAL.destinations.find((place) => place.requiresOrganIds.length === 0)!;
+
+  function vm(patch: Partial<Bloodline> = {}) {
+    return buildSeedScreenVm({ ...realBloodline(), ...patch }, REAL, 20260814);
+  }
+
+  describe("异兽图鉴（不泄露）", () => {
+    it("一头都没照面时八行全是「？」，序列化之后也搜不到任何兽名", () => {
+      const codex = vm().codex;
+      expect(codex.beasts).toHaveLength(REAL.enemies.length);
+      for (const row of codex.beasts) {
+        expect(row.known).toBe(false);
+        expect(row.name).toBe("？");
+        expect(row.id).toBeNull();
+      }
+      const serialized = JSON.stringify(codex.beasts);
+      for (const enemy of REAL.enemies) {
+        expect(serialized, `${enemy.id} 的名字漏进了 VM`).not.toContain(enemy.name);
+      }
+    });
+
+    it("照过面的摊开名号与两个数；顺序**恒按内容表**（位置固定才记得住哪一格还是问号）", () => {
+      const codex = vm({ knownEnemyIds: [FIERCE.id] }).codex;
+      expect(codex.beasts.map((row) => row.known)).toEqual(
+        REAL.enemies.map((enemy) => enemy.id === FIERCE.id),
+      );
+      const row = codex.beasts.find((item) => item.id === FIERCE.id)!;
+      expect(row.name).toBe(FIERCE.name);
+      expect(row.meta).toContain(String(FIERCE.meng));
+      expect(row.lore).toBe(false);
+    });
+
+    it("参透过的标「已参透」", () => {
+      const codex = vm({ knownEnemyIds: [BEAST.id], loreEnemyIds: [BEAST.id] }).codex;
+      expect(codex.beasts.find((item) => item.id === BEAST.id)?.lore).toBe(true);
+    });
+
+    it("总览那一条把四个分数并排（这一屏「往哪使劲」的第一层答案）", () => {
+      const codex = vm({
+        knownSynergyIds: [REAL.synergies[0]!.id],
+        knownDestinationIds: [GATELESS.id],
+        knownEnemyIds: [BEAST.id],
+      }).codex;
+      expect(codex.summary).toContain(`已知异变 1/${REAL.synergies.length}`);
+      expect(codex.summary).toContain(`已至之地 1/${REAL.destinations.length}`);
+      expect(codex.summary).toContain(`已识异兽 1/${REAL.enemies.length}`);
+      expect(codex.summary).toContain("历代 0 篇");
+      expect(codex.beastCaption).toBe(`已识异兽 1/${REAL.enemies.length}`);
+    });
+  });
+
+  describe("三个新货架", () => {
+    it("图鉴知识：只上架照过面的；标价、买得起、还差多少", () => {
+      const poor = vm({ knownEnemyIds: [FIERCE.id] }).codex;
+      expect(poor.lores).toHaveLength(1);
+      expect(poor.lores[0]?.affordable).toBe(false);
+      expect(poor.lores[0]?.shortfall).toBeGreaterThan(0);
+      const rich = vm({ points: 99, knownEnemyIds: [FIERCE.id] }).codex;
+      expect(rich.lores[0]?.affordable).toBe(true);
+      expect(rich.lores[0]?.shortfall).toBe(0);
+      // 买到的是**信息**，所以那一行写的是读得出什么，不是「+X」
+      expect(rich.lores[0]?.gain).not.toMatch(/\+\d/);
+    });
+
+    it("图鉴知识：一头都没照面时给一句话而不是留白", () => {
+      expect(vm().codex.lores).toHaveLength(0);
+      expect(vm().codex.loreEmptyNote).not.toBeNull();
+    });
+
+    it("图录：**只上架已到过且有门槛的**（兽径不上架）", () => {
+      const codex = vm({ points: 99, knownDestinationIds: [GATED.id, GATELESS.id] }).codex;
+      expect(codex.charts.map((row) => row.destinationId)).toEqual([GATED.id]);
+      expect(codex.charts[0]?.gate).toContain(
+        REAL.organs.find((organ) => organ.id === GATED.requiresOrganIds[0])!.name,
+      );
+      expect(codex.charts[0]?.affordable).toBe(true);
+    });
+
+    it("图录：买过之后**整排锁住**（一世一处，界面是 `buyChart` 的镜像）", () => {
+      const codex = vm({
+        points: 99,
+        knownDestinationIds: REAL.destinations.map((place) => place.id),
+        chartedDestinationId: GATED.id,
+      }).codex;
+      expect(codex.chosenChartName).toBe(GATED.name);
+      for (const row of codex.charts) expect(row.affordable).toBe(false);
+      expect(codex.charts.find((row) => row.destinationId === GATED.id)?.chosen).toBe(true);
+    });
+
+    it("世家印记：五枚全列；满员之后整排锁住（上限是 `buySigil` 的镜像）", () => {
+      const codex = vm({ points: 99 }).codex;
+      expect(codex.sigils).toHaveLength(REAL.sigils.length);
+      expect(codex.sigils.every((row) => row.affordable)).toBe(true);
+      expect(codex.sigils[0]?.effect).toMatch(/^每世 /);
+
+      const full = vm({
+        points: 99,
+        sigilIds: REAL.sigils.slice(0, REAL.tuning.sigilCap).map((sigil) => sigil.id),
+      }).codex;
+      expect(full.sigilCaption).toBe(`已受 ${REAL.tuning.sigilCap}/${REAL.tuning.sigilCap} 枚`);
+      for (const row of full.sigils) expect(row.affordable).toBe(false);
+      expect(full.sigils.find((row) => row.sigilId === SIGIL.id)?.owned).toBe(true);
+    });
+  });
+
+  describe("转世建议（「这一世可以试着凑 X」）", () => {
+    /** 上一世的终态：身上带着这几件器官 */
+    function lastLife(organIds: readonly string[]): TaleState {
+      const state = createLife(20260814, REAL.seeds[0]!.id, REAL);
+      return { ...state, organIds: [...state.organIds, ...organIds] };
+    }
+
+    it("已发现的组合差一件 → 点名那一件，并说它顺带开哪一处", () => {
+      // 秘窟与「夜猎之眼」共用配方（雾目＋夜瞳）—— 这一条正好同时覆盖两半
+      const synergy = REAL.synergies.find((item) => item.organIds.length === 2)!;
+      const have = synergy.organIds[0]!;
+      const missing = synergy.organIds[1]!;
+      const quests = buildSeedScreenVm(
+        { ...realBloodline(), knownSynergyIds: [synergy.id] },
+        REAL,
+        20260814,
+        lastLife([have]),
+      ).next.quests;
+      const first = quests[0] ?? "";
+      expect(first).toContain(REAL.organs.find((organ) => organ.id === have)!.name);
+      expect(first).toContain(REAL.organs.find((organ) => organ.id === missing)!.name);
+      expect(first).toContain(synergy.name);
+    });
+
+    it("**不许**拿没发现过的组合去写建议（S1 铁律）", () => {
+      const synergy = REAL.synergies[0]!;
+      const quests = buildSeedScreenVm(
+        realBloodline(),
+        REAL,
+        20260814,
+        lastLife([synergy.organIds[0]!]),
+      ).next.quests;
+      for (const quest of quests) expect(quest).not.toContain(synergy.name);
+    });
+
+    it("没去过的地方差一件门槛 → 写全门槛并点名缺的那一件（门槛是公开信息）", () => {
+      // 双件门槛的那一处：只带一件进去，才量得到「已走到一半」那一支措辞
+      const twoGate = REAL.destinations.find((place) => place.requiresOrganIds.length === 2)!;
+      const quests = buildSeedScreenVm(
+        realBloodline(),
+        REAL,
+        20260814,
+        lastLife([twoGate.requiresOrganIds[0]!]),
+      ).next.quests;
+      const line = quests.find((quest) => quest.includes(twoGate.name)) ?? "";
+      expect(line).not.toBe("");
+      for (const id of twoGate.requiresOrganIds) {
+        expect(line).toContain(REAL.organs.find((organ) => organ.id === id)!.name);
+      }
+      // 「已走到一半」那一支，而不是「只要一件」
+      expect(line).toContain("只差");
+    });
+
+    it("头一世（没有前世）也点得出一处单件门槛的地方，但**不说「只差」**", () => {
+      const line = vm().next.quests.find((quest) => quest.includes("历代未至")) ?? "";
+      expect(line).toContain("门槛只要一件");
+      expect(line).not.toContain("只差");
+    });
+
+    it("已照面、买得起、还没参透的兽 → 写出价钱与买到的东西", () => {
+      const quests = buildSeedScreenVm(
+        { ...realBloodline(), points: 99, knownEnemyIds: [FIERCE.id] },
+        REAL,
+        20260814,
+      ).next.quests;
+      expect(quests.some((quest) => quest.includes(FIERCE.name))).toBe(true);
+    });
+
+    it("**买不起的不写**（一条买不起的建议不是建议）", () => {
+      const quests = buildSeedScreenVm(
+        { ...realBloodline(), points: 0, knownEnemyIds: [FIERCE.id] },
+        REAL,
+        20260814,
+      ).next.quests;
+      expect(quests.some((quest) => quest.includes(FIERCE.name))).toBe(false);
+    });
+
+    it("一条都推不出来时给兜底那一句（不留空 —— 空白只会让人以为界面坏了）", () => {
+      // 造一份「无门槛去处 ＋ 无印记」的内容：四条优先级全落空的那个角落
+      const barren: TaleContent = {
+        ...REAL,
+        sigils: [],
+        destinations: REAL.destinations.filter((place) => place.requiresOrganIds.length === 0),
+      };
+      const quests = buildSeedScreenVm(
+        { ...realBloodline(), knownDestinationIds: barren.destinations.map((p) => p.id) },
+        barren,
+        20260814,
+      ).next.quests;
+      expect(quests).toHaveLength(1);
+      expect(quests[0]).toContain(String(REAL.synergies.length));
+      expect(quests[0]).toContain(String(REAL.enemies.length));
+    });
+
+    it("至多三条（一屏读得完）", () => {
+      const synergy = REAL.synergies.find((item) => item.organIds.length === 2)!;
+      const quests = buildSeedScreenVm(
+        {
+          ...realBloodline(),
+          points: 99,
+          knownSynergyIds: REAL.synergies.map((item) => item.id),
+          knownEnemyIds: REAL.enemies.map((enemy) => enemy.id),
+        },
+        REAL,
+        20260814,
+        lastLife([synergy.organIds[0]!]),
+      ).next.quests;
+      expect(quests.length).toBeLessThanOrEqual(3);
+    });
   });
 });

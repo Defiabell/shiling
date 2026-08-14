@@ -93,6 +93,13 @@ export interface CombatVm {
   enemyDesc: string;
   enemyTags: string[];
   /**
+   * [S3] 「已入图鉴」的常驻小牌 —— 花血统点参透过这一头，所以这一场读得出它的意图。
+   *
+   * 与 `intentKnown` 分开一位：那一位说「读不读得出」，这一位说**凭什么**读得出。
+   * 三个来源（器官／明识这一段／历代所记）在屏幕上是三句不同的话。
+   */
+  enemyLoreBadge: string | null;
+  /**
    * 敌人头像（1:1 胸像）。内容库里查不到这个 id 时为 null —— 那是内容 bug，
    * 界面退回程序化占位，不去请求一个必然 404 的路径。
    */
@@ -155,8 +162,10 @@ const INTENT_CLASS_LABEL = {
 } as const;
 
 const INTENT_CLASS_HINT = {
-  act: "看得出它要出手，但看不出是虚是实 —— 灵犀、夜瞳之类的器官才读得清。",
-  hold: "它没有要动的样子。是在守，还是要走？读不出来。",
+  // [S3] 「或以血统参透此兽」——读不出来的那一行要说得出**两条**出路（这一世长器官／历代攒知识），
+  // 否则一个奔跨世积累的玩家永远不知道图鉴知识治的就是这一行
+  act: "看得出它要出手，但看不出是虚是实 —— 灵犀、夜瞳之类的器官才读得清，或以血统参透此兽。",
+  hold: "它没有要动的样子。是在守，还是要走？读不出来 —— 灵犀、夜瞳之类的器官才读得清，或以血统参透此兽。",
 } as const;
 
 const INTENT_KIND_TAG = {
@@ -396,6 +405,7 @@ export function buildCombatVm(
     enemyName: enemy?.name ?? combat.enemyId,
     enemyDesc: enemy?.desc ?? "",
     enemyTags: enemy?.tags ?? [],
+    enemyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
     enemyPortrait: enemy ? { kind: "image", src: enemyArt(enemy.id), aspect: "1 / 1" } : null,
     enemyHp: Math.max(0, combat.enemyHp),
     enemyHpMax,

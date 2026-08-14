@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { boonCost, type Bloodline, type ChronicleEntry, type SeedDef, type TaleContent } from "@shiling/tale-sim";
+import {
+  boonCost,
+  chartCost,
+  loreCost,
+  type Bloodline,
+  type ChronicleEntry,
+  type SeedDef,
+  type TaleContent,
+} from "@shiling/tale-sim";
 import {
   BLOODLINE_KEY,
   CHRONICLE_CAPACITY,
   buyBoon,
+  buyChart,
+  buyLore,
+  buySigil,
   consumeBoon,
+  consumeChart,
   emptyBloodline,
   noteExploration,
   noteSynergies,
@@ -115,7 +127,7 @@ describe("parseBloodline", () => {
 describe("save／load 往返", () => {
   it("写进去再读出来是同一份", () => {
     const storage = new MemoryStorage();
-    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
+    const bloodline: Bloodline = { points: 7, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [entry("甲传")], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [], knownEnemyIds: [], loreEnemyIds: [], sigilIds: [], chartedDestinationId: null };
     expect(saveBloodline(storage, bloodline)).toBe(true);
     expect(storage.getItem(BLOODLINE_KEY)).toBe(serializeBloodline(bloodline));
     expect(loadBloodline(storage, FIXTURE_CONTENT)).toEqual(bloodline);
@@ -161,7 +173,7 @@ describe("recordLife", () => {
 
 describe("unlockSeed", () => {
   it("点数够 → 扣点并加入已解锁", () => {
-    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
+    const before: Bloodline = { points: 6, unlockedSeedIds: [FIXTURE_SEED_ID], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [], knownEnemyIds: [], loreEnemyIds: [], sigilIds: [], chartedDestinationId: null };
     const after = unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID);
     expect(after?.points).toBe(1);
     expect(after?.unlockedSeedIds).toContain(PAID_SEED.id);
@@ -169,12 +181,12 @@ describe("unlockSeed", () => {
   });
 
   it("点数不足 → null（调用方据此不扣点、不改状态）", () => {
-    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
+    const before: Bloodline = { points: 4, unlockedSeedIds: [], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [], knownEnemyIds: [], loreEnemyIds: [], sigilIds: [], chartedDestinationId: null };
     expect(unlockSeed(before, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
   });
 
   it("未知 id、免费种、已解锁都返回 null", () => {
-    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [] };
+    const rich: Bloodline = { points: 99, unlockedSeedIds: [PAID_SEED.id], chronicle: [], knownSynergyIds: [], knownOrganIds: [], boonOrganId: null, knownDestinationIds: [], foundTreasureIds: [], knownEnemyIds: [], loreEnemyIds: [], sigilIds: [], chartedDestinationId: null };
     expect(unlockSeed(rich, "seed-nope", CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, FIXTURE_SEED_ID, CONTENT_WITH_PAID)).toBeNull();
     expect(unlockSeed(rich, PAID_SEED.id, CONTENT_WITH_PAID)).toBeNull();
@@ -421,5 +433,173 @@ describe("[S2] noteExploration 与去处／秘藏的存档", () => {
     );
     expect(parsed.knownDestinationIds).toEqual([PLACE.id]);
     expect(parsed.foundTreasureIds).toEqual([PLACE.treasure.id]);
+  });
+});
+
+/**
+ * [S3] 另外三类血统消费 ＋ 「已识异兽」那一格。
+ *
+ * 四类消费的规则**只有 persist 层这一份**（界面的置灰是它的镜像）—— S1 的血脉踩过
+ * 「同一条规则两套语义、而花钱的那一份是松的」这个坑，所以这一组把每一条买不成的路都钉住。
+ */
+describe("[S3] 图鉴知识 · 世家印记 · 图录", () => {
+  const REAL = TALE_CONTENT;
+  const BEAST = REAL.enemies[0]!;
+  const FIERCE = [...REAL.enemies].sort((a, b) => b.meng - a.meng)[0]!;
+  const SIGIL = REAL.sigils[0]!;
+  /** 有门槛、可上货架的一处（兽径 chartCost 恒 0，不卖） */
+  const GATED = REAL.destinations.find((place) => place.requiresOrganIds.length > 0)!;
+
+  function rich(patch: Partial<Bloodline> = {}): Bloodline {
+    return { ...emptyBloodline(REAL), points: 99, ...patch };
+  }
+
+  describe("noteExploration 的第三样：照过面的异兽", () => {
+    it("记下新照面的兽；已知的跳过且引用相等", () => {
+      const once = noteExploration(emptyBloodline(REAL), [], [], [BEAST.id]);
+      expect(once.knownEnemyIds).toEqual([BEAST.id]);
+      expect(noteExploration(once, [], [], [BEAST.id])).toBe(once);
+    });
+
+    it("不给第四个参数时行为与 S2 逐字相同（既有调用点不受影响）", () => {
+      const next = noteExploration(emptyBloodline(REAL), [GATED.id], []);
+      expect(next.knownEnemyIds).toEqual([]);
+      expect(next.knownDestinationIds).toEqual([GATED.id]);
+    });
+  });
+
+  describe("buyLore", () => {
+    it("照过面 ＋ 点数够 → 扣点并记进已参透", () => {
+      const before = rich({ knownEnemyIds: [BEAST.id] });
+      const after = buyLore(before, BEAST.id, REAL);
+      expect(after?.loreEnemyIds).toEqual([BEAST.id]);
+      expect(after?.points).toBe(99 - loreCost(BEAST.id, REAL));
+      expect(before.loreEnemyIds).toEqual([]);
+    });
+
+    it("四种买不成一律 null：没这头兽／没照过面／已参透／点数不够", () => {
+      expect(buyLore(rich({ knownEnemyIds: [BEAST.id] }), "enemy-nope", REAL)).toBeNull();
+      expect(buyLore(rich(), BEAST.id, REAL)).toBeNull();
+      expect(
+        buyLore(rich({ knownEnemyIds: [BEAST.id], loreEnemyIds: [BEAST.id] }), BEAST.id, REAL),
+      ).toBeNull();
+      expect(
+        buyLore({ ...emptyBloodline(REAL), points: 0, knownEnemyIds: [BEAST.id] }, BEAST.id, REAL),
+      ).toBeNull();
+    });
+
+    it("越凶的兽越贵（价目表由引擎给，这里只验它被真的用上了）", () => {
+      const cheap = buyLore(rich({ knownEnemyIds: [BEAST.id] }), BEAST.id, REAL);
+      const dear = buyLore(rich({ knownEnemyIds: [FIERCE.id] }), FIERCE.id, REAL);
+      expect(dear!.points).toBeLessThan(cheap!.points);
+    });
+  });
+
+  describe("buySigil", () => {
+    it("点数够 → 扣点并受印", () => {
+      const after = buySigil(rich(), SIGIL.id, REAL);
+      expect(after?.sigilIds).toEqual([SIGIL.id]);
+      expect(after?.points).toBe(99 - SIGIL.cost);
+    });
+
+    it("**上限**在这里而不是只在界面上（S1 血脉那条教训的同一形状）", () => {
+      let bloodline = rich();
+      for (const sigil of REAL.sigils.slice(0, REAL.tuning.sigilCap)) {
+        bloodline = buySigil(bloodline, sigil.id, REAL)!;
+      }
+      expect(bloodline.sigilIds).toHaveLength(REAL.tuning.sigilCap);
+      const overflow = REAL.sigils[REAL.tuning.sigilCap];
+      expect(overflow).toBeDefined();
+      expect(buySigil(bloodline, overflow!.id, REAL)).toBeNull();
+    });
+
+    it("未知 id、已受、点数不足都返回 null", () => {
+      expect(buySigil(rich(), "sigil-nope", REAL)).toBeNull();
+      expect(buySigil(rich({ sigilIds: [SIGIL.id] }), SIGIL.id, REAL)).toBeNull();
+      expect(buySigil({ ...emptyBloodline(REAL), points: 0 }, SIGIL.id, REAL)).toBeNull();
+    });
+  });
+
+  describe("buyChart", () => {
+    it("到过 ＋ 有门槛 ＋ 点数够 → 扣点并定下下一世的图录", () => {
+      const before = rich({ knownDestinationIds: [GATED.id] });
+      const after = buyChart(before, GATED.id, REAL);
+      expect(after?.chartedDestinationId).toBe(GATED.id);
+      expect(after?.points).toBe(99 - chartCost(GATED.id, REAL));
+    });
+
+    it("没到过的地方画不出图；**无门槛的那一处不卖**（chartCost 恒 0）", () => {
+      expect(buyChart(rich(), GATED.id, REAL)).toBeNull();
+      const gateless = REAL.destinations.find((place) => place.requiresOrganIds.length === 0)!;
+      expect(buyChart(rich({ knownDestinationIds: [gateless.id] }), gateless.id, REAL)).toBeNull();
+    });
+
+    it("一世一处：买过就买不了第二处（同血脉，且不退款）", () => {
+      const other = REAL.destinations.find(
+        (place) => place.requiresOrganIds.length > 0 && place.id !== GATED.id,
+      )!;
+      const once = buyChart(rich({ knownDestinationIds: [GATED.id, other.id] }), GATED.id, REAL)!;
+      expect(buyChart(once, other.id, REAL)).toBeNull();
+      expect(buyChart(once, GATED.id, REAL)).toBeNull();
+      // 用掉之后才能再买
+      expect(buyChart(consumeChart(once), other.id, REAL)?.chartedDestinationId).toBe(other.id);
+    });
+
+    it("consumeChart 不退钱（钱在买的那一刻就付了）", () => {
+      const once = buyChart(rich({ knownDestinationIds: [GATED.id] }), GATED.id, REAL)!;
+      expect(consumeChart(once).points).toBe(once.points);
+      expect(consumeChart(once).chartedDestinationId).toBeNull();
+    });
+  });
+
+  describe("存档", () => {
+    it("四个新键写得进也读得出", () => {
+      const storage = new MemoryStorage();
+      const bloodline: Bloodline = {
+        ...emptyBloodline(REAL),
+        points: 3,
+        knownEnemyIds: [BEAST.id],
+        loreEnemyIds: [BEAST.id],
+        sigilIds: [SIGIL.id],
+        knownDestinationIds: [GATED.id],
+        chartedDestinationId: GATED.id,
+      };
+      expect(saveBloodline(storage, bloodline)).toBe(true);
+      expect(loadBloodline(storage, REAL)).toEqual(bloodline);
+    });
+
+    it("旧档（S3 之前，没有这四个键）降级成空／null，而不是崩", () => {
+      const parsed = parseBloodline(JSON.stringify({ points: 5 }), REAL);
+      expect(parsed.knownEnemyIds).toEqual([]);
+      expect(parsed.loreEnemyIds).toEqual([]);
+      expect(parsed.sigilIds).toEqual([]);
+      expect(parsed.chartedDestinationId).toBeNull();
+      expect(parsed.points).toBe(5);
+    });
+
+    it("悬空 id 丢弃；「已参透」必须是「已照面」的子集（否则图鉴会出现「？ · 已参透」）", () => {
+      const parsed = parseBloodline(
+        JSON.stringify({
+          knownEnemyIds: [BEAST.id, "enemy-gone", 42],
+          loreEnemyIds: [BEAST.id, FIERCE.id],
+        }),
+        REAL,
+      );
+      expect(parsed.knownEnemyIds).toEqual([BEAST.id]);
+      expect(parsed.loreEnemyIds).toEqual([BEAST.id]);
+    });
+
+    it("手改过的存档里超额的印记被截到上限", () => {
+      const parsed = parseBloodline(
+        JSON.stringify({ sigilIds: REAL.sigils.map((sigil) => sigil.id) }),
+        REAL,
+      );
+      expect(parsed.sigilIds).toHaveLength(REAL.tuning.sigilCap);
+    });
+
+    it("没到过的地方的图录不许从存档里读回来", () => {
+      const parsed = parseBloodline(JSON.stringify({ chartedDestinationId: GATED.id }), REAL);
+      expect(parsed.chartedDestinationId).toBeNull();
+    });
   });
 });

@@ -16,6 +16,8 @@
 import { describe, expect, it } from "vitest";
 import {
   WAY_FLAGS,
+  chartCost,
+  loreCost,
   type EffectDelta,
   type EventChoice,
   type PremiseDef,
@@ -40,6 +42,7 @@ import {
   PREY_IDS,
   REST_EVENTS,
   SEEDS,
+  SIGILS,
   SKIES,
   SYNERGIES,
   TALE_CONTENT,
@@ -1031,5 +1034,130 @@ describe("探索去处（S2）", () => {
         expect(TREASURE_IDS.has(id), `${event.id} 引用了不存在的秘藏 ${id}`).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * [S3] 世家印记与三份价目表。
+ *
+ * 这一组守的是**经济学**而不是拼写：四类消费共用一笔点数（一世产 3〜8），
+ * 定价错了不会有任何运行时报错，只会让 owner 在第十三世发现「点数又没处花了」——
+ * 而那正是这一批要治的病。所以「花得完」与「买不全」两条都写成可执行的断言。
+ */
+describe("[S3] 世家印记与血统价目表", () => {
+  it("印记数量 > 上限（否则「买哪三枚」不是一道题）", () => {
+    expect(SIGILS.length).toBeGreaterThan(TUNING.sigilCap!);
+  });
+
+  it("id 唯一、价钱为正、每一枚都真的给了点什么", () => {
+    expect(new Set(SIGILS.map((sigil) => sigil.id)).size).toBe(SIGILS.length);
+    for (const sigil of SIGILS) {
+      expect(sigil.cost, `${sigil.id} 的价钱`).toBeGreaterThan(0);
+      const stats = Object.values(sigil.statMods).filter((value) => (value ?? 0) !== 0);
+      expect(
+        stats.length > 0 || (sigil.hungerBonus ?? 0) > 0,
+        `${sigil.id} 什么都不给`,
+      ).toBe(true);
+    }
+  });
+
+  it("**一枚只动一件事**（读起来才是「一枚印记＝一件事」）", () => {
+    for (const sigil of SIGILS) {
+      const touched =
+        Object.values(sigil.statMods).filter((value) => (value ?? 0) !== 0).length +
+        ((sigil.hungerBonus ?? 0) > 0 ? 1 : 0);
+      expect(touched, `${sigil.id} 同时动了 ${touched} 件事`).toBe(1);
+    }
+  });
+
+  it("**加成必须小**：满员三枚的属性总和 < 一件器官的量级（四道门槛在 40〜90 之间）", () => {
+    const perSigil = SIGILS.map((sigil) =>
+      Object.values(sigil.statMods).reduce((sum, value) => sum + (value ?? 0), 0),
+    ).sort((a, b) => b - a);
+    const worst = perSigil.slice(0, TUNING.sigilCap!).reduce((sum, value) => sum + value, 0);
+    // 12 件器官里 statMods 最大的那一件 —— 印记满员也不该超过它
+    const bestOrgan = Math.max(
+      ...ORGANS.map((organ) =>
+        Object.values(organ.statMods ?? {}).reduce((sum, value) => sum + (value ?? 0), 0),
+      ),
+    );
+    expect(worst).toBeLessThanOrEqual(bestOrgan);
+  });
+
+  it("文案不是占位（名号带「印记」，因果句成句）", () => {
+    for (const sigil of SIGILS) {
+      expect(sigil.name).toContain("印记");
+      expect(sigil.desc.length, `${sigil.id} 的因果句`).toBeGreaterThanOrEqual(12);
+      expect(sigil.desc.endsWith("。")).toBe(true);
+    }
+  });
+
+  it("图录：**每一处有门槛的去处都卖得出去**，兽径那一处恒 0（不上货架）", () => {
+    for (const destination of DESTINATIONS) {
+      const cost = chartCost(destination.id, TALE_CONTENT);
+      if (destination.requiresOrganIds.length === 0) {
+        expect(cost, `${destination.id} 无门槛却标了价`).toBe(0);
+      } else {
+        expect(cost, `${destination.id} 的图录`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("图鉴知识：八头都卖得出去，且越凶越贵（严格单调不要求，但不许反着来）", () => {
+    const byMeng = [...ENEMIES].sort((a, b) => a.meng - b.meng);
+    let prev = 0;
+    for (const enemy of byMeng) {
+      const cost = loreCost(enemy.id, TALE_CONTENT);
+      expect(cost, `${enemy.id} 的知识`).toBeGreaterThan(0);
+      expect(cost, `${enemy.id} 比更弱的兽还便宜`).toBeGreaterThanOrEqual(prev);
+      prev = cost;
+    }
+  });
+
+  /**
+   * 经济学第一条：**永远有东西可买**。
+   *
+   * 「一世一次」的两类（血脉／图录）里最便宜的那一样，价钱不得高于一世产出的下界（3）＋ 一点，
+   * 否则一个短命的玩家会连着几世什么都买不起 —— 那就是 S3 之前的状态换了个说法。
+   */
+  it("最便宜的一次性消费买得起（一世产 3〜8 点）", () => {
+    const cheapestChart = Math.min(
+      ...DESTINATIONS.filter((place) => place.requiresOrganIds.length > 0).map((place) =>
+        chartCost(place.id, TALE_CONTENT),
+      ),
+    );
+    expect(Math.min(TUNING.bloodlineBoonCost!, cheapestChart)).toBeLessThanOrEqual(4);
+  });
+
+  /**
+   * 经济学第二条：**买不全**。
+   *
+   * 「一世一次」的两类加起来必须**大于**一世产出的下界，否则每一世都能两样全买，
+   * 那道取舍（这一世带器官，还是下深处）就不存在了。
+   */
+  it("血脉 ＋ 最便宜的图录 > 一世产出的下界（3）—— 两样不能都买", () => {
+    const cheapestChart = Math.min(
+      ...DESTINATIONS.filter((place) => place.requiresOrganIds.length > 0).map((place) =>
+        chartCost(place.id, TALE_CONTENT),
+      ),
+    );
+    expect(TUNING.bloodlineBoonCost! + cheapestChart).toBeGreaterThan(3);
+  });
+
+  /**
+   * 经济学第三条：**一次性的那三类要够玩很多世**。
+   *
+   * 神种（13）＋ 八头知识 ＋ 满员印记的总额，除以一世产出的上界（8），至少要五世 ——
+   * 少于这个数，owner 玩到第五世就又回到「点数无处可花」。
+   * （**只是下界**：一次性买空之后，一世一次的血脉与图录仍然恒有东西可买，见下一条。）
+   */
+  it("一次性消费总额 ≥ 五世的满额产出（不许几世就买空）", () => {
+    const seeds = SEEDS.reduce((sum, seed) => sum + seed.cost, 0);
+    const lores = ENEMIES.reduce((sum, enemy) => sum + loreCost(enemy.id, TALE_CONTENT), 0);
+    const sigils = [...SIGILS]
+      .sort((a, b) => a.cost - b.cost)
+      .slice(0, TUNING.sigilCap!)
+      .reduce((sum, sigil) => sum + sigil.cost, 0);
+    expect(seeds + lores + sigils).toBeGreaterThanOrEqual(5 * 8);
   });
 });

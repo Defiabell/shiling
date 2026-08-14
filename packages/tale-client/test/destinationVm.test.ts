@@ -165,3 +165,49 @@ describe("destinationCaption", () => {
     expect(caption).toContain("已至 〇 处");
   });
 });
+
+/**
+ * [S3] 图录开的那一处：按钮上要写得出**凭什么进得去**。
+ *
+ * 不写的后果是玩家会以为自己已经凑齐了那两件器官，而下一世图录用掉之后它又灰回去
+ * —— 一次没有任何解释的倒退（legibility 那条铁律：界面不许让玩家自己猜规则）。
+ */
+describe("[S3] 图录", () => {
+  it("带着图录 → 那一处可点，且写明「图录在手 —— 此番不必其门」并列出门槛", () => {
+    const state = withPatch(realState(), { chartedDestinationId: GATED.id });
+    const vm = buildDestinationVms(state, CONTENT).find((item) => item.id === GATED.id)!;
+    expect(vm.enabled).toBe(true);
+    expect(vm.disabledReason).toBeNull();
+    expect(vm.chartedOpen).toBe(true);
+    expect(vm.chartNote).toContain("图录在手");
+    for (const id of GATED.requiresOrganIds) {
+      expect(vm.chartNote).toContain(CONTENT.organs.find((organ) => organ.id === id)!.name);
+    }
+  });
+
+  it("图录只开这一处，别处照旧写「尚不得其门」", () => {
+    const state = withPatch(realState(), { chartedDestinationId: GATED.id });
+    const other = buildDestinationVms(state, CONTENT).find((item) => item.id === SINGLE.id)!;
+    expect(other.enabled).toBe(false);
+    expect(other.disabledReason).toContain("尚不得其门");
+    expect(other.chartNote).toBeNull();
+  });
+
+  it("门槛本来就凑齐了 → **不**写图录那一行（那不是图录的功劳）", () => {
+    const base = withOrgans([...GATED.requiresOrganIds]);
+    const state = withPatch(base, { chartedDestinationId: GATED.id });
+    const vm = buildDestinationVms(state, CONTENT).find((item) => item.id === GATED.id)!;
+    expect(vm.enabled).toBe(true);
+    expect(vm.chartedOpen).toBe(false);
+    expect(vm.chartNote).toBeNull();
+  });
+
+  it("四项事实照写（图录不省掉任何一项后果）", () => {
+    const state = withPatch(realState(), { chartedDestinationId: GATED.id });
+    const vm = buildDestinationVms(state, CONTENT).find((item) => item.id === GATED.id)!;
+    expect(vm.chanceLine).toMatch(/^遇事 /);
+    expect(vm.perilLine).toContain(PERIL_LABELS[vm.peril]);
+    expect(vm.costLine).toContain("耗饱食");
+    expect(vm.desc.length).toBeGreaterThan(0);
+  });
+});

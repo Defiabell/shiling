@@ -79,7 +79,11 @@ import {
   browserStorage,
   loadBloodline,
   buyBoon,
+  buyChart,
+  buyLore,
+  buySigil,
   consumeBoon,
+  consumeChart,
   noteExploration,
   noteSynergies,
   recordLife,
@@ -114,6 +118,14 @@ export interface AppOptions {
    */
   grantOrganIds?: readonly string[];
   /**
+   * **仅 dev**：出生时额外带上的「图鉴知识」（`?lore=xuan-mang` 传入，见 main.ts）。
+   *
+   * 存在的理由与 `grantOrganIds` 逐字相同：S3 的验收要「同一头猎物、已识与未识的两张
+   * 对照截图」，而真玩要先照面、再攒够点数、再转世 —— 拿不到**同一个种子同一场追猎**
+   * 的两张图。生产构建里这一段不生效。
+   */
+  grantLoreEnemyIds?: readonly string[];
+  /**
    * [P1] AI 史官的配置。由 main.ts 从 URL ＋ `import.meta.env.DEV` 算出来传进来 ——
    * app.ts 因此不必认识 vite 的 env，测试里也能直接关掉它（缺省即关）。
    */
@@ -134,6 +146,7 @@ export class TaleApp {
   private readonly storage: StorageLike | null;
   private readonly baseSeed: number;
   private readonly grantOrganIds: readonly string[];
+  private readonly grantLoreEnemyIds: readonly string[];
 
   private screen: ScreenId = "title";
   private titleHandle: ScreenHandle | null = null;
@@ -215,6 +228,7 @@ export class TaleApp {
     this.storage = options.storage === undefined ? browserStorage() : options.storage;
     this.baseSeed = options.seed ?? (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
     this.grantOrganIds = options.grantOrganIds ?? [];
+    this.grantLoreEnemyIds = options.grantLoreEnemyIds ?? [];
     // 缺省关：没显式给配置的调用方（测试、任何非 dev 入口）不该在死亡路径上发网络请求
     this.aiConfig = options.ai ?? historianConfig("", false);
     this.scenarioConfig = options.scenario ?? scenarioConfig("", false);
@@ -277,6 +291,10 @@ export class TaleApp {
         onChoose: (seedId) => void this.safely(async () => this.startLife(seedId)),
         onUnlock: (seedId) => this.tryUnlock(seedId),
         onBuyBoon: (organId) => this.tryBuyBoon(organId),
+        // [S3] 另外三类消费走同一条「买不成就什么都不做」的路（判据只有一份，在 persist 层）
+        onBuyChart: (destinationId) => this.trySpend(buyChart(this.bloodline, destinationId, CONTENT)),
+        onBuySigil: (sigilId) => this.trySpend(buySigil(this.bloodline, sigilId, CONTENT)),
+        onBuyLore: (enemyId) => this.trySpend(buyLore(this.bloodline, enemyId, CONTENT)),
         onBack: () => this.goTitle(),
       }),
     );
@@ -297,7 +315,17 @@ export class TaleApp {
    * 界面上那颗按钮本来也是置灰的（同 `tryUnlock` 的约定 —— 判据只有一份，在 persist 层）。
    */
   private tryBuyBoon(organId: string): void {
-    const next = buyBoon(this.bloodline, organId, CONTENT);
+    this.trySpend(buyBoon(this.bloodline, organId, CONTENT));
+  }
+
+  /**
+   * [S3] 一次血统消费的落账 —— 四类共用。
+   *
+   * `null` ＝ 买不成（点数不够／已买过／没见过），这时**什么都不做**：界面上那颗按钮
+   * 本来也是置灰的（判据只有一份，在 persist 层）。抽成一处是因为四类的落账动作
+   * 逐字相同，而漏掉 `saveBloodline` 的后果是「花了点数、刷新就没了」。
+   */
+  private trySpend(next: Bloodline | null): void {
     if (!next) return;
     this.bloodline = next;
     saveBloodline(this.storage, this.bloodline);
@@ -334,11 +362,20 @@ export class TaleApp {
      * 已经拿到过，不该在下一次开局时又白拿一件。
      */
     const boonOrganId = this.bloodline.boonOrganId;
+    /*
+     * [S3] 图录同血脉：一次性，用掉即清。印记与图鉴知识是**永久**的，所以只读不清
+     * —— 那两样的钱买的是「世世都在」，清掉等于每一世重收一次费。
+     */
+    const chartedDestinationId = this.bloodline.chartedDestinationId;
     const born = createLife(seedNum, seedId, CONTENT, {
       boonOrganIds: boonOrganId === null ? [] : [boonOrganId],
+      sigilIds: this.bloodline.sigilIds,
+      // dev 对照用的额外知识与真买来的合并去重（`createLife` 自己去重）
+      loreEnemyIds: [...this.bloodline.loreEnemyIds, ...this.grantLoreEnemyIds],
+      chartedDestinationId,
     });
-    if (boonOrganId !== null) {
-      this.bloodline = consumeBoon(this.bloodline);
+    if (boonOrganId !== null || chartedDestinationId !== null) {
+      this.bloodline = consumeChart(consumeBoon(this.bloodline));
       saveBloodline(this.storage, this.bloodline);
     }
     // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
@@ -642,12 +679,17 @@ export class TaleApp {
    * 每一步之后都调，而不是死亡结算时一次收：一世打到一半刷新页面，去过的地方不该白去。
    * `noteExploration` 没有新东西时返回同一个引用，所以写盘不会每回合都发生。
    *
-   * **只记去处，不记秘藏** —— 秘藏由 `revealTreasures` 逐件记，因为它要在写档**之前**
+   * **只记去处与异兽，不记秘藏** —— 秘藏由 `revealTreasures` 逐件记，因为它要在写档**之前**
    * 读一次「这是不是头一回」（同 `revealSynergies` 的形状）。两处分开是为了让那个顺序
    * 由结构保证，而不是靠调用者记得先播后记。
+   *
+   * [S3] 异兽（`metEnemyIds`）没有揭示演出，所以跟着去处一起记。四条入口（行动／抉择／
+   * 追猎／搏杀）都调它：今天新的照面只可能发生在前两条里（起追与开战都在
+   * `performAction`／`resolveChoice` 之内），但把后两条也接上，「图鉴不漏」就成了结构性质
+   * 而不是一条要靠人记住的不变量。
    */
   private noteVisited(state: TaleState): void {
-    const next = noteExploration(this.bloodline, state.visitedDestinationIds, []);
+    const next = noteExploration(this.bloodline, state.visitedDestinationIds, [], state.metEnemyIds);
     if (next === this.bloodline) return;
     this.bloodline = next;
     saveBloodline(this.storage, this.bloodline);
@@ -714,6 +756,7 @@ export class TaleApp {
       };
     }
 
+    this.noteVisited(next);
     this.busy = false;
     this.renderPlayScreen();
     this.showDelta(prev, next, turn.over === null ? 0 : seasonHungerCost(prev));
@@ -751,6 +794,7 @@ export class TaleApp {
       };
     }
 
+    this.noteVisited(next);
     this.busy = false;
     this.renderPlayScreen();
     this.showDelta(prev, next, 0);

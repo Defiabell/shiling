@@ -28,6 +28,7 @@ import { EVENTS } from "./events/index.js";
 import { ORIGINS, SKIES } from "./premises.js";
 import { ORGANS } from "./organs.js";
 import { SEEDS } from "./seeds.js";
+import { SIGILS } from "./sigils.js";
 import { SYNERGIES } from "./synergies.js";
 import { TUNING } from "./tuning.js";
 
@@ -47,6 +48,7 @@ export const TALE_CONTENT: TaleContent = {
   origins: [...ORIGINS],
   synergies: [...SYNERGIES],
   destinations: [...DESTINATIONS],
+  sigils: [...SIGILS],
   tuning: TUNING,
   chronicleTemplates: CHRONICLE_TEMPLATES,
 };
@@ -67,6 +69,13 @@ export {
   TREASURE_YUN_GEN,
   TREASURE_ZHU_JIAN,
 } from "./destinations.js";
+export {
+  SIGILS,
+  SIGIL_GU,
+  SIGIL_MU,
+  SIGIL_SHI,
+  SIGIL_ZHAO,
+} from "./sigils.js";
 export { ENEMIES, PREY_IDS } from "./enemies.js";
 export {
   ENEMY_CAO_HU,

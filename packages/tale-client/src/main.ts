@@ -7,6 +7,7 @@
  */
 
 import { TaleApp } from "./app.js";
+import { CONTENT as CONTENT_FOR_E2E } from "./content.js";
 import { historianConfig } from "./ai/historian.js";
 import { scenarioConfig } from "./ai/scenario.js";
 import { BLOODLINE_KEY, browserStorage } from "./persist/bloodline.js";
@@ -40,6 +41,17 @@ const grantOrganIds = import.meta.env.DEV
       .filter((id) => /^[a-z0-9-]+$/.test(id))
   : [];
 
+/**
+ * `?lore=xuan-mang,yan-yang` —— **仅 dev**：出生就带上这几头兽的「图鉴知识」。
+ * S3 验收要拍「同一头猎物、已识与未识」的对照图，而那两张必须来自同一个种子同一场追猎。
+ */
+const grantLoreEnemyIds = import.meta.env.DEV
+  ? (params.get("lore") ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => /^[a-z0-9-]+$/.test(id))
+  : [];
+
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) throw new Error("main: 找不到 #app 挂载点");
 
@@ -59,6 +71,7 @@ const scenario = scenarioConfig(globalThis.location.search, import.meta.env.DEV)
 const app = new TaleApp(root, {
   ...(seed === undefined ? {} : { seed }),
   ...(grantOrganIds.length > 0 ? { grantOrganIds } : {}),
+  ...(grantLoreEnemyIds.length > 0 ? { grantLoreEnemyIds } : {}),
   ai,
   scenario,
 });
@@ -69,5 +82,19 @@ if (import.meta.env.DEV) {
   // （能从外面改 TaleState 就等于把游戏逻辑漏到了界面之外）。
   (globalThis as unknown as Record<string, unknown>).__tale = {
     snapshot: () => app.debugSnapshot(),
+    /*
+     * [S3] 内容库里**全部**名号（只读）。E2E 的「不泄露」那一问要它：判据是
+     * 「未发现的东西，它的名字在整页 innerText 里搜不到」，而那要有一份完整的名单去搜。
+     * 从屏幕上是拿不到这份名单的 —— 那正是它该拿不到的原因。dev 专用（生产构建里
+     * `import.meta.env.DEV` 为假，这一整段不生效）。
+     */
+    names: () => ({
+      synergies: Object.fromEntries(CONTENT_FOR_E2E.synergies.map((item) => [item.id, item.name])),
+      enemies: Object.fromEntries(CONTENT_FOR_E2E.enemies.map((item) => [item.id, item.name])),
+      treasures: Object.fromEntries(
+        CONTENT_FOR_E2E.destinations.map((item) => [item.treasure.id, item.treasure.name]),
+      ),
+      sigils: Object.fromEntries(CONTENT_FOR_E2E.sigils.map((item) => [item.id, item.name])),
+    }),
   };
 }

@@ -9,7 +9,16 @@
  * 半截写坏的。任何一处不合形状就退回默认值，绝不让一世开局崩在读档上。
  */
 
-import { boonCost, type Bloodline, type ChronicleEntry, type EndingType, type TaleContent } from "@shiling/tale-sim";
+import {
+  boonCost,
+  chartCost,
+  loreCost,
+  sigilById,
+  type Bloodline,
+  type ChronicleEntry,
+  type EndingType,
+  type TaleContent,
+} from "@shiling/tale-sim";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -38,6 +47,11 @@ export function emptyBloodline(content: TaleContent): Bloodline {
     // [S2] 图鉴的另外两格：去过哪儿、得过什么秘藏。同样从零开始
     knownDestinationIds: [],
     foundTreasureIds: [],
+    // [S3] 图鉴的第三格（见过哪些兽）与三个新消费项的账
+    knownEnemyIds: [],
+    loreEnemyIds: [],
+    sigilIds: [],
+    chartedDestinationId: null,
   };
 }
 
@@ -114,6 +128,25 @@ export function parseBloodline(raw: string | null, content: TaleContent): Bloodl
     new Set(content.destinations.map((item) => item.treasure.id)),
   );
 
+  /*
+   * [S3] 三样新资产同样与内容对账，理由与上两批逐字相同。多一条**上限**的对账：
+   * `sigilIds` 截到 `tuning.sigilCap` —— 一份手改过的存档不该让「至多三枚」变成一句空话
+   * （引擎那边 `createLife` 也截，两处都截是有意的：引擎那一处守规则，这一处守屏幕上的账）。
+   *
+   * 旧存档（S3 之前）没有这四个键 → 全退回空／null，等于「这个玩家还没见过任何兽、
+   * 一样新东西都没买」。那是**对的**降级：图鉴是记录，消费项是花过的钱，都不该凭空补上。
+   */
+  const knownEnemyIds = idList(record.knownEnemyIds, new Set(content.enemies.map((item) => item.id)));
+  // 「已参透」必须是「已照面」的子集：反过来会让图鉴出现一行「？ · 已参透」
+  const loreEnemyIds = idList(record.loreEnemyIds, new Set(knownEnemyIds));
+  const sigilIds = idList(record.sigilIds, new Set(content.sigils.map((item) => item.id))).slice(
+    0,
+    Math.max(0, content.tuning.sigilCap),
+  );
+  const charted = record.chartedDestinationId;
+  const chartedDestinationId =
+    typeof charted === "string" && knownDestinationIds.includes(charted) ? charted : null;
+
   return {
     points,
     unlockedSeedIds,
@@ -123,6 +156,10 @@ export function parseBloodline(raw: string | null, content: TaleContent): Bloodl
     boonOrganId,
     knownDestinationIds,
     foundTreasureIds,
+    knownEnemyIds,
+    loreEnemyIds,
+    sigilIds,
+    chartedDestinationId,
   };
 }
 
@@ -146,6 +183,10 @@ export function serializeBloodline(bloodline: Bloodline): string {
     boonOrganId: bloodline.boonOrganId,
     knownDestinationIds: bloodline.knownDestinationIds,
     foundTreasureIds: bloodline.foundTreasureIds,
+    knownEnemyIds: bloodline.knownEnemyIds,
+    loreEnemyIds: bloodline.loreEnemyIds,
+    sigilIds: bloodline.sigilIds,
+    chartedDestinationId: bloodline.chartedDestinationId,
   });
 }
 
@@ -214,28 +255,108 @@ export function noteSynergies(bloodline: Bloodline, synergyIds: readonly string[
 }
 
 /**
- * [S2] 记下这一世**到过的去处与得到的秘藏**（纯，幂等）。
+ * [S2 ＋ S3] 记下这一世的**见闻**：到过的去处、得到的秘藏、[S3] 照过面的异兽（纯，幂等）。
  *
  * 语义与 `noteSynergies` 同形：集合、只增、没有新东西就返回同一个引用（调用方据此决定
- * 要不要写存档）。两样一起收是因为它们来自同一个地方（`TaleState` 的两个数组）——
- * 分成两个函数会让客户端在**每一次行动之后**都要记得调两次，而漏调一次的后果是
+ * 要不要写存档）。三样一起收是因为它们来自同一个地方（`TaleState` 的三个数组）——
+ * 分成三个函数会让客户端在**每一次行动之后**都要记得调三次，而漏调一次的后果是
  * 图鉴与实际玩过的不一致，且不会有任何测试变红。
  *
- * ⚠️ 调用时机是**每一步之后**（不是死亡结算时）：一世打到一半刷新页面，去过的地方不该白去。
+ * ⚠️ 调用时机是**每一步之后**（不是死亡结算时）：一世打到一半刷新页面，去过的地方不该白去，
+ * 见过的兽也不该白见（尤其被它咬死的那一头 —— 那一世根本走不到结算）。
  */
 export function noteExploration(
   bloodline: Bloodline,
   destinationIds: readonly string[],
   treasureIds: readonly string[],
+  enemyIds: readonly string[] = [],
 ): Bloodline {
   const freshPlaces = destinationIds.filter((id) => !bloodline.knownDestinationIds.includes(id));
   const freshTreasures = treasureIds.filter((id) => !bloodline.foundTreasureIds.includes(id));
-  if (freshPlaces.length === 0 && freshTreasures.length === 0) return bloodline;
+  const freshEnemies = enemyIds.filter((id) => !bloodline.knownEnemyIds.includes(id));
+  if (freshPlaces.length === 0 && freshTreasures.length === 0 && freshEnemies.length === 0) {
+    return bloodline;
+  }
   return {
     ...bloodline,
     knownDestinationIds: [...bloodline.knownDestinationIds, ...freshPlaces],
     foundTreasureIds: [...bloodline.foundTreasureIds, ...freshTreasures],
+    knownEnemyIds: [...bloodline.knownEnemyIds, ...freshEnemies],
   };
+}
+
+/**
+ * [S3] 买「图鉴知识」：花血统点参透一头**已照过面**的异兽（纯）。**永久**，此后每一世都算数。
+ *
+ * 返回 null 表示买不成（同 `buyBoon`／`unlockSeed` 的约定：不改状态、不扣点）。四种买不成：
+ * 内容里没有这头兽（脏存档）／没见过它／已经参透过／点数不够。
+ *
+ * ## 它为什么不是数值加成
+ * 买到的是**信息**：这头兽在追猎屏读得出确切警觉与命中率、在搏杀屏读得出确切意图
+ * （引擎那边由 `TaleState.loreEnemyIds` 兑现）。P1 已经量过这条信息值多少
+ * （玄蟒身上死亡率 43.8% → 33.3%），所以它不需要再挂一个 +X 才显得值。
+ */
+export function buyLore(bloodline: Bloodline, enemyId: string, content: TaleContent): Bloodline | null {
+  if (!content.enemies.some((enemy) => enemy.id === enemyId)) return null;
+  if (!bloodline.knownEnemyIds.includes(enemyId)) return null;
+  if (bloodline.loreEnemyIds.includes(enemyId)) return null;
+  const cost = loreCost(enemyId, content);
+  if (bloodline.points < cost) return null;
+  return {
+    ...bloodline,
+    points: bloodline.points - cost,
+    loreEnemyIds: [...bloodline.loreEnemyIds, enemyId],
+  };
+}
+
+/**
+ * [S3] 买「世家印记」：**永久**的小加成，至多 `tuning.sigilCap` 枚（纯）。
+ *
+ * 上限的判据只有这一处（界面的置灰与引擎 `createLife` 的截断都是它的镜像）——
+ * S1 的血脉踩过这个坑：同一条规则两套语义，而花钱的那一份是松的。
+ */
+export function buySigil(bloodline: Bloodline, sigilId: string, content: TaleContent): Bloodline | null {
+  const sigil = sigilById(content, sigilId);
+  if (!sigil) return null;
+  if (bloodline.sigilIds.includes(sigilId)) return null;
+  if (bloodline.sigilIds.length >= content.tuning.sigilCap) return null;
+  if (bloodline.points < sigil.cost) return null;
+  return {
+    ...bloodline,
+    points: bloodline.points - sigil.cost,
+    sigilIds: [...bloodline.sigilIds, sigilId],
+  };
+}
+
+/**
+ * [S3] 买「图录」：花血统点让下一世**不必其门也进得去**某一处已到过的秘境（纯）。
+ *
+ * 与「血脉」逐字同形的一次性消费（一世一处、买过就买不了、用掉即清、不退款）——
+ * 那不是偷懒，是同一个位置的同一件事：转世那一刻的一个决定。五种买不成：
+ * 内容里没有这一处／没到过／**这一处没有门槛**（兽径，`chartCost` 恒 0）／这一世已经买过／点数不够。
+ *
+ * ## 为什么是一世一次而不是永久
+ * 门槛是 S2 全部欲望的来源（「为了下幽潭去凑浮鳔」）。永久免门槛等于把那条循环
+ * 一次性买断 —— 六处地方从此一律敞着，那正是 S2 之前「探索是一颗按钮」的样子。
+ */
+export function buyChart(
+  bloodline: Bloodline,
+  destinationId: string,
+  content: TaleContent,
+): Bloodline | null {
+  if (!content.destinations.some((destination) => destination.id === destinationId)) return null;
+  if (!bloodline.knownDestinationIds.includes(destinationId)) return null;
+  if (bloodline.chartedDestinationId !== null) return null;
+  const cost = chartCost(destinationId, content);
+  if (cost <= 0) return null;
+  if (bloodline.points < cost) return null;
+  return { ...bloodline, points: bloodline.points - cost, chartedDestinationId: destinationId };
+}
+
+/** [S3] 图录已被这一世用掉（`createLife` 之后调）—— 同 `consumeBoon`，钱在买的时候就付了。 */
+export function consumeChart(bloodline: Bloodline): Bloodline {
+  if (bloodline.chartedDestinationId === null) return bloodline;
+  return { ...bloodline, chartedDestinationId: null };
 }
 
 /**

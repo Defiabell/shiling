@@ -3473,3 +3473,99 @@
 .place__treasure.is-found b {
   color: var(--gold-soft);
 }
+
+/* — [S3] 转世屏：血统四事（货架）＋ 图鉴第三录（异兽）＋ 「凑什么」 — */
+
+/*
+ * 「这一世可以试着凑 X」——摆在天时下方、神种卡上方。
+ * 与 `nextlife__advice`（换哪条道）分开一档字色：那一句是目标，这几条是手段，
+ * 读者要能一眼分出「我该去干什么」的那几行。
+ */
+.nextlife__quests {
+  display: grid;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nextlife__quest {
+  position: relative;
+  padding-left: 15px;
+  font-family: var(--kai);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--txt-2);
+}
+
+/* 朱点：与图鉴里「异」印同色 —— 这几行说的就是去凑那些东西 */
+.nextlife__quest::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.78em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cinnabar-lt, #e2694c);
+  opacity: 0.75;
+}
+
+/*
+ * 货架整段。与图鉴同一套外壳，但**边框是暖色**：一段全是按钮，一段一颗按钮都没有，
+ * 余光里就该分得出（同 S2 给秘藏揭示换赭金的理由）。
+ */
+.seed__shop {
+  display: grid;
+  gap: 10px;
+  margin-top: 26px;
+  padding: 18px 20px 20px;
+  border-radius: var(--r-lg);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.26);
+}
+
+.seed__shop .seed__boon:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* 异兽的印章：与「地」印分色（兽是朱、地是金），参透过的实心 */
+.beast__seal {
+  background: rgba(226, 105, 76, 0.13) !important;
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.4) !important;
+  color: var(--cinnabar-lt, #e2694c);
+}
+
+.beast__seal.is-found {
+  background: radial-gradient(circle at 34% 28%, #e2694c, #b2472f 78%) !important;
+  color: #fdf5ec;
+}
+
+/* 已买下的那一行（血脉／图录／印记／知识共用）：压一层金边，与置灰区分 */
+.boon__row.is-chosen {
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.34);
+}
+
+/* 图录开的那一处：按钮上那一行说明用金色，与「尚不得其门」的朱色分开 */
+.dest__chart {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--gold-soft);
+}
+
+/* 追猎／搏杀屏的「已入图鉴」小牌 —— 与「会反扑」（朱）分色，它是好消息 */
+.stalk__lore,
+.combat__lore {
+  font-family: var(--sans);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  font-style: normal;
+  color: var(--gold-soft);
+  padding: 1px 6px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.4);
+}

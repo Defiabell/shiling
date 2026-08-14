@@ -6,10 +6,15 @@
 
 import {
   boonCost,
+  chartCost,
+  loreCost,
   rollPremise,
   type Bloodline,
+  type DestinationDef,
+  type EnemyDef,
   type OrganDef,
   type SeedDef,
+  type SigilDef,
   type TaleContent,
   type TaleState,
 } from "@shiling/tale-sim";
@@ -68,6 +73,20 @@ export interface NextLifeVm {
    * 文案由**数据推**（上一世最接近的那条道、差了什么、这一世的天时），不写死。
    */
   advice: string | null;
+  /**
+   * [S3] 「这一世可以试着凑 X」—— 最多三条**具体**的建议，全部由数据推。
+   *
+   * ## 它要治的病
+   * owner 的原话：「摸不着头脑、不知道要怎么发展」。`advice` 那一句说的是「换条道试试」
+   * （目标），这三条说的是**下一步该干什么**（手段）：再得哪一件器官、还差哪一处门槛、
+   * 哪一头兽值得花点数参透。没有它，图鉴就只是一张成绩单。
+   *
+   * ## 铁律：不许泄露未发现的配方（S1）
+   * 第一优先级只从**已发现**的组合里推（`Bloodline.knownSynergyIds`）—— 拿一条还没撞见的
+   * 组合去写「再得夜瞳即成夜猎之眼」，等于把这一批的全部本钱（意料之外）当建议送掉。
+   * 去处的门槛是公开信息（S2 的设计），所以第二优先级可以放心写。
+   */
+  quests: string[];
 }
 
 /**
@@ -136,11 +155,76 @@ export interface BoonRowVm {
 }
 
 /**
- * [S1] 血统点的第二个去处 ＋ 图鉴。
+ * [S3] 「异兽图鉴」的一行。
+ *
+ * 与异变图鉴同一条铁律：**未照面的只有一个「？」**，连名字都不给（DOM 里也读不出来）。
+ * 「青丘一共有几头兽」是分母，那不算泄露；「第六头叫穷奇幼崽、猛 34」是内容，那算。
+ */
+export interface BeastRowVm {
+  /** 已照面才有 id（未照面的连 id 都不给界面） */
+  id: string | null;
+  known: boolean;
+  /** 已照面＝「玄蟒」；未照面恒为「？」 */
+  name: string;
+  /** 已照面＝「猛 26 · 体 34」；未照面为空串 */
+  meta: string;
+  /** 已照面＝`EnemyDef.desc`；未照面＝「尚未照面」 */
+  note: string;
+  /** 已花血统点参透（此后追猎／搏杀读得出确数） */
+  lore: boolean;
+}
+
+/** [S3] 「图鉴知识」商店的一行：一头已照过面的异兽 ＋ 标价。 */
+export interface LoreRowVm {
+  enemyId: string;
+  name: string;
+  /** 买到的是什么（一句人话，不是「+X」）——这一项刻意不给数值加成 */
+  gain: string;
+  cost: number;
+  affordable: boolean;
+  shortfall: number;
+  /** 已参透 */
+  owned: boolean;
+}
+
+/** [S3] 「世家印记」商店的一行。 */
+export interface SigilRowVm {
+  sigilId: string;
+  name: string;
+  desc: string;
+  /** 「每世 灵 +2」这类机制那一行 */
+  effect: string;
+  cost: number;
+  affordable: boolean;
+  shortfall: number;
+  owned: boolean;
+}
+
+/** [S3] 「图录」商店的一行：一处已到过、且有门槛的去处 ＋ 标价。 */
+export interface ChartRowVm {
+  destinationId: string;
+  name: string;
+  /** 「需 鳞甲、浮鳔」—— 买它省掉的就是这一条 */
+  gate: string;
+  cost: number;
+  affordable: boolean;
+  shortfall: number;
+  /** 已买下（下一世直通此处） */
+  chosen: boolean;
+}
+
+/**
+ * [S1 ＋ S2 ＋ S3] 图鉴（四录）与血统（四事）。
  *
  * 为什么与神种卡同屏：血统点此前**只能**解锁神种（三枚共 13 点），13 点花完后一世产的
- * 3〜8 点永久无处可花 —— owner 的原话「血统没什么用途」说的就是这个。血脉与图鉴摆在
- * 同一屏，转世那一刻的问题才从「按哪枚种」变成「这一世我要带什么、去凑什么」。
+ * 3〜8 点永久无处可花 —— owner 的原话「血统没什么用途」说的就是这个。四类消费与四录图鉴
+ * 摆在同一屏，转世那一刻的问题才从「按哪枚种」变成「这一世我要带什么、去凑什么」。
+ *
+ * ## [S3] 「记录」与「货架」分开
+ * 图鉴四录（异变／山川／异兽／前传）**一颗按钮都没有** —— 它回答「我见过什么」。
+ * 血统四事（血脉／图录／世家印记／图鉴知识）**全是按钮** —— 它回答「这几点花在哪」。
+ * 混在一起的后果在 S2 末尾已经看到过：山川那一段既要写秘藏又要挂价钱，读起来是一张
+ * 既像成绩单又像账单的东西。
  */
 export interface CodexVm {
   /** 已发现的组合数 ／ 全部（「已知 3/10」） */
@@ -158,6 +242,33 @@ export interface CodexVm {
   places: PlaceRowVm[];
   /** 「已至之地 3/6 · 秘藏 1/6」 */
   placeCaption: string;
+  /** [S3] 异兽图鉴：八头，未照面的恒为「？」 */
+  beasts: BeastRowVm[];
+  /** 「已识异兽 5/8」 */
+  beastCaption: string;
+  /**
+   * [S3] 图鉴总览那一条 —— 四个分数并排。
+   *
+   * 它是这一屏「摸得着的发展方向」的入口：四个分母摆在一起，玩家一眼看得出
+   * 「异变才 3/10，而山川已经 5/6」——「这一世该往哪使劲」的第一层答案就在这一行。
+   */
+  summary: string;
+  /** [S3] 图录货架（只列**已到过且有门槛**的去处；兽径与没去过的不上架） */
+  charts: ChartRowVm[];
+  /** 已买下的图录（下一世直通），null ＝ 没买 */
+  chosenChartName: string | null;
+  /** 一处有门槛的地方都还没到过时的那句话 */
+  chartEmptyNote: string | null;
+  /** [S3] 世家印记货架（全部五枚，已受的标出来） */
+  sigils: SigilRowVm[];
+  /** 「已受 1/3 枚」 */
+  sigilCaption: string;
+  /** [S3] 图鉴知识货架（只列已照过面的兽） */
+  lores: LoreRowVm[];
+  /** 「已参透 2/8」 */
+  loreCaption: string;
+  /** 一头兽都还没照过面时的那句话 */
+  loreEmptyNote: string | null;
 }
 
 export interface SeedScreenVm {
@@ -217,6 +328,117 @@ function composeAdvice(last: TaleState | null, content: TaleContent, skyId: stri
   const wanted = favoured[skyId] ?? "shen";
   const suggest = wanted === gap.way ? (gap.way === "shen" ? "guishan" : "shen") : wanted;
   return `${head}这一世不妨试试${WAY_LABELS[suggest]} —— ${WAY_SCOPES[suggest]}。`;
+}
+
+/**
+ * [S3] 「这一世可以试着凑 X」—— 最多三条，全部由数据推。
+ *
+ * ## 优先级链（顺序就是「离玩家最近」的顺序）
+ * 1. **已发现的组合差一件**：上一世身上已有配方的一部分。这是最强的一条 ——
+ *    它同时给出目标（那一手技）、手段（那一件器官）与因果（图鉴上已经写着的那句 reveal）。
+ *    ⚠️ 只从 `knownSynergyIds` 里推（S1 铁律：未发现的配方一个字都不许漏）。
+ * 2. **没去过的地方差一件**：去处的门槛是**公开**信息（S2 的设计），所以这一条可以写全，
+ *    而且历代没到过的那几处正是「秘藏未得」的那几格。
+ * 3. **已照面但没参透的兽**：花得起的才写 —— 一条买不起的建议不是建议。
+ * 4. **印记还有空位**：世世都在的那一类，摆在最后是因为它不改变「这一世怎么打」。
+ *
+ * 一条都推不出来时（头一世）给一句兜底：不留空，否则这一段在第一世是消失的，
+ * 而第一世恰恰是最需要被告知「这游戏在攒什么」的时候。
+ */
+function composeQuests(
+  bloodline: Bloodline,
+  content: TaleContent,
+  last: TaleState | null,
+): string[] {
+  const owned = new Set(last?.organIds ?? []);
+  const quests: string[] = [];
+  const organNameOf = (id: string): string => organName(content, id);
+
+  /** 得了这一件器官会顺带开哪几处地方（门槛的其余部分上一世已在身上） */
+  const opensWith = (organId: string): DestinationDef[] =>
+    content.destinations.filter(
+      (place) =>
+        place.requiresOrganIds.includes(organId) &&
+        place.requiresOrganIds.every((id) => id === organId || owned.has(id)),
+    );
+
+  // 1. 已发现的组合，差一件就齐（差得越少排越前；同数按内容表顺序）
+  const nearSynergies = content.synergies
+    .filter((synergy) => bloodline.knownSynergyIds.includes(synergy.id))
+    .map((synergy) => ({
+      synergy,
+      missing: synergy.organIds.filter((id) => !owned.has(id)),
+    }))
+    .filter((item) => item.missing.length === 1 && item.missing.length < item.synergy.organIds.length);
+  const nearest = nearSynergies[0];
+  if (nearest) {
+    const missingId = nearest.missing[0] ?? "";
+    const have = nearest.synergy.organIds.filter((id) => owned.has(id)).map(organNameOf);
+    const opened = opensWith(missingId);
+    const boon = bloodline.knownOrganIds.includes(missingId)
+      ? `（血脉 ${boonCost(missingId, content)} 即可带上）`
+      : "";
+    quests.push(
+      `上一世你已有${have.join("、")}，再得${organNameOf(missingId)}即成「${nearest.synergy.name}」${
+        opened.length > 0 ? `，${opened.map((place) => place.name).join("、")}随之而开` : ""
+      }。${boon}`,
+    );
+  }
+
+  /*
+   * 2. 历代没到过的地方，且**只差一件**门槛。
+   *
+   * 排序按门槛件数**倒序**：过滤之后还留着的双件门槛，说明上一世已经凑齐了它的一半 ——
+   * 「已经走到一半」比「从头开始」更值得摆在前面。措辞也跟着分两种：差一件里的一件，
+   * 与「这一处只要一件」不是同一句话（后者对头一世的玩家才是真的，写成「只差」是在撒谎）。
+   */
+  const nearPlace = [...content.destinations]
+    .filter((place) => place.requiresOrganIds.length > 0)
+    .filter((place) => !bloodline.knownDestinationIds.includes(place.id))
+    .map((place) => ({ place, missing: place.requiresOrganIds.filter((id) => !owned.has(id)) }))
+    .filter((item) => item.missing.length === 1)
+    .sort((a, b) => b.place.requiresOrganIds.length - a.place.requiresOrganIds.length)[0];
+  if (nearPlace) {
+    const missingId = nearPlace.missing[0] ?? "";
+    const gate = nearPlace.place.requiresOrganIds.map(organNameOf).join("、");
+    const halfway = nearPlace.missing.length < nearPlace.place.requiresOrganIds.length;
+    quests.push(
+      halfway
+        ? `${nearPlace.place.name}历代未至 —— 门槛是${gate}，上一世你已有其一，只差${organNameOf(missingId)}。那儿有一物，青丘没有第二处。`
+        : `${nearPlace.place.name}历代未至 —— 门槛只要一件${gate}。那儿有一物，青丘没有第二处。`,
+    );
+  }
+
+  // 3. 已照面、还没参透、且**买得起**的那一头（越凶的越值得写在前面）
+  const loreTarget = [...content.enemies]
+    .filter(
+      (enemy) =>
+        bloodline.knownEnemyIds.includes(enemy.id) &&
+        !bloodline.loreEnemyIds.includes(enemy.id) &&
+        bloodline.points >= loreCost(enemy.id, content),
+    )
+    .sort((a, b) => b.meng - a.meng)[0];
+  if (loreTarget && quests.length < 3) {
+    quests.push(
+      `${loreTarget.name}你已照过面 —— 血统 ${loreCost(loreTarget.id, content)} 可参透它，此后追猎读得出确切警觉、搏杀读得出它下一手要干什么。`,
+    );
+  }
+
+  // 4. 印记还有空位（世世都在的那一类）
+  const sigilLeft = content.tuning.sigilCap - bloodline.sigilIds.length;
+  const cheapest = content.sigils
+    .filter((sigil) => !bloodline.sigilIds.includes(sigil.id))
+    .sort((a, b) => a.cost - b.cost)[0];
+  if (sigilLeft > 0 && cheapest && quests.length < 3) {
+    quests.push(
+      `世家印记还可再受 ${sigilLeft} 枚（每枚血统 ${cheapest.cost}）—— 那是唯一世世都在的东西。`,
+    );
+  }
+
+  if (quests.length > 0) return quests.slice(0, 3);
+  return [
+    `图鉴上还是一片问号：异变 ${content.synergies.length} 格、山川 ${content.destinations.length} 处、异兽 ${content.enemies.length} 头。先活过一世，蜕一件形，自会撞见第一格。`,
+  ];
 }
 
 /** 器官槽位的单字读法（与蜕变卷轴同一套字）。 */
@@ -309,6 +531,76 @@ function buildCodexVm(bloodline: Bloodline, content: TaleContent): CodexVm {
       treasureNote: treasureKnown ? destination.treasure.desc : "此地必有一物，未得其详。",
     };
   });
+  /*
+   * [S3] 异兽图鉴 ＋ 三个新货架。
+   *
+   * 三处判据全部**镜像 persist 层**（`buyLore`／`buySigil`／`buyChart`）而不是自己再写一遍：
+   * S1 的血脉踩过这个坑 —— 同一条规则两套语义，而花钱的那一份是松的。
+   */
+  const metEnemies = new Set(bloodline.knownEnemyIds);
+  const loreOwned = new Set(bloodline.loreEnemyIds);
+  const beasts: BeastRowVm[] = content.enemies.map((enemy) =>
+    metEnemies.has(enemy.id)
+      ? {
+          id: enemy.id,
+          known: true,
+          name: enemy.name,
+          meta: beastMeta(enemy),
+          note: enemy.desc,
+          lore: loreOwned.has(enemy.id),
+        }
+      : { id: null, known: false, name: "？", meta: "", note: "尚未照面", lore: false },
+  );
+  const lores: LoreRowVm[] = content.enemies
+    .filter((enemy) => metEnemies.has(enemy.id))
+    .map((enemy) => {
+      const cost = loreCost(enemy.id, content);
+      const owned = loreOwned.has(enemy.id);
+      return {
+        enemyId: enemy.id,
+        name: enemy.name,
+        gain: "追猎读得出确切警觉与命中 · 搏杀读得出它下一手",
+        cost,
+        affordable: !owned && bloodline.points >= cost,
+        shortfall: owned ? 0 : Math.max(0, cost - bloodline.points),
+        owned,
+      };
+    });
+  const sigilOwned = new Set(bloodline.sigilIds);
+  const sigilFull = sigilOwned.size >= content.tuning.sigilCap;
+  const sigils: SigilRowVm[] = content.sigils.map((sigil) => {
+    const owned = sigilOwned.has(sigil.id);
+    return {
+      sigilId: sigil.id,
+      name: sigil.name,
+      desc: sigil.desc,
+      effect: sigilEffect(sigil),
+      cost: sigil.cost,
+      // 与 `buySigil` 逐条同形：已受／满员／点数不够，三者任一即买不得
+      affordable: !owned && !sigilFull && bloodline.points >= sigil.cost,
+      shortfall: owned ? 0 : Math.max(0, sigil.cost - bloodline.points),
+      owned,
+    };
+  });
+  const charts: ChartRowVm[] = content.destinations
+    // 只上架「历代到过 ＋ 有门槛」的：兽径的 `chartCost` 恒 0（判据在引擎，界面不写第二条 if）
+    .filter((place) => visited.has(place.id) && chartCost(place.id, content) > 0)
+    .map((place) => {
+      const cost = chartCost(place.id, content);
+      const chosenChart = bloodline.chartedDestinationId === place.id;
+      return {
+        destinationId: place.id,
+        name: place.name,
+        gate: `需 ${place.requiresOrganIds.map((id) => organName(content, id)).join("、")}`,
+        cost,
+        affordable: bloodline.chartedDestinationId === null && bloodline.points >= cost,
+        // 已买下的那一行 `shortfall` 归零（同 `lores`／`sigils`）——买过之后点数已经扣掉了，
+        // 再报一个「尚差 N」是在说一件已经不成立的事
+        shortfall: chosenChart ? 0 : Math.max(0, cost - bloodline.points),
+        chosen: chosenChart,
+      };
+    });
+
   return {
     knownCount: known.size,
     total: content.synergies.length,
@@ -322,7 +614,42 @@ function buildCodexVm(bloodline: Bloodline, content: TaleContent): CodexVm {
         : "还没有蜕出过任何器官 —— 活过一世、蜕一件形，这里就有东西可带了。",
     places,
     placeCaption: `已至之地 ${visited.size}/${places.length} · 秘藏 ${found.size}/${places.length}`,
+    beasts,
+    beastCaption: `已识异兽 ${metEnemies.size}/${content.enemies.length}`,
+    summary: [
+      `已知异变 ${known.size}/${content.synergies.length}`,
+      `已至之地 ${visited.size}/${places.length}`,
+      `秘藏 ${found.size}/${places.length}`,
+      `已识异兽 ${metEnemies.size}/${content.enemies.length}`,
+      `历代 ${bloodline.chronicle.length} 篇`,
+    ].join(" · "),
+    charts,
+    chosenChartName: charts.find((row) => row.chosen)?.name ?? null,
+    chartEmptyNote:
+      charts.length > 0
+        ? null
+        : "还没到过任何一处有门槛的地方 —— 图录是走到过才画得出来的东西。",
+    sigils,
+    sigilCaption: `已受 ${sigilOwned.size}/${content.tuning.sigilCap} 枚`,
+    lores,
+    loreCaption: `已参透 ${loreOwned.size}/${content.enemies.length}`,
+    loreEmptyNote:
+      lores.length > 0 ? null : "还没跟任何一头兽照过面 —— 追一次、打一架，这里就有东西可参了。",
   };
+}
+
+/** 异兽图鉴那一行的两个数（已照面才给）。 */
+function beastMeta(enemy: EnemyDef): string {
+  return `猛 ${enemy.meng} · 体 ${enemy.hp}`;
+}
+
+/** 印记的机制那一行（属性与饱食两种形态，读法与器官卡同体例）。 */
+function sigilEffect(sigil: SigilDef): string {
+  const parts = STAT_ORDER.filter((key) => (sigil.statMods[key] ?? 0) !== 0).map(
+    (key) => `${STAT_LABELS[key]} ${formatSigned(sigil.statMods[key] ?? 0)}`,
+  );
+  if (sigil.hungerBonus) parts.push(`起手饱食 ${formatSigned(sigil.hungerBonus)}`);
+  return `每世 ${parts.join(" ") || "—"}`;
 }
 
 /**
@@ -368,6 +695,7 @@ export function buildSeedScreenVm(
       originEffect: origin.effect,
       caption: `此世天时　${sky.name} · ${origin.name}`,
       advice: composeAdvice(lastLife, content, sky.id),
+      quests: composeQuests(bloodline, content, lastLife),
     },
     chronicle: [...bloodline.chronicle].reverse().map((entry) => ({
       title: entry.title,

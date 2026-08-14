@@ -46,6 +46,7 @@ import type {
   PremiseTuningKey,
   Season,
   SeedDef,
+  SigilDef,
   StalkAct,
   StalkState,
   Stance,
@@ -90,6 +91,11 @@ export interface TaleContent {
    * 不会有任何引擎测试变红。
    */
   destinations: DestinationDef[];
+  /**
+   * [S3] 世家印记表（血统点唯一能买到的永久数值加成）。**可以为空**（空表＝这一版不卖印记），
+   * 同 `synergies` 而不同于 `skies`：空表只是让转世屏少一段货架，不会让任何一世开不了局。
+   */
+  sigils: SigilDef[];
   tuning: TaleTuning;
   /** 结构见 types.ts 的 ChronicleTemplates，composeChronicle 消费 */
   chronicleTemplates: ChronicleTemplates;
@@ -227,6 +233,14 @@ export interface StalkPreview {
   retaliates: boolean;
   /** [P1 补] 还剩几个动作（含这一次）；1 ＝ 此后再无力追 */
   staminaLeft: number;
+  /**
+   * [S3 补] 这一头**已入图鉴**（花血统点参透过它）—— `alertVisible` 的第二条来源。
+   *
+   * 单独报一位而不是并进 `alertVisible`：界面要说得出**为什么**读得出确数。
+   * 「夜瞳读得出」与「历代所记，你认得它」是两句不同的话，而后者正是玩家花掉的那几点
+   * 血统被兑现的一刻 —— 不写出来，这笔钱花得没有回响。
+   */
+  loreKnown: boolean;
 }
 
 /**
@@ -348,8 +362,15 @@ export interface CombatPreview {
   guardPart: BodyPart;
   /** 敌人这一回合宣告的意图（**精确**值；无 `combatIntentTags` 时界面不该显示 kind 与 text） */
   intent: EnemyIntent;
-  /** 读得出确切意图（洞察类器官）—— 否则只该给 `intentClass` 那两档 */
+  /** 读得出确切意图（洞察类器官／明识／[S3] 图鉴知识）—— 否则只该给 `intentClass` 那两档 */
   intentKnown: boolean;
+  /**
+   * [S3] 这一头**已入图鉴**（花血统点参透过它）—— `intentKnown` 的第三条来源。
+   *
+   * 与 `StalkPreview.loreKnown` 同一个理由：屏幕上要说得出**为什么**这一场读得出意图。
+   * 三条来源在界面上是三句不同的话（器官／明识这一段／历代所记）。
+   */
+  loreKnown: boolean;
   /** 人人都读得出的粗档：`act` 要出手／`hold` 按兵不动（守与逃在这一档里分不出来） */
   intentClass: "act" | "hold";
   /** 三个部位，顺序恒为 喉→腿→眼 */
@@ -530,6 +551,9 @@ function draftOf(state: TaleState): TaleState {
     // [S2] 两个新的可变容器 —— 漏拷会让「不改动入参」那条测试变红（同 M1-P2 的 intent）
     visitedDestinationIds: [...state.visitedDestinationIds],
     foundTreasureIds: [...state.foundTreasureIds],
+    // [S3] 同上。`loreEnemyIds` 一世不变（降世时定），但照拷不误 —— 少一处「这个数组能不能改」的例外
+    metEnemyIds: [...state.metEnemyIds],
+    loreEnemyIds: [...state.loreEnemyIds],
     combat: state.combat
       ? {
           ...state.combat,
@@ -629,6 +653,13 @@ export interface DestinationPreview {
   visited: boolean;
   /** 本世已得此地秘藏（跨世那一份在 `Bloodline`，引擎不认识） */
   treasureFound: boolean;
+  /**
+   * [S3] 这一处是**靠图录**开的（门槛并没有凑齐）。
+   *
+   * 界面据它把「尚不得其门 —— 需 鳞甲、浮鳔」换成「图录在手 —— 此番不必其门」：
+   * 两种「可去」在按钮上必须读得出分别，否则玩家会以为自己已经凑齐了那两件器官。
+   */
+  chartedOpen: boolean;
 }
 
 /** 去处查表（id → def）。 */
@@ -636,8 +667,16 @@ export function destinationById(content: TaleContent, id: string): DestinationDe
   return content.destinations.find((destination) => destination.id === id) ?? null;
 }
 
-/** [S2] 门槛已达？无门槛（兽径）恒为真。 */
+/**
+ * [S2] 门槛已达？无门槛（兽径）恒为真。
+ *
+ * [S3] **图录**是第二条通路：这一世带着某处的图录，那一处不必其门也进得去
+ * （`TaleState.chartedDestinationId`）。判据只有这一处 —— `resolveDestinationArg`、
+ * `destinationPreview` 与界面的置灰全部经由它，所以「图录能进而按钮说不能」这种分家
+ * 在结构上不可能发生。
+ */
 function destinationUnlocked(state: TaleState, destination: DestinationDef): boolean {
+  if (state.chartedDestinationId === destination.id) return true;
   const owned = new Set(state.organIds);
   return destination.requiresOrganIds.every((id) => owned.has(id));
 }
@@ -685,6 +724,10 @@ export function destinationPreview(
     hungerCost: seasonCost + peril.travelCost,
     visited: state.visitedDestinationIds.includes(def.id),
     treasureFound: state.foundTreasureIds.includes(def.treasure.id),
+    // 「靠图录开的」＝ 带着这一处的图录，**且**门槛本来没凑齐（凑齐了就不是图录的功劳）
+    chartedOpen:
+      state.chartedDestinationId === def.id &&
+      !def.requiresOrganIds.every((id) => owned.has(id)),
   };
 }
 
@@ -777,6 +820,44 @@ export function boonCost(organId: string, content: TaleContent): number {
   if (!organ) throw new Error(`boonCost: 未知器官 ${organId}`);
   const rare = Object.values(organ.affinity).every((weight) => (weight ?? 0) <= 0);
   return rare ? content.tuning.bloodlineBoonRareCost : content.tuning.bloodlineBoonCost;
+}
+
+/**
+ * [S3] 「图录」的价钱：让下一世不必其门也进得去这一处，要花几点血统。
+ *
+ * 规则而不是手写价目表（同 `boonCost` 的理由）：`2 × 门槛件数 ＋ 风险档加价`。
+ * **无门槛的去处恒返 0** —— 兽径本来就随时去得，一张走惯了的路的图卖不出钱，
+ * 界面据此把它排除出货架（判据只有这一处，界面不再写第二条「兽径不卖」的 if）。
+ *
+ * @throws 去处 id 不存在时抛错（脏存档／内容改名要吵，不要静默按 0 算）
+ */
+export function chartCost(destinationId: string, content: TaleContent): number {
+  const def = destinationById(content, destinationId);
+  if (!def) throw new Error(`chartCost: 未知去处 ${destinationId}`);
+  if (def.requiresOrganIds.length === 0) return 0;
+  const t = content.tuning;
+  return t.bloodlineChartPerGate * def.requiresOrganIds.length + (t.bloodlineChartPeril[def.peril] ?? 0);
+}
+
+/**
+ * [S3] 「图鉴知识」的价钱：参透这一头异兽要花几点血统。
+ *
+ * `bloodlineLoreBase ＋ floor(meng / bloodlineLoreMengDivisor)` —— 越凶的兽，看清它
+ * 越值钱也越贵。按 `meng` 而不是按 hp：玩家在屏幕上真正读不出来的是「它下一手要干什么」，
+ * 而那一手有多疼由 `meng` 定。
+ *
+ * @throws 敌人 id 不存在时抛错（同 `boonCost`）
+ */
+export function loreCost(enemyId: string, content: TaleContent): number {
+  const enemy = enemyById(content, enemyId);
+  if (!enemy) throw new Error(`loreCost: 未知异兽 ${enemyId}`);
+  const t = content.tuning;
+  return t.bloodlineLoreBase + Math.floor(enemy.meng / Math.max(1, t.bloodlineLoreMengDivisor));
+}
+
+/** [S3] 世家印记查表（id → def）；不存在返回 null。 */
+export function sigilById(content: TaleContent, id: string): SigilDef | null {
+  return content.sigils.find((sigil) => sigil.id === id) ?? null;
 }
 
 function enemyById(content: TaleContent, id: string): EnemyDef | undefined {
@@ -1009,16 +1090,32 @@ function refreshWayFlags(draft: TaleState, content: TaleContent): void {
  * 与出身同一类）。刻意**不写 `molt` 记录**：`bloodlineGain` 数的就是 molt 记录数，写了
  * 等于每一世白拿一点血统，而这一件器官的钱已经在转世屏付过了。
  *
+ * ## [S3] 另外三件跨世资产
+ * - **世家印记**（`options.sigilIds`）的 `statMods` 落在**最前**（神种之前）：它是先祖传下来
+ *   的底子，比这一胎更早。落最前还有一个可验证的好处 —— 它不掷骰，于是同一颗种子带不带
+ *   印记，天时／出身与此后每一次抽取逐字相同（专测钉住）。
+ * - **图录**（`options.chartedDestinationId`）只写进状态，由 `destinationUnlocked` 消费。
+ * - **图鉴知识**（`options.loreEnemyIds`）同上，由 `stalkPreview`／`combatPreview` 消费。
+ *   三者都**不写任何记录、不掷任何骰**。
+ *
  * @param seedNum 种子数（同时作为 rngState 初值）
  * @param seedDefId 选中的神种 `SeedDef.id`
  * @param options.boonOrganIds [S1] 血脉带来的器官 id（重复／与神种同一件时自动跳过）
+ * @param options.sigilIds [S3] 世家印记 id（未知 id 抛错，重复自动跳过）
+ * @param options.loreEnemyIds [S3] 已参透的异兽 id（未知 id 抛错 —— 脏存档要吵）
+ * @param options.chartedDestinationId [S3] 这一世的图录（未知 id 抛错）
  * @throws 神种 id 不存在、血脉器官 id 不存在、或天时／出身池为空时抛错（内容 bug 要吵）
  */
 export function createLife(
   seedNum: number,
   seedDefId: string,
   content: TaleContent,
-  options?: { boonOrganIds?: readonly string[] },
+  options?: {
+    boonOrganIds?: readonly string[];
+    sigilIds?: readonly string[];
+    loreEnemyIds?: readonly string[];
+    chartedDestinationId?: string | null;
+  },
 ): TaleState {
   const seed = content.seeds.find((candidate) => candidate.id === seedDefId);
   if (!seed) throw new Error(`createLife: 未知神种 ${seedDefId}`);
@@ -1027,7 +1124,26 @@ export function createLife(
   const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
   const index = organIndex(content);
   const organIds: string[] = [seed.organ.id];
-  let stats = addStats(t.initialStats, seed.organ.statMods);
+  // [S3] 世家印记先落账（先祖的底子在这一胎之前），且**至多 sigilCap 枚**：判据只有这一处，
+  // 界面的置灰是它的镜像。多给的静默截断而不是抛错 —— 上限是平衡阀不是契约，
+  // 一份存了四枚的旧档不该让玩家开不了局
+  const sigilIds: string[] = [];
+  for (const id of options?.sigilIds ?? []) {
+    const sigil = sigilById(content, id);
+    if (!sigil) throw new Error(`createLife: 未知世家印记 ${id}`);
+    if (sigilIds.includes(id)) continue;
+    if (sigilIds.length >= content.tuning.sigilCap) break;
+    sigilIds.push(id);
+  }
+  // 拷一份再叠：`t.initialStats` 是所有一世共享的那一份 tuning 对象
+  let stats: Stats = { ...t.initialStats };
+  let sigilHungerBonus = 0;
+  for (const id of sigilIds) {
+    const sigil = sigilById(content, id);
+    stats = addStats(stats, sigil?.statMods);
+    sigilHungerBonus += sigil?.hungerBonus ?? 0;
+  }
+  stats = addStats(stats, seed.organ.statMods);
   for (const id of options?.boonOrganIds ?? []) {
     const organ = index.get(id);
     if (!organ) throw new Error(`createLife: 未知血脉器官 ${id}`);
@@ -1036,6 +1152,20 @@ export function createLife(
     stats = addStats(stats, organ.statMods);
   }
   stats = addStats(stats, premise.origin.statMods);
+  /*
+   * [S3] 图鉴知识与图录：只校验与落账，不掷骰、不写记录。
+   * 未知 id 抛错而不是静默丢掉 —— 一个「买了却不生效」的跨世资产是玩家永远查不出来的坑
+   * （客户端的 `parseBloodline` 已经与内容对过账，走到这里还不认识就是真 bug）。
+   */
+  const loreEnemyIds: string[] = [];
+  for (const id of options?.loreEnemyIds ?? []) {
+    if (!enemyById(content, id)) throw new Error(`createLife: 未知图鉴异兽 ${id}`);
+    if (!loreEnemyIds.includes(id)) loreEnemyIds.push(id);
+  }
+  const charted = options?.chartedDestinationId ?? null;
+  if (charted !== null && !destinationById(content, charted)) {
+    throw new Error(`createLife: 未知图录去处 ${charted}`);
+  }
   const lifespan =
     t.lifespanBase + Math.floor(stats.ti / t.lifespanTiDivisor) + (premise.origin.lifespanDelta ?? 0);
   const state: TaleState = {
@@ -1047,7 +1177,8 @@ export function createLife(
     skyId: premise.sky.id,
     originId: premise.origin.id,
     stats,
-    hunger: clamp(t.hungerInit, 0, t.hungerMax),
+    // [S3] 「世家印记·食」那一枚加在这里（照样吃 hungerMax 的上限）
+    hunger: clamp(t.hungerInit + sigilHungerBonus, 0, t.hungerMax),
     lifespanMax: Math.max(1, lifespan),
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
     organIds,
@@ -1071,6 +1202,11 @@ export function createLife(
     // 不是解锁开关：上一世下过幽潭，不等于这一世的鳞甲长回来了）
     visitedDestinationIds: [],
     foundTreasureIds: [],
+    // [S3] 每一世从零开始「见过哪些兽」；跨世那一份在 `Bloodline.knownEnemyIds`
+    metEnemyIds: [],
+    // [S3] 这两件是跨世资产的**投影**（转世屏付过钱了），所以随降世带进来
+    loreEnemyIds: [...loreEnemyIds],
+    chartedDestinationId: charted,
     alive: true,
     ending: null,
     wayAchieved: null,
@@ -1094,6 +1230,18 @@ export function availableActions(state: TaleState, content: TaleContent): Action
 }
 
 // ===== 回合：行动 =====
+
+/**
+ * [S3] 记一笔「照过面」（幂等，就地改 draft）。
+ *
+ * 起追与开战两处各调一次 —— 两处都算「见过它」，而两处又都可能是唯一的一次
+ * （追猎失手它跑了、或者开战第一回合就被咬死）。抽成一个函数是因为漏掉任何一处的后果
+ * 是**静默**的：图鉴上那一格永远是「？」，而玩家明明刚跟它打过一架。
+ */
+function noteMetEnemy(draft: TaleState, enemyId: string): void {
+  if (draft.metEnemyIds.includes(enemyId)) return;
+  draft.metEnemyIds = [...draft.metEnemyIds, enemyId];
+}
 
 /**
  * 打一场架的起手状态。playerHp 每场重置为 ti（本模型无跨战常驻 HP）。
@@ -1129,6 +1277,8 @@ function beginCombat(
     skillCooldowns: {},
     log: [render(ENGINE_MESSAGES.combatStart, { enemy: enemy.name })],
   };
+  // [S3] 开战即算照面 —— 哪怕这一架第一回合就把你咬死了，你也确实见过它
+  noteMetEnemy(draft, enemy.id);
 }
 
 /**
@@ -1312,6 +1462,8 @@ function beginStalk(
     round: 0,
     log: [opening],
   };
+  // [S3] 起追即算照面 —— 追丢了也数，玩家确确实实盯着它看了几息
+  noteMetEnemy(draft, prey.id);
   notices.push(opening);
 }
 
@@ -1337,10 +1489,14 @@ export function stalkPreview(state: TaleState, content: TaleContent): StalkPrevi
   const headroom = Math.max(0, t.stalkAlertMax - stalk.alertness);
   const alertGain = Math.min(headroom, creepAlertGain(state, t, tags));
 
+  // [S3] 「图鉴知识」是读得出确数的**第二条来源**：器官读的是这一刻，图鉴读的是历代
+  const loreKnown = state.loreEnemyIds.includes(stalk.preyId);
+
   return {
     pounceChance: pounceChanceAt(stalk.distance, stalk.alertness, meng, t),
     creepGain,
-    alertVisible: t.stalkAlertTags.some((tag) => tags.has(tag)),
+    alertVisible: loreKnown || t.stalkAlertTags.some((tag) => tags.has(tag)),
+    loreKnown,
     // 器官读得出，或者自己刚绕过一圈 —— 两条都算「确知」
     windVisible: stalk.windKnown || t.stalkWindTags.some((tag) => tags.has(tag)),
     creepAlertGain: alertGain,
@@ -2373,13 +2529,18 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
   const typicalMul = incomingMultiplier(t, "bite", combat.stance, combat.slow, combat.ward);
   const typical = damageRange(enemy.meng, t, typicalMul).mid * (1 - missChance);
   const bestBite = Math.max(...bites.map((bite) => bite.damage.mid));
+  const loreKnown = state.loreEnemyIds.includes(combat.enemyId);
 
   return {
     stance: combat.stance,
     guardPart: combat.guardPart,
     intent: combat.intent,
-    // [S1] 「明识」是洞察器官的临时替身：读得出意图的两个来源，一个判据
-    intentKnown: combat.insight > 0 || t.combatIntentTags.some((tag) => tags.has(tag)),
+    // [S1] 「明识」是洞察器官的临时替身；[S3] 「图鉴知识」是它的跨世替身 —— 三个来源，一个判据
+    intentKnown:
+      combat.insight > 0 ||
+      loreKnown ||
+      t.combatIntentTags.some((tag) => tags.has(tag)),
+    loreKnown,
     intentClass:
       combat.intent.kind === "guard" || combat.intent.kind === "flee" ? "hold" : "act",
     bites,
