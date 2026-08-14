@@ -27,6 +27,7 @@ import {
   clashOf,
   type CombatAct,
   type ForgePicks,
+  type TaleEvent,
   type WayId,
 } from "@shiling/tale-sim";
 
@@ -46,7 +47,19 @@ export type CenterVm =
        */
       omens?: NarrationOmenVm[];
     }
-  | { kind: "event"; key: string; card: EventCardVm }
+  /**
+   * 一张待结算的事件卡。
+   *
+   * [2026-08-14 死局修复] `event` 是**引擎那一份原件**，跟着卡片一起放在这里 ——
+   * 它不参与渲染，屏幕层一个字都不读它。它在这里的唯一理由是：**「界面认为有待办」与
+   * 「界面画了什么」必须是同一个事实**。
+   *
+   * 此前 app 拿两个字段分别记这两件事（`pendingEvent` 与 `center`），一前一后地写。
+   * 两次写之间只要抛一次错，就会留下一个「行动全灰（先了此事）＋中央不是事件卡」的
+   * 死局：屏幕上没有任何能推进的按钮，而 `resolveChoice` 也无从调用。合成一个字段之后
+   * 那种状态**在类型层就构造不出来** —— 有事件必有卡，有卡必有事件。
+   */
+  | { kind: "event"; key: string; event: TaleEvent; card: EventCardVm }
   /**
    * [M2-B1] **一场遭遇** —— 接近与交锋合成一块屏（M1 是 `combat` 与 `stalk` 两种 kind）。
    *

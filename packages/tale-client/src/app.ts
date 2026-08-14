@@ -33,6 +33,7 @@ import {
   type ActionOptions,
   type ChronicleEntry,
   type CombatAct,
+  type EndingType,
   type ForgePicks,
   type SynergyDef,
   type TaleEvent,
@@ -56,6 +57,7 @@ import { buildDetailVm, detailKey, type DetailSel } from "./model/detailVm.js";
 import { buildEventCardVm, type EventCardVm } from "./model/eventVm.js";
 import { advanceGuide, buildGuideVm, guideSnapshot, type GuideVm } from "./model/guideVm.js";
 import { emptyLog, pushLog, recentLogVm, type LogBuffer, type LogInput, type LogTone } from "./model/logVm.js";
+import { BOOT_CENTER_KEY, ESCAPE_CONTINUE_LABEL, checkPlayable } from "./model/playable.js";
 import { buildSeedScreenVm } from "./model/seedVm.js";
 import {
   historianConfig,
@@ -112,6 +114,17 @@ const BIRTH_LEDE = "青丘多狐，草木有灵。你尚不知自己是什么，
 
 /** 死亡／登神后那颗按钮的字样。 */
 const CLOSE_LABELS = { ascend: "登　临", other: "瞑　目" } as const;
+
+/**
+ * 收束那颗按钮的字样（纯映射，**不读任何实例状态** —— 所以它可以单测，也不可能读到陈旧状态）。
+ *
+ * 导出的理由只有一条：`test/closeLabel.test.ts` 要锁住「成道 ＝ 登临」这条对应。
+ * 它曾经因为一次「先算卡、后落状态」的顺序调整而静默失效（见 `TaleApp.closeLabel` 的注释），
+ * 而那次失效没有任何测试变红 —— 因为它当时是一个读 `this` 的方法。
+ */
+export function closeLabelFor(ending: EndingType | null): string {
+  return ending === "ascend" ? CLOSE_LABELS.ascend : CLOSE_LABELS.other;
+}
 
 /** 引导链走完那句「这条链你已走完：……」停留多久（读完一句的时间），之后永久收起。 */
 const GUIDE_COMPLETE_HOLD_MS = 9000;
@@ -191,9 +204,18 @@ export class TaleApp {
   private titleHandle: ScreenHandle | null = null;
   private bloodline: Bloodline;
   private state: TaleState | null = null;
-  private pendingEvent: TaleEvent | null = null;
-  private center: CenterVm = { kind: "narration", key: "boot", title: null, lines: [], media: null, continueLabel: null };
+  private center: CenterVm = bootCenter();
   private log: LogBuffer = emptyLog();
+  /**
+   * [2026-08-14 死局修复] 渲染入口护栏抓到的违规（`checkPlayable` 的原话）。
+   *
+   * 存起来而不是只 `console.error`：owner 立过「『没跑成』必须与『没发现问题』可区分」那条
+   * 规矩，而 E2E 判据里的「0 控制台报错」只能证明**没打印**，证明不了**没发生**。
+   * `debugSnapshot().integrity` 因此是一个可断言的数字。
+   */
+  private integrity: string[] = [];
+  /** 正在画「脱困」那张兜底卡（只用来防递归，见 `renderPlayOnce`） */
+  private escaping = false;
   private freshLogIds: ReadonlySet<number> = new Set();
   private busy = false;
   private lifeIndex = 0;
@@ -270,6 +292,21 @@ export class TaleApp {
    * 同一种 `molt` 记录，所以数记录也分不出来）。
    */
   private dormantMolted = false;
+
+  /**
+   * [2026-08-14 死局修复] 「有没有一桩待结算的事」—— **派生量，不再是一个可以独立赋值的字段**。
+   *
+   * 原来它是 `private pendingEvent: TaleEvent | null`，与 `this.center` 一前一后地写。
+   * 两次写之间抛一次错（`buildEventCardVm`／`outcomeTone`／任何一处）就会脱钩，
+   * 而脱钩的表现正是 owner 撞到的死局：行动与去处整排灰成「先了此事」（因为 `pendingEvent`
+   * 非空），中央却不是事件卡（因为 `center` 没跟上）—— 屏幕上没有任何能推进的按钮，
+   * `doChoice` 也因为读不到事件而立刻 return，一个 click 都不落地。
+   *
+   * 改成 getter 之后「有待办」与「画了什么」是同一个事实的两种读法，脱钩**不可表示**。
+   */
+  private get pendingEvent(): TaleEvent | null {
+    return this.center.kind === "event" ? this.center.event : null;
+  }
 
   constructor(root: HTMLElement, options: AppOptions = {}) {
     this.root = root;
@@ -453,7 +490,15 @@ export class TaleApp {
      */
     const opened = this.devFoeId === "" ? state : this.openDevEncounter(state, this.devFoeId);
     this.state = opened;
-    this.pendingEvent = null;
+    /*
+     * [2026-08-14 死局修复] 中央那张卡**按世复位**。
+     *
+     * 原来这里只清 `pendingEvent`，`center` 一直留着上一世最后那一张 —— 于是若这个方法
+     * 在赋新卡之前抛错（`premiseOf` 认不出天时／出身、`portraitArt` 之类），新的一世
+     * 会顶着上一世的卡开局。复位成「空白无按钮」那一张还不够（那正是 owner 截图里
+     * 中央那块空白），所以下面的护栏会把它当违规抓住 —— 两道一起才兜得住。
+     */
+    this.center = bootCenter();
     // 上一世的作传任务到这里必然已经取过货；置空是为了让 `commit` 认得出「新的一世」
     this.chronicleTask = null;
     this.log = emptyLog();
@@ -612,8 +657,19 @@ export class TaleApp {
     this.freshLogIds = fresh;
   }
 
-  private closeLabel(): string {
-    return this.state?.ending === "ascend" ? CLOSE_LABELS.ascend : CLOSE_LABELS.other;
+  /**
+   * 收束那颗按钮的字样 —— **状态必须显式传进来**。
+   *
+   * [2026-08-14 code-reviewer 抓出] 它原来读的是 `this.state`，而这一批把「先算完整张卡、
+   * 再 `commit`」的顺序调了过来 —— 于是调用它的那一刻 `this.state` 还是**上一帧**的状态。
+   * 而 `doAction`／`doChoice` 入口都拦掉了「已死」，所以那一刻 `this.state.ending` 恒为
+   * null：成道那一世的按钮会永远印成「瞑目」而不是「登临」（四条道里三条都走 `doChoice`，
+   * 500 世冒烟里成道占一成三 —— 是主路，不是边角）。
+   *
+   * 收成显式入参之后这一类「隐式读 this.state」的时序坑在签名上就不可能再犯。
+   */
+  private closeLabel(state: TaleState): string {
+    return closeLabelFor(state.ending);
   }
 
   /**
@@ -665,39 +721,36 @@ export class TaleApp {
 
     const result = performAction(prev, action, CONTENT, options);
     const next = result.state;
+    const dying = this.deathLines(next);
+    /*
+     * [2026-08-14 死局修复] **先把整张卡算完，再落 app 状态**。
+     *
+     * 原来的顺序是「落 state → 落 pendingEvent → 算卡 → 落 center」，于是算卡那一步
+     * （`buildEventCardVm`／`encounterCenter`，两者都要读内容库）抛错时，app 已经处在
+     * 「有待办、没有卡」的死局里了。现在这一段是**纯计算**：抛错发生在任何字段被改之前，
+     * `safely` 兜住之后屏幕仍是上一帧那个可操作的样子（一条日志说明出了什么事）。
+     */
+    const nextCenter: CenterVm = result.pendingEvent
+      ? this.eventCenter(next, result.pendingEvent)
+      : // 起追：这一季**尚未收束**（引擎把季推进推迟到接近阶段的终局），所以这里不放 continue
+        // 按钮，也不能再走 doAction —— 屏幕切到遭遇全屏，下一步只能是 doStalk／doCombat。
+        (this.encounterCenter(next) ?? {
+          kind: "narration",
+          key: `act:${action}:${next.rngState}`,
+          title: null,
+          lines: [...result.notices, ...dying],
+          media: null,
+          continueLabel: next.alive ? null : this.closeLabel(next),
+        });
+
     this.commit(next);
-    this.pendingEvent = result.pendingEvent;
+    this.center = nextCenter;
     // 蛰伏开奖成功过一次（引导链第二步的判据；事件送的器官不算，见字段注释）
     if (result.moltResult) this.dormantMolted = true;
-    const dying = this.deathLines(next);
     this.appendLog(prev.year, prev.season, [
       ...result.notices.map((text) => ({ text, tone: noticeTone(text, result.moltResult !== null) })),
       ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
     ]);
-
-    const encounterCenter = result.pendingEvent ? null : this.encounterCenter(next);
-    if (result.pendingEvent) {
-      const card = buildEventCardVm(next, result.pendingEvent, CONTENT);
-      this.noteOrganGate(card);
-      this.center = {
-        kind: "event",
-        key: `event:${result.pendingEvent.id}:${next.rngState}`,
-        card,
-      };
-    } else if (encounterCenter !== null) {
-      // 起追：这一季**尚未收束**（引擎把季推进推迟到接近阶段的终局），所以这里不放 continue
-      // 按钮，也不能再走 doAction —— 屏幕切到遭遇全屏，下一步只能是 doStalk／doCombat。
-      this.center = encounterCenter;
-    } else {
-      this.center = {
-        kind: "narration",
-        key: `act:${action}:${next.rngState}`,
-        title: null,
-        lines: [...result.notices, ...dying],
-        media: null,
-        continueLabel: next.alive ? null : this.closeLabel(),
-      };
-    }
 
     this.renderPlayScreen();
     // 起追那一步季还没推进，没有季耗可忽略（追猎的季耗记在收束那一步的 doStalk 里）
@@ -724,22 +777,37 @@ export class TaleApp {
 
     const result = resolveChoice(prev, event, idx, CONTENT);
     const next = result.state;
-    this.commit(next);
-    this.pendingEvent = null;
     const dying = this.deathLines(next);
-    this.appendLog(prev.year, prev.season, [
-      { text: result.outcomeText, tone: outcomeTone(result) },
-      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
-    ]);
-
-    this.center = {
+    /*
+     * [2026-08-14 死局修复] 同 `doAction`：**先算完，再落状态**。
+     *
+     * 这一段原来夹在 `pendingEvent = null` 与 `center = …` 之间，于是中间任何一处抛错
+     * （`outcomeTone`／`eventArt`／`closeLabel`）都会留下「事件已经作废、卡还挂在中央」
+     * 的反向脱钩：屏幕上的抉择照旧可点，点下去 `doChoice` 却因为 `pendingEvent` 已空
+     * 而立刻 return —— 按钮亮着、按下去什么也不发生。
+     *
+     * `迎　敌` 那一颗按**遭遇是否还在**给（不再只看 `clashOf`）：从事件开的架今天恒是
+     * 交锋，但接近阶段也是同一个遭遇的一半，只认一半就是在赌内容永远不走另一半。
+     */
+    const nextCenter: CenterVm = {
       kind: "narration",
       key: `outcome:${event.id}:${idx}`,
       title: event.title,
       lines: [result.outcomeText, ...dying],
       media: event.illustration ? { kind: "image", src: eventArt(event.illustration) } : null,
-      continueLabel: !next.alive ? this.closeLabel() : clashOf(next) ? "迎　敌" : null,
+      continueLabel: !next.alive
+        ? this.closeLabel(next)
+        : clashOf(next) || approachOf(next)
+          ? "迎　敌"
+          : null,
     };
+
+    this.commit(next);
+    this.center = nextCenter;
+    this.appendLog(prev.year, prev.season, [
+      { text: result.outcomeText, tone: outcomeTone(result) },
+      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
+    ]);
 
     this.renderPlayScreen();
     this.showDelta(prev, next, 0);
@@ -832,6 +900,23 @@ export class TaleApp {
    * 头、势条、伤牌、四相盘、日志都原样留在屏幕上。M1 那两处各自造 center 的写法
    * 会让这两块屏各自漂移（P2 报告的遗留 5 是同一类毛病）。
    */
+  /**
+   * [2026-08-14 死局修复] 造一张事件卡的 center —— **事件与卡片一起出生的唯一入口**。
+   *
+   * 抽成方法有两个作用：`noteOrganGate` 那一笔（引导链第三步的判据）只写一处；
+   * 以及「有事件就一定有卡」这件事从此由一个返回值保证，而不是靠两条相邻的赋值语句。
+   */
+  private eventCenter(state: TaleState, event: TaleEvent): CenterVm {
+    const card = buildEventCardVm(state, event, CONTENT);
+    /*
+     * 这一笔是「先算完再落状态」那条纪律的**有意例外**（code-reviewer 提的）：`sawOrganGate`
+     * 只是引导链第三步的一个单调开关（false → true，永不回头），提前置位最坏也只是让引导链
+     * 早一步打勾 —— 而把它挪到 `commit` 那一行去反而要把 card 再传一次。
+     */
+    this.noteOrganGate(card);
+    return { kind: "event", key: `event:${event.id}:${state.rngState}`, event, card };
+  }
+
   private encounterCenter(state: TaleState): CenterVm | null {
     const approach = approachOf(state);
     const clash = clashOf(state);
@@ -882,7 +967,7 @@ export class TaleApp {
         title,
         lines: [...turn.roundLog, ...dying],
         media: null,
-        continueLabel: !next.alive ? this.closeLabel() : null,
+        continueLabel: !next.alive ? this.closeLabel(next) : null,
       };
     }
 
@@ -917,7 +1002,7 @@ export class TaleApp {
         title,
         lines: [...turn.roundLog, ...dying],
         media: null,
-        continueLabel: next.alive ? null : this.closeLabel(),
+        continueLabel: next.alive ? null : this.closeLabel(next),
       };
     }
 
@@ -937,6 +1022,25 @@ export class TaleApp {
     const encounter = this.encounterCenter(state);
     if (encounter) {
       this.center = encounter;
+      this.renderPlayScreen();
+      return;
+    }
+    /*
+     * [2026-08-14 死局修复] 「脱困」那一颗（护栏自愈时才出现）在这里收尾：把中央换成一张
+     * 与当前状态相符的空旁白，行动面板随之解锁（`blocked` 只认事件卡）。
+     *
+     * 原来这个方法在「活着 ＋ 没有遭遇」时**什么都不做**，于是任何走到这一支的 continue
+     * 按钮都是一颗按了没反应的按钮 —— 那是这次要根治的毛病本身。
+     */
+    if (this.center.kind === "narration" && this.center.continueLabel === ESCAPE_CONTINUE_LABEL) {
+      this.center = {
+        kind: "narration",
+        key: `resync:${state.rngState}`,
+        title: null,
+        lines: ["接着走。"],
+        media: null,
+        continueLabel: null,
+      };
       this.renderPlayScreen();
     }
   }
@@ -1006,7 +1110,8 @@ export class TaleApp {
         vm: this.chronicleVm,
         onReincarnate: () => {
           this.state = null;
-          this.pendingEvent = null;
+          // 中央那张卡跟着一起复位 —— 留着上一世最后一张就等于让下一世继承它（见 `startLife`）
+          this.center = bootCenter();
           this.goSeedSelect();
         },
       }),
@@ -1164,7 +1269,45 @@ export class TaleApp {
     this.renderPlayScreen();
   }
 
+  /**
+   * [2026-08-14 死局修复] 整屏渲染 —— **不许把一个走不动的屏幕交出去，也不许自己烂在半路**。
+   *
+   * 两层保护，缺一层就还留着一种「屏幕看着完好、其实彻底冻住」的走法：
+   *
+   * 1. **护栏**（`checkPlayable`）：上屏前问一句「这一帧还有路可走吗」。答不出来就换一张
+   *    带「脱困」按钮的卡再画，并把违规记进 `this.integrity`（`debugSnapshot` 读得到）。
+   *    自愈而不是抛错：抛在渲染入口等于把一个死局换成一个白屏。
+   * 2. **兜住渲染本身**（try／catch）：`renderPlay` 或任何一个 VM builder 抛错时，原来的
+   *    行为是 `swap` 根本不执行 —— DOM 停在上一帧，而 app 的状态已经往前走了。屏幕从此
+   *    每一次点击都改状态、却一次都不重画，玩家看到的就是「点什么都没反应」，日志里只有
+   *    一行控制台报错。现在退到一张最小可操作卡，并且照样记违规。
+   */
   private renderPlayScreen(): void {
+    try {
+      this.renderPlayOnce();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.noteIntegrity(`渲染抛错：${message}`);
+      this.center = escapeCenter(`界面出了岔子：${message}`);
+      try {
+        this.renderPlayOnce();
+      } catch (fallbackError) {
+        // 连兜底卡都画不出来（内容库坏了这一类）—— 至少给一句能看见的字，别留白屏
+        console.error("[tale-client] 兜底渲染也失败", fallbackError);
+        this.screenHost.replaceChildren(
+          el("div", { class: "screen", text: `界面出了岔子，请刷新：${message}` }),
+        );
+      }
+    }
+  }
+
+  /** 记一次护栏违规（控制台一句 ＋ 快照里一条，两处都要有 —— 见 `integrity` 的注释）。 */
+  private noteIntegrity(reason: string): void {
+    this.integrity = [...this.integrity, reason].slice(-20);
+    console.error("[tale-client] 护栏：", reason);
+  }
+
+  private renderPlayOnce(): void {
     const state = this.state;
     if (!state) return;
     const status = buildStatusVm(state, CONTENT, this.wayTab);
@@ -1178,36 +1321,59 @@ export class TaleApp {
     // 进两个战术全屏时主动收掉详情：那两屏的按钮在右下角，浮层压上去等于挡住操作
     if (this.center.kind === "encounter") this.detail = null;
     const detail = this.detail === null ? null : buildDetailVm(state, CONTENT, this.detail);
+    /*
+     * 未结算的事件卡在场时，行动面板与去处整排压住（引擎无从强制这条纪律）。
+     * highlight 必须一起熄掉 —— 一个禁用却还在发金光呼吸的按钮是在骗点击。
+     *
+     * [2026-08-14 死局修复] 判据从「`pendingEvent` 非空 **或** center 是事件卡」收成
+     * 「center 是事件卡」：两者现在是同一个事实的两种读法（见 `pendingEvent` 那个 getter），
+     * 而写成 `A || B` 会让下一个人以为它们可以不一致 —— 而那正是这次死局的形状。
+     */
+    const blocked = this.center.kind === "event";
+    const actions = buildActionVms(state, CONTENT).map((action) => ({
+      ...action,
+      enabled: action.enabled && !blocked,
+      highlight: action.highlight && !blocked,
+      disabledReason: blocked ? "先了此事" : action.disabledReason,
+    }));
+    /*
+     * 小标题（「可去 三／六 处」）念的是**这一世开了几处**，所以它必须读折算前那一份 ——
+     * 拿压住之后的那份去数会在每张事件卡上写成「可去 零／六 处」，而那是假话。
+     */
+    const openDestinations = buildDestinationVms(state, CONTENT);
+    const destinations = openDestinations.map((dest) => ({
+      ...dest,
+      enabled: dest.enabled && !blocked,
+      disabledReason: blocked ? "先了此事" : dest.disabledReason,
+    }));
+    /*
+     * 护栏（见 `model/playable.ts`）：走不动的一帧不许上屏。自愈一次就够 —— 兜底卡自带
+     * 「脱困」按钮，必然过检；`escaping` 只是防「兜底卡本身也被判违规」时的无限递归。
+     */
+    const violation = checkPlayable({ state, center: this.center, busy: this.busy, actions, destinations });
+    if (violation !== null && !this.escaping) {
+      this.noteIntegrity(violation);
+      this.escaping = true;
+      this.center = escapeCenter(violation);
+      try {
+        this.renderPlayOnce();
+      } finally {
+        this.escaping = false;
+      }
+      return;
+    }
     this.swap(
       renderPlay({
         status,
         center: this.center,
         detail,
         guide: this.guideVm(state),
-        onDetail: (sel) => this.setDetail(sel),
-        onWayTab: (way) => this.setWayTab(way),
-        onGuideDismiss: () => this.dismissGuide(),
-        actions: buildActionVms(state, CONTENT).map((action) => {
-          // 未结算的事件卡在场时，行动面板整体压住（引擎无从强制这条纪律）。
-          // highlight 必须一起熄掉 —— 一个禁用却还在发金光呼吸的按钮是在骗点击。
-          const blocked = this.pendingEvent !== null || this.center.kind === "event";
-          return {
-            ...action,
-            enabled: action.enabled && !blocked,
-            highlight: action.highlight && !blocked,
-            disabledReason: blocked ? "先了此事" : action.disabledReason,
-          };
-        }),
-        destinations: buildDestinationVms(state, CONTENT).map((dest) => {
-          // 与行动面板同一条纪律：未结算的事件卡在场时整排压住
-          const blocked = this.pendingEvent !== null || this.center.kind === "event";
-          return {
-            ...dest,
-            enabled: dest.enabled && !blocked,
-            disabledReason: blocked ? "先了此事" : dest.disabledReason,
-          };
-        }),
-        destinationCaption: destinationCaption(buildDestinationVms(state, CONTENT)),
+        onDetail: (sel) => void this.safely(async () => this.setDetail(sel)),
+        onWayTab: (way) => void this.safely(async () => this.setWayTab(way)),
+        onGuideDismiss: () => void this.safely(async () => this.dismissGuide()),
+        actions,
+        destinations,
+        destinationCaption: destinationCaption(openDestinations),
         log: recentLogVm(this.log),
         freshLogIds: this.freshLogIds,
         busy: this.busy,
@@ -1237,8 +1403,14 @@ export class TaleApp {
               this.forgeName,
             )
           : null,
-        onForgeOpen: (open) => this.setForgeOpen(open),
-        onForgePicks: (picks) => this.setForgePicks(picks),
+        /*
+         * [2026-08-14 死局修复] 这几颗原来**不走 `safely`**：`setForgeOpen` 会调
+         * `defaultForgePicks`、`setDetail` 会调 `buildDetailVm`（`wayDetail` 认不出 id 时抛错），
+         * 抛出去就是一个没人接的 DOM 事件 —— 控制台一行红字、屏幕毫无反应、`busy` 也没人复位。
+         * 所有能改状态的入口现在一律经过同一个兜子（判据只有一处）。
+         */
+        onForgeOpen: (open) => void this.safely(async () => this.setForgeOpen(open)),
+        onForgePicks: (picks) => void this.safely(async () => this.setForgePicks(picks)),
         onForgeName: (name) => {
           this.forgeName = name;
           // 只在合法性**翻转**时重画（每敲一个字重建整棵树会把焦点与光标位置弄丢）
@@ -1386,6 +1558,14 @@ export class TaleApp {
     state: TaleState | null;
     bloodline: Bloodline;
     pendingEventId: string | null;
+    /**
+     * [2026-08-14 死局修复] 渲染护栏抓到的违规原话（最近 20 条）。
+     *
+     * E2E 与 fuzz 的判据是 `integrity.length === 0`。**它必须是一个能被断言的数字** ——
+     * 「控制台没有报错」只证明没打印，证明不了没发生（owner 立的那条「『没跑成』必须与
+     * 『没发现问题』可区分」）。
+     */
+    integrity: string[];
     /** 当前展开的详情（`detailKey` 的值），没开则 null —— E2E 据此对账「点开的是哪一处」 */
     detail: string | null;
     /**
@@ -1435,6 +1615,7 @@ export class TaleApp {
       state,
       bloodline: this.bloodline,
       pendingEventId: this.pendingEvent?.id ?? null,
+      integrity: [...this.integrity],
       detail: this.detail === null ? null : detailKey(this.detail),
       forge: {
         open: this.forgeOpen,
@@ -1465,6 +1646,43 @@ export class TaleApp {
       guide: state && !this.guideDismissed ? buildGuideVm(state, CONTENT, this.guideIndex) : null,
     };
   }
+}
+
+/**
+ * 开机／换世时中央那张卡：**空白、没有按钮**。
+ *
+ * 它本身就是 owner 截图里中央那块空白 —— 所以它只允许出现在「还没进 play 屏」的那一瞬。
+ * 一旦它和 play 屏同时在场，`checkPlayable` 会当违规抓住（活着、不忙、一条出路都没有）。
+ */
+function bootCenter(): CenterVm {
+  return {
+    kind: "narration",
+    key: BOOT_CENTER_KEY,
+    title: null,
+    lines: [],
+    media: null,
+    continueLabel: null,
+  };
+}
+
+/**
+ * [2026-08-14 死局修复] 护栏自愈用的那张卡 —— 一句人话 ＋ 一颗真能按的按钮。
+ *
+ * 刻意**把原因写在屏幕上**：这不是给玩家看的风味字，是「界面自己发现自己坏了」的自白。
+ * 藏起来就又变成一个静默失效，而 owner 撞到的那次之所以要花一整夜排查，正是因为它没留话。
+ */
+function escapeCenter(reason: string): CenterVm {
+  return {
+    kind: "narration",
+    key: `escape:${reason}`,
+    title: "此　处　有　异",
+    lines: [
+      "界面走进了一个自己也走不出的局面，已就地脱困 —— 这一步的结果可能没落上。",
+      reason,
+    ],
+    media: null,
+    continueLabel: ESCAPE_CONTINUE_LABEL,
+  };
 }
 
 /** `data-anchor` 里只会出现 `[a-z:]`，但拼选择器时仍防一手引号注入。 */

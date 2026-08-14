@@ -372,6 +372,66 @@ describe("trigger 匹配", () => {
     expect(turn.pendingEvent?.id).toBe(EVENT_MANDATE);
   });
 
+  /*
+   * [2026-08-14 死局修复] **一条抉择都点不开的事件不许抽出来。**
+   *
+   * 抽出来就是一个死局：界面拿到非 null 的 `pendingEvent` 会把行动面板整排锁死
+   * （引擎自己立的「先 resolveChoice 再进下一回合」那条纪律），而卡片上没有一颗按得动的
+   * 抉择 —— 屏幕上一条路都没有，`resolveChoice` 也无从被调用。
+   */
+  describe("点不开的事件不入池", () => {
+    /** 唯一一条抉择要灵 9999 —— 谁都够不着。 */
+    const unopenable: TaleEvent = {
+      ...SPROUT,
+      id: "unopenable",
+      choices: [
+        {
+          label: "非人所能",
+          requires: { stats: { ling: 9999 } },
+          outcomes: [{ weight: 1, text: "不可能。", effects: {} }],
+        },
+      ],
+    };
+
+    it("池子里只有它时，抽不出任何事件", () => {
+      const content = soloContent(unopenable);
+      for (let seed = 0; seed < 40; seed += 1) {
+        expect(performAction(life(seed * 31 + 1), "rest", content).pendingEvent).toBeNull();
+      }
+    });
+
+    it("与一条点得开的并列时，恒抽到点得开的那条", () => {
+      const content = makeContent({
+        // 权重压倒性地偏向点不开的那条：不过滤就几乎每次都抽到它
+        events: [{ ...unopenable, trigger: { region: "any", weight: 99 } }, SPROUT],
+        tuning: { ...UNCLAMPED_CHANCE, eventChanceBase: 1, huntPreyIds: [] },
+      });
+      for (let seed = 0; seed < 40; seed += 1) {
+        expect(performAction(life(seed * 17 + 5), "rest", content).pendingEvent?.id).toBe(SPROUT.id);
+      }
+    });
+
+    it("门槛够得着时它照常入池（过滤问的是**此刻**够不够）", () => {
+      const reachable: TaleEvent = {
+        ...unopenable,
+        choices: [
+          {
+            label: "灵者可为",
+            requires: { stats: { ling: 20 } },
+            outcomes: [{ weight: 1, text: "成了。", effects: {} }],
+          },
+        ],
+      };
+      const content = soloContent(reachable);
+      const base = life();
+      expect(performAction(base, "rest", content).pendingEvent).toBeNull();
+      expect(
+        performAction({ ...base, stats: { ...base.stats, ling: 20 } }, "rest", content).pendingEvent
+          ?.id,
+      ).toBe(reachable.id);
+    });
+  });
+
   it("按 trigger.weight 加权抽取", () => {
     const heavy: TaleEvent = { ...SPROUT, id: "heavy", trigger: { region: "any", weight: 90 } };
     const light: TaleEvent = { ...SPROUT, id: "light", trigger: { region: "any", weight: 10 } };

@@ -3300,8 +3300,28 @@ function drawEvent(
   if (cursor.next() >= chance) return null;
   const tags = ownedTags(draft, content);
   const destinationId = destination?.id ?? null;
-  const pool = content.events.filter((event) =>
-    matchesTrigger(draft, event, action, tags, destinationId),
+  const pool = content.events.filter(
+    (event) =>
+      matchesTrigger(draft, event, action, tags, destinationId) &&
+      /*
+       * [2026-08-14] **一条抉择都点不开的事件不许抽出来。**
+       *
+       * 抽出来的后果是一个死局：界面拿到非 null 的 `pendingEvent` 就把行动面板整排锁死
+       * （引擎自己立的纪律「先 resolveChoice 再进下一回合」），而卡片上没有一颗按得动的
+       * 抉择 —— 玩家在屏幕上找不到任何一条路，`resolveChoice` 也无从被调用。
+       *
+       * 判据用 `meetsChoiceRequirement`（`eligibleChoiceIdxs` 的正本内核），不另写一套：
+       * 界面置灰问的是 `eligibleChoiceIdxs`，两者同一个函数。这里直接用内核是为了**复用上面
+       * 那份 `tags`** —— 走 `eligibleChoiceIdxs` 会让每个候选事件各自重建一次
+       * `organIndex(content)` 的 Map（code-reviewer 抓的 N+1），而池子会长到七十条手写
+       * ＋ 十六条生成。
+       *
+       * 对现有内容是**恒等变换** —— 手写 70 条与 AI 骨架 336 个槽位都至少留着一条无门槛的
+       * 抉择（`tale-content/test/schema.test.ts` 与 `tale-ai/test/slots.test.ts` 各有一条
+       * 断言在守），所以抽取序列与既有 golden 一个字都不变。它挡的是将来某条只写门槛分支
+       * 的新内容。
+       */
+      event.choices.some((choice) => meetsChoiceRequirement(draft, choice, tags)),
   );
   return weightedPick(cursor, pool, (event) => event.trigger.weight * eventWeightMul(event, premise));
 }
