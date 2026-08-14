@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combatPreview, type TaleContent, type TaleState } from "@shiling/tale-sim";
+import { combatPreview, learnLore, type TaleContent, type TaleState } from "@shiling/tale-sim";
 import { buildCombatVm, recommendCombatActId } from "../src/model/combatVm.js";
 import { FIXTURE_CONTENT, fightingState, makeContent, newState, withPatch, type ClashPatch } from "./helpers.js";
 
@@ -342,21 +342,32 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
     };
     const cases: ClashPatch[] = [
       {},
-      { skillCooldowns: { "s-burst": 2, "syn:syn-pool": 3 } },
+      { skillCooldowns: { "s-burst": 2, "forge:0": 3 } },
       { intent: { kind: "pounce", text: "扑。" } },
       { playerHp: 4 },
       { enemyHp: 2 },
       { bleed: 2, slow: 1, insight: 2 },
     ];
     const base = newState();
-    const armed = withPatch(base, {
-      organIds: [...base.organIds, "s-burst", "s-venom", "s-costly", "s-bolt"],
-      essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
-    });
+    /*
+     * [M2-B2] 第五颗按钮从「凑齐即白拿的组合技」换成**招式册里的一手**（`learnLore` 之后）：
+     * 组合表已降级为古法，凑齐配方只是让它上货架。池子仍是 5 颗，测的性质一字未改。
+     */
+    const armed = learnLore(
+      withPatch(base, {
+        organIds: [...base.organIds, "s-burst", "s-venom", "s-costly", "s-bolt"],
+        essence: { zu: 0, lin: 0, xue: 0, meng: 99 },
+      }),
+      content,
+      "syn-pool",
+    );
     for (const patch of cases) {
-      const state = fightingState(armed, { enemyId: "qiong-qi-you", enemyHp: 40, ...patch });
+      const state = fightingState(
+        { ...armed, essence: { zu: 0, lin: 0, xue: 0, meng: 0 } },
+        { enemyId: "qiong-qi-you", enemyHp: 40, ...patch },
+      );
       const view = buildCombatVm(state, state.encounter!.clash!, content);
-      // 池子确实是满的（4 颗器官技 ＋ 1 颗组合技），不是「碰巧只有一颗」
+      // 池子确实是满的（4 颗器官技 ＋ 1 颗招式册），不是「碰巧只有一颗」
       expect(view.actions.filter((action) => action.group === "skill")).toHaveLength(5);
       const hot = view.actions.filter((action) => action.highlight);
       expect(hot.length, `${JSON.stringify(patch)}：${hot.map((a) => a.id).join("/")}`).toBe(1);
@@ -559,20 +570,25 @@ describe("S1 技能池：每颗技能按钮都写清伤害、效果、冷却与�
       ],
     };
     const base = newState();
-    const state = fightingState(
-      withPatch(base, { organIds: [...base.organIds, "gou-chi", "wu-mu"] }),
-      { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" },
+    const learnt = learnLore(
+      withPatch(base, {
+        organIds: [...base.organIds, "gou-chi", "wu-mu"],
+        essence: { zu: 0, lin: 0, xue: 0, meng: 99 },
+      }),
+      content,
+      "test-syn",
     );
+    const state = fightingState(learnt, { enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "eye" });
     const view = buildCombatVm(state, state.encounter!.clash!, content);
-    const combo = view.actions.find((action) => action.id === "skill:syn:test-syn");
+    const combo = view.actions.find((action) => action.id === "skill:forge:0");
     const organSkill = view.actions.find((action) => action.id === "skill:gou-chi");
-    expect(combo?.synergy).toBe(true);
-    expect(combo?.glyph).toBe("异");
-    // 组合技的那一行给的是**这一手是什么**（技自己的描述）—— 它走 `flavor` 而不是
+    expect(combo?.origin).toBe("lore");
+    expect(combo?.glyph).toBe("古");
+    // 古法那一行给的是**这一手是什么**（技自己的描述）—— 它走 `flavor` 而不是
     // `warning`：后者的语义是「按下去会有这个后果，注意」，两种东西不共用一个字段
     expect(combo?.flavor).toContain("把腺里的东西全挤进伤口");
     expect(combo?.warning).toBeNull();
-    expect(organSkill?.synergy).toBe(false);
+    expect(organSkill?.origin).toBe("organ");
     expect(organSkill?.glyph).toBe("技");
     expect(organSkill?.warning).toBeNull();
     expect(organSkill?.flavor).toBeNull();

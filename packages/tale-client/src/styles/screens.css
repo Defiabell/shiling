@@ -3139,15 +3139,7 @@
  * 组合技（异变）用朱砂印，与器官技的金印分色 —— 玩家凑齐两件器官换来的一手，
  * 若在按钮排里与器官技长得一样，那次发现就白发现了。
  */
-.cact.is-synergy .cact__seal {
-  background: rgba(226, 105, 76, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.5);
-  color: var(--cinnabar-lt);
-}
-
-.cact.is-synergy {
-  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.3);
-}
+/* [S1 → M2-B2] 「异」印那两条已换成招式册的「凝」／「古」两印（见文件末尾） */
 
 /* 不可用的原因：与后果**并存**（后果在上，原因在下），不再顶掉后果 */
 .cact__lock {
@@ -3857,4 +3849,508 @@
 /* 咬喉不留整场伤 —— 那一格排成一枚说明牌，不画计数器（一个永远停在 0 的数只会误导） */
 .enc__wound.is-inert {
   opacity: 0.62;
+}
+
+/* ===== [M2-B2] 凝招 · 招式框 ===== */
+
+/*
+ * 入口摆在右栏「身内」那一格底下 —— 器官 chip 就是凝招的原料，两者挨着才读得成一句话。
+ * 它**不进行动面板**：凝招不推进季节，混进那一排会让玩家以为它要花一季。
+ */
+.forge-entry {
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px dashed var(--hair);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--txt-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: color 0.18s, border-color 0.18s, background 0.18s;
+}
+
+.forge-entry:hover:not([disabled]) {
+  color: var(--gold-soft);
+  border-color: rgba(232, 180, 95, 0.45);
+  background: rgba(232, 180, 95, 0.05);
+}
+
+/* 引擎说「现在该凝一手了」（`recommendForge`）—— 与搏杀屏那颗金光是同一个定位 */
+.forge-entry.is-hot {
+  color: var(--gold);
+  border-color: rgba(232, 180, 95, 0.55);
+  border-style: solid;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.forge-entry[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * 招式框是**模态浮层**（`position: fixed`），理由同详情浮层：P1/P2 两轮都踩过
+ * 「新元素把按钮挤出屏幕」。它比详情浮层大得多（三个槽 ＋ 招式册 ＋ 十条古法），
+ * 所以自己滚，且限高在视口的 86%。
+ */
+.forge {
+  position: fixed;
+  z-index: 40;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(760px, calc(100vw - 48px));
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+  border-radius: 10px;
+  background: rgba(14, 16, 20, 0.97);
+  box-shadow:
+    0 0 0 1px var(--hair),
+    0 24px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.forge__head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.forge__title {
+  font-family: var(--serif);
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+}
+
+.forge__essence,
+.forge__slots {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--txt-3);
+}
+
+.forge__slots { margin-left: auto; }
+
+.forge__close {
+  border: none;
+  background: transparent;
+  color: var(--txt-3);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.forge__parts,
+.forge__empty {
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--txt-3);
+  margin: 0;
+}
+
+.forge__sub {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--txt-3);
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+/* — 一个槽 — */
+
+.fslot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fslot__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fslot__label {
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: var(--txt-2);
+}
+
+.fslot__picked {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--gold);
+  letter-spacing: 0.1em;
+}
+
+.fslot__text {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--txt-2);
+}
+
+.fslot__hint {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--txt-3);
+}
+
+/*
+ * 候选部件平铺（不是下拉菜单）：换一个槽只要一次点击，而 owner 的纪律是
+ * 「凝招不得显著推高点击」—— 下拉菜单每换一次要两下（展开 ＋ 选）。
+ */
+.fslot__opts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(216px, 1fr));
+  gap: 6px;
+}
+
+.fopt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s, background 0.16s;
+}
+
+.fopt:hover:not([disabled]) { border-color: rgba(232, 180, 95, 0.4); }
+
+.fopt__zi {
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--txt-2);
+  flex: 0 0 auto;
+  width: 20px;
+  text-align: center;
+}
+
+.fopt__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fopt__what,
+.fopt__outcome,
+.fopt__lock {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.fopt__what { color: var(--txt-2); }
+/* 「换上它之后这一手变成什么」—— 这一行是这一屏摊开后果的全部主张，所以给它金色 */
+.fopt__outcome { color: var(--gold-soft); }
+.fopt__lock { color: var(--txt-3); }
+
+.fopt.is-on {
+  border-color: rgba(232, 180, 95, 0.65);
+  background: rgba(232, 180, 95, 0.07);
+}
+
+.fopt.is-on .fopt__zi { color: var(--gold); }
+
+/* 付不起也照样可选（欲望展示位），只是那一行转成朱砂提醒 */
+.fopt.is-poor .fopt__outcome { color: var(--cinnabar-lt); }
+
+.fopt.is-locked {
+  opacity: 0.42;
+  cursor: default;
+}
+
+/* — 成品与命名 — */
+
+.forge__result {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: rgba(232, 180, 95, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.28);
+}
+
+.forge__result-effect {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+
+.forge__result-cost {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--txt-2);
+}
+
+.forge__name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.forge__name-label {
+  font-family: var(--serif);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--txt-2);
+}
+
+.forge__name {
+  flex: 1 1 160px;
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 5px;
+  background: rgba(232, 236, 242, 0.03);
+  color: var(--txt-1);
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+.forge__name:focus {
+  outline: none;
+  border-color: rgba(232, 180, 95, 0.5);
+}
+
+.forge__commit {
+  padding: 7px 18px;
+  border: 1px solid rgba(232, 180, 95, 0.5);
+  border-radius: 5px;
+  background: rgba(232, 180, 95, 0.1);
+  color: var(--gold);
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.forge__commit.is-locked {
+  border-color: var(--hair);
+  background: transparent;
+  color: var(--txt-3);
+  cursor: default;
+}
+
+.forge__lock {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--cinnabar-lt);
+  flex: 1 0 100%;
+}
+
+/* — 招式册 — */
+
+.fbook {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fbook__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.fbook__seal {
+  font-style: normal;
+  font-family: var(--serif);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 3px;
+  color: var(--cinnabar-lt);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.45);
+}
+
+.fbook__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.fbook__text b {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: var(--txt-1);
+}
+
+.fbook__text em,
+.fbook__src {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--txt-3);
+}
+
+.fbook__forget {
+  align-self: center;
+  padding: 4px 9px;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--txt-3);
+  font-family: var(--serif);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fbook__forget:hover:not([disabled]) {
+  color: var(--cinnabar-lt);
+  border-color: rgba(226, 105, 76, 0.45);
+}
+
+/* — 古法货架 — */
+
+.flore {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flore__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.flore__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.flore__text b {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 13.5px;
+  letter-spacing: 0.1em;
+  color: var(--txt-1);
+}
+
+.flore__recipe,
+.flore__reveal,
+.flore__cost,
+.flore__lock {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.flore__recipe { color: var(--cyan); }
+.flore__text em {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--txt-3);
+}
+.flore__reveal { color: var(--txt-2); }
+.flore__cost { color: var(--gold-soft); }
+.flore__lock { color: var(--txt-3); }
+
+/* 没发现过的那几条只剩一个「？」—— 配方与成品一个字都不进 DOM（同 S1 图鉴那条铁律） */
+.flore__row.is-unknown { opacity: 0.5; }
+.flore__row.is-unknown .flore__text b { color: var(--txt-3); }
+
+.flore__learn {
+  padding: 5px 12px;
+  border: 1px solid rgba(232, 180, 95, 0.45);
+  border-radius: 4px;
+  background: rgba(232, 180, 95, 0.08);
+  color: var(--gold);
+  font-family: var(--serif);
+  font-size: 12.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.flore__learn.is-locked {
+  border-color: var(--hair);
+  background: transparent;
+  color: var(--txt-3);
+  cursor: default;
+}
+
+/* [M2-B2] 招式册里那几手在搏杀屏上的印章：自拟「凝」金、古法「古」朱砂 */
+.cact.is-forged .cact__seal {
+  background: rgba(232, 180, 95, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.5);
+  color: var(--gold);
+}
+
+.cact.is-forged { box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.28); }
+
+.cact.is-lore .cact__seal {
+  background: rgba(226, 105, 76, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.5);
+  color: var(--cinnabar-lt);
+}
+
+.cact.is-lore { box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.3); }
+
+/* 矮屏：招式框自己滚，别把命名行顶出视口 */
+@media (max-height: 860px) {
+  .forge { max-height: 92vh; padding: 14px 16px 16px; gap: 9px; }
+  .fslot__hint { display: none; }
+}
+
+/* 「与力道对调」：点它会顺带动到另一个槽 —— 这件事必须写在脸上，不能让玩家点完才发现 */
+.fopt__swap {
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--cyan);
 }

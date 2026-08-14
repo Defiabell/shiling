@@ -17,7 +17,13 @@ import {
   combatAct,
   composeChronicle,
   createLife,
+  defaultForgePicks,
+  forgeSkill,
+  forgetForgedSkill,
+  forgeNameValid,
+  learnLore,
   lifeTuning,
+  recommendForge,
   performAction,
   premiseOf,
   resolveChoice,
@@ -27,6 +33,7 @@ import {
   type ActionOptions,
   type ChronicleEntry,
   type CombatAct,
+  type ForgePicks,
   type SynergyDef,
   type TaleEvent,
   type TaleState,
@@ -43,6 +50,7 @@ import { actionOfButton, buildActionVms } from "./model/actionVm.js";
 import { buildDestinationVms, destinationCaption } from "./model/destinationVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm } from "./model/combatVm.js";
+import { buildForgeVm } from "./model/forgeVm.js";
 import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
 import { buildDetailVm, detailKey, type DetailSel } from "./model/detailVm.js";
 import { buildEventCardVm, type EventCardVm } from "./model/eventVm.js";
@@ -129,6 +137,16 @@ export interface AppOptions {
    */
   grantLoreEnemyIds?: readonly string[];
   /**
+   * [M2-B2] **仅 dev**：出生时四型精气各给这么多（`?essence=120` 传入，见 main.ts）。
+   *
+   * 存在的理由与 `grantOrganIds` 逐字相同：B2 的验收要「两套风格完全不同的招式各拼一手，
+   * 贴出面板原文」，而一副特定的拼法要攒好几年精气 —— 那一问要看的是**招式框上写的字**，
+   * 不是攒精气的过程。**只在降世那一刻加一次**（不是运行时后门）：`window.__tale`
+   * 那个调试出口仍然是纯只读的，能从外面改 `TaleState` 就等于把游戏逻辑漏到了界面之外。
+   * 点击账那一支不用它（那一世要真攒）。生产构建里这一段不生效。
+   */
+  grantEssence?: number;
+  /**
    * [P1] AI 史官的配置。由 main.ts 从 URL ＋ `import.meta.env.DEV` 算出来传进来 ——
    * app.ts 因此不必认识 vite 的 env，测试里也能直接关掉它（缺省即关）。
    */
@@ -150,6 +168,7 @@ export class TaleApp {
   private readonly baseSeed: number;
   private readonly grantOrganIds: readonly string[];
   private readonly grantLoreEnemyIds: readonly string[];
+  private readonly grantEssence: number;
 
   private screen: ScreenId = "title";
   private titleHandle: ScreenHandle | null = null;
@@ -169,6 +188,15 @@ export class TaleApp {
    * `ChronicleEntry` 只有岁数与器官数，算不出差距报告（同 `buildChronicleVm` 要 state 的理由）。
    */
   private lastLife: TaleState | null = null;
+  /**
+   * [M2-B2] 招式框开着没有 ＋ 三个槽当前挑了什么 ＋ 名号栏里的字。
+   *
+   * 三样都**不进 `TaleState`**：它们是「玩家正在琢磨」的中间态，不是这一世的事实
+   * （同详情浮层的开合）。真正落账的只有 `forgeSkill`／`learnLore` 那一步。
+   */
+  private forgeOpen = false;
+  private forgePicks: ForgePicks | null = null;
+  private forgeName: string | null = null;
   /**
    * [P1 AI 史官] 这一世的作传任务 —— **死亡那一刻就起跑**，`endLife` 到时候只是取货。
    *
@@ -232,6 +260,7 @@ export class TaleApp {
     this.baseSeed = options.seed ?? (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
     this.grantOrganIds = options.grantOrganIds ?? [];
     this.grantLoreEnemyIds = options.grantLoreEnemyIds ?? [];
+    this.grantEssence = Math.max(0, Math.floor(options.grantEssence ?? 0));
     // 缺省关：没显式给配置的调用方（测试、任何非 dev 入口）不该在死亡路径上发网络请求
     this.aiConfig = options.ai ?? historianConfig("", false);
     this.scenarioConfig = options.scenario ?? scenarioConfig("", false);
@@ -382,10 +411,23 @@ export class TaleApp {
       saveBloodline(this.storage, this.bloodline);
     }
     // dev 对照用的额外器官（只借 tag，不叠 statMods）；生产路径下 grantOrganIds 恒为空
-    const state =
+    const granted =
       this.grantOrganIds.length > 0
         ? { ...born, organIds: [...born.organIds, ...this.grantOrganIds] }
         : born;
+    // [M2-B2] dev 对照用的起手精气（`?essence=`）；生产路径下恒为 0
+    const state =
+      this.grantEssence > 0
+        ? {
+            ...granted,
+            essence: {
+              zu: this.grantEssence,
+              lin: this.grantEssence,
+              xue: this.grantEssence,
+              meng: this.grantEssence,
+            },
+          }
+        : granted;
     this.state = state;
     this.pendingEvent = null;
     // 上一世的作传任务到这里必然已经取过货；置空是为了让 `commit` 认得出「新的一世」
@@ -995,10 +1037,84 @@ export class TaleApp {
     return vm;
   }
 
+  /**
+   * [M2-B2] 开／关招式框。
+   *
+   * 开的时候**预填**三个槽（`defaultForgePicks` ＝ 付得起的里面分量最大的一手）与名号 ——
+   * 「接受缺省」于是只要再点一次「凝成」。凝招的点击账（一手两次）全靠这一条，
+   * 而缺省要落在懒人路径上是「速猎」那颗按钮立下的规矩。
+   */
+  private setForgeOpen(open: boolean): void {
+    const state = this.state;
+    this.forgeOpen = open && state !== null;
+    if (this.forgeOpen && state) {
+      this.forgePicks = defaultForgePicks(state, CONTENT);
+      this.forgeName = null;
+    } else {
+      this.forgePicks = null;
+      this.forgeName = null;
+    }
+    this.renderPlayScreen();
+  }
+
+  /**
+   * [M2-B2] 换部件 —— 下一副 picks 由视图模型算好（含「两个槽对调」那一档）。
+   *
+   * 名号**不动**：玩家没打过字就恒等于新的默认名号（`buildForgeVm` 每次现算），
+   * 打过字就是他的 —— 换个部件把人家取的名字冲掉是这一屏最讨嫌的一种「贴心」。
+   */
+  private setForgePicks(picks: ForgePicks): void {
+    if (!this.forgePicks) return;
+    this.forgePicks = picks;
+    this.renderPlayScreen();
+  }
+
+  /** [M2-B2] 凝成 —— 扣精气、入册，**凝完自动收起招式框**（少一次必点）。 */
+  private forgeCommit(): void {
+    const state = this.state;
+    if (!state || !this.forgePicks) return;
+    const name = this.forgeName?.trim();
+    const next = forgeSkill(state, CONTENT, this.forgePicks, name === "" ? undefined : name);
+    const forged = next.forgedSkills[next.forgedSkills.length - 1];
+    this.commit(next);
+    this.appendLog(next.year, next.season, [
+      { text: `凝成一手「${forged?.name ?? ""}」，记入招式册。`, tone: "molt" },
+    ]);
+    this.setForgeOpen(false);
+  }
+
+  /** [M2-B2] 循古法习得 —— 与凝成同一条账（付精气、占一个槽、写一条 forge 记录）。 */
+  private forgeLearn(synergyId: string): void {
+    const state = this.state;
+    if (!state) return;
+    const next = learnLore(state, CONTENT, synergyId);
+    const forged = next.forgedSkills[next.forgedSkills.length - 1];
+    this.commit(next);
+    this.appendLog(next.year, next.season, [
+      { text: `循古法凝成「${forged?.name ?? ""}」，记入招式册。`, tone: "molt" },
+    ]);
+    this.setForgeOpen(false);
+  }
+
+  /** [M2-B2] 忘掉册中一手（不退精气）—— 招式框**不收起**：忘掉多半是为了紧接着凝一手新的。 */
+  private forgeForget(forgedId: string): void {
+    const state = this.state;
+    if (!state) return;
+    this.commit(forgetForgedSkill(state, forgedId));
+    this.renderPlayScreen();
+  }
+
   private renderPlayScreen(): void {
     const state = this.state;
     if (!state) return;
     const status = buildStatusVm(state, CONTENT, this.wayTab);
+    const nameWasOk = forgeNameValid(this.forgeName ?? "", CONTENT.tuning);
+    // 进两个战术全屏时主动收掉招式框（同详情浮层）：遭遇中不该还能改招式册
+    if (this.center.kind === "encounter" && this.forgeOpen) {
+      this.forgeOpen = false;
+      this.forgePicks = null;
+      this.forgeName = null;
+    }
     // 进两个战术全屏时主动收掉详情：那两屏的按钮在右下角，浮层压上去等于挡住操作
     if (this.center.kind === "encounter") this.detail = null;
     const detail = this.detail === null ? null : buildDetailVm(state, CONTENT, this.detail);
@@ -1050,6 +1166,27 @@ export class TaleApp {
         onCombat: (act) => void this.safely(() => this.doCombat(act)),
         onStalk: (act) => void this.safely(() => this.doStalk(act)),
         onContinue: () => void this.safely(() => this.onContinue()),
+        forgeLabel: `凝招 · 招式册 ${state.forgedSkills.length}／${CONTENT.tuning.forgeSlots}`,
+        forgeHot: recommendForge(state, CONTENT) !== null,
+        forge: this.forgeOpen
+          ? buildForgeVm(
+              state,
+              CONTENT,
+              this.forgePicks,
+              this.bloodline.knownSynergyIds,
+              this.forgeName,
+            )
+          : null,
+        onForgeOpen: (open) => this.setForgeOpen(open),
+        onForgePicks: (picks) => this.setForgePicks(picks),
+        onForgeName: (name) => {
+          this.forgeName = name;
+          // 只在合法性**翻转**时重画（每敲一个字重建整棵树会把焦点与光标位置弄丢）
+          if (forgeNameValid(name, CONTENT.tuning) !== nameWasOk) this.renderPlayScreen();
+        },
+        onForgeCommit: () => void this.safely(async () => this.forgeCommit()),
+        onForgeLearn: (synergyId) => void this.safely(async () => this.forgeLearn(synergyId)),
+        onForgeForget: (forgedId) => void this.safely(async () => this.forgeForget(forgedId)),
       }),
     );
     this.syncAmbient();
@@ -1191,6 +1328,17 @@ export class TaleApp {
     pendingEventId: string | null;
     /** 当前展开的详情（`detailKey` 的值），没开则 null —— E2E 据此对账「点开的是哪一处」 */
     detail: string | null;
+    /**
+     * [M2-B2] 凝招：招式框开着没有、三个槽当前挑了什么、册里有几手。
+     *
+     * E2E 靠它对账「点了几次」与「凝出来的是不是我挑的那三件」—— 光看屏幕分不出
+     * 「换了部件」与「界面重画了一遍」。
+     */
+    forge: {
+      open: boolean;
+      picks: ForgePicks | null;
+      forged: { id: string; name: string; parts: ForgePicks | null; loreId: string | null }[];
+    };
     /** 引导链：第几步／那两句话／有没有走完。验收第三问就查它 */
     guide: { step: number; total: number; text: string; hint: string; complete: boolean } | null;
     /**
@@ -1228,6 +1376,16 @@ export class TaleApp {
       bloodline: this.bloodline,
       pendingEventId: this.pendingEvent?.id ?? null,
       detail: this.detail === null ? null : detailKey(this.detail),
+      forge: {
+        open: this.forgeOpen,
+        picks: this.forgePicks,
+        forged: (state?.forgedSkills ?? []).map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          parts: entry.parts,
+          loreId: entry.loreId,
+        })),
+      },
       ai: {
         enabled: this.aiConfig.enabled,
         model: this.aiConfig.model,

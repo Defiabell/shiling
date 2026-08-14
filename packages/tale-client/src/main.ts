@@ -52,6 +52,16 @@ const grantLoreEnemyIds = import.meta.env.DEV
       .filter((id) => /^[a-z0-9-]+$/.test(id))
   : [];
 
+/**
+ * `?essence=120` —— **仅 dev**：降世时四型精气各给这么多。
+ *
+ * B2 的验收要拍「两套风格完全不同的招式」的面板原文，而一副特定的拼法要攒好几年精气。
+ * 与 `?organs=` 同一条纪律：它只在**降世那一刻**加一次，不是运行时后门。
+ */
+const grantEssence = import.meta.env.DEV
+  ? Number.parseInt(params.get("essence") ?? "0", 10) || 0
+  : 0;
+
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) throw new Error("main: 找不到 #app 挂载点");
 
@@ -72,6 +82,7 @@ const app = new TaleApp(root, {
   ...(seed === undefined ? {} : { seed }),
   ...(grantOrganIds.length > 0 ? { grantOrganIds } : {}),
   ...(grantLoreEnemyIds.length > 0 ? { grantLoreEnemyIds } : {}),
+  ...(grantEssence > 0 ? { grantEssence } : {}),
   ai,
   scenario,
 });

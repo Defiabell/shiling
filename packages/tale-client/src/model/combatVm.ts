@@ -27,6 +27,7 @@
 
 import {
   BODY_PART_NAMES,
+  FORGE_SLOTS,
   combatPreview,
   recommendCombatAct,
   type BodyPart,
@@ -37,6 +38,7 @@ import {
   type ClashState,
   type DamageRange,
   type EnemyDef,
+  type ForgedSkill,
   type Stance,
   type TaleContent,
   type TaleState,
@@ -82,11 +84,13 @@ export interface CombatActionVm {
   disabledReason: string | null;
   group: "bite" | "stance" | "skill" | "finisher" | "flee";
   /**
-   * [S1] 这一手是**组合技**（异变）—— 界面给它一枚朱砂「异」印。
+   * [S1 → M2-B2] 这一手的出处 —— 界面据它换印章与配色。
    *
-   * 玩家凑齐两件器官换来的一手，若在按钮排里与器官技长得一样，那次发现就白发现了。
+   * `organ` 器官技（金印「技」）／`forged` 自己凝成的（朱砂「凝」）／`lore` 循古法习得的
+   * （朱砂「古」）。玩家花了精气与一个槽换来的一手，若在按钮排里与白拿的器官技长得一样，
+   * 凝招那一屏的所有决定在战斗屏上就消失了 —— 这是 S1「异」印那条的同一个理由。
    */
-  synergy: boolean;
+  origin: "organ" | "forged" | "lore";
 }
 
 export interface CombatVm {
@@ -256,11 +260,26 @@ function skillEffectText(skill: CombatSkillPreview): string {
     skill.damage.mid > 0 ? `伤 ${damageText(skill.damage)}` : "不出伤",
   ];
   for (const effect of skill.effects) parts.push(SKILL_EFFECT_LABELS[effect]);
+  // [M2-B2] 断伤：凝招力道槽那一件顺带断的部位（整场累积，与咬击那三颗共用一条线）
+  if (skill.woundPart) parts.push(`断其${BODY_PART_NAMES[skill.woundPart]}`);
   parts.push(`冷却 ${skill.cooldown} 合`);
   // [M2-B1] 势是第三样价钱，与冷却、代价并排 —— 三样都写清才知道「现在按还是攒两合」
   if (skill.momentumCost > 0) parts.push(`耗势 ${skill.momentumCost}`);
   if (skill.cost) parts.push(costText(skill.cost));
   return parts.join(" · ");
+}
+
+/**
+ * [M2-B2] 招式册那一手的出处行。
+ *
+ * 自拟招念三件部件 ＋ 凝成时已付的账；古法念它自己的描述（那是「情理之中」的一半）。
+ */
+function forgedFlavor(forged: ForgedSkill, content: TaleContent): string {
+  if (forged.parts === null) return forged.skill.desc;
+  const names = FORGE_SLOTS.map(
+    (slot) => content.parts.find((part) => part.id === forged.parts?.[slot])?.name ?? "？",
+  );
+  return `${names.join("·")} —— 已付 ${ESSENCE_LABELS[forged.cost.essenceType]}精气 ${forged.cost.essence}`;
 }
 
 export function buildCombatVm(
@@ -324,7 +343,7 @@ export function buildCombatVm(
       enabled: true,
       disabledReason: null,
       group: "bite",
-      synergy: false,
+      origin: "organ",
       flavor: null,
     };
   });
@@ -348,7 +367,7 @@ export function buildCombatVm(
       ? null
       : `还差 ${preview.finisher.momentumNeeded - preview.momentum} 点势`,
     group: "finisher",
-    synergy: false,
+    origin: "organ",
     flavor: null,
   };
 
@@ -374,7 +393,7 @@ export function buildCombatVm(
         enabled: true,
         disabledReason: null,
         group: "stance",
-        synergy: false,
+        origin: "organ",
         flavor: null,
       };
     });
@@ -389,12 +408,17 @@ export function buildCombatVm(
   const skills: CombatActionVm[] = preview.skills.map((skill) => ({
     id: `skill:${skill.skillId}`,
     act: { kind: "skill", skillId: skill.skillId },
-    glyph: skill.synergyId === null ? "技" : "异",
+    glyph: skill.forged === null ? "技" : skill.forged.loreId === null ? "凝" : "古",
     label: skill.name,
     effect: skillEffectText(skill),
     warning: null,
-    // 组合技多一行它自己的描述（「咬住不松，把腺里的东西全挤进伤口」）—— 那次发现值得被记住
-    flavor: skill.synergyId === null ? null : skill.desc,
+    /*
+     * [M2-B2] 招式册里的那几手多一行它的出处：
+     * 自拟招写**三件部件与已付的精气**（「齿·鬃·毒 —— 已付 猛精气 18」），
+     * 古法写它自己那句描述。凝招那一屏花掉的东西必须在战斗屏上读得回来，
+     * 否则玩家下一次不会再去凝（同 S1 组合技那一行风味的理由）。
+     */
+    flavor: skill.forged === null ? null : forgedFlavor(skill.forged, content),
     highlight: recommended === `skill:${skill.skillId}`,
     enabled: skill.ready,
     /*
@@ -412,7 +436,7 @@ export function buildCombatVm(
               ? `血不够（需 ${skill.cost.amount}）`
               : `${ESSENCE_LABELS[skill.cost.type]}精气不足（需 ${skill.cost.amount}）`,
     group: "skill",
-    synergy: skill.synergyId !== null,
+    origin: skill.forged === null ? "organ" : skill.forged.loreId === null ? "forged" : "lore",
   }));
 
   const flee: CombatActionVm = {
@@ -426,7 +450,7 @@ export function buildCombatVm(
     enabled: true,
     disabledReason: null,
     group: "flee",
-    synergy: false,
+    origin: "organ",
     flavor: null,
   };
 

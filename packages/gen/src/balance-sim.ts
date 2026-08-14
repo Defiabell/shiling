@@ -35,6 +35,9 @@ import {
   combatAct,
   combatPreview,
   recommendCombatAct,
+  recommendForge,
+  forgeSkill,
+  learnLore,
   composeChronicle,
   createCursor,
   createLife,
@@ -111,6 +114,15 @@ function applyTuneOverrides(spec: string): typeof TALE_CONTENT {
 }
 
 let CONTENT = TALE_CONTENT;
+
+/**
+ * [M2-B2] 凝一手招要点几次 —— **接受缺省的那条路**：开框 1 ＋ 凝成 1。
+ *
+ * 招式框打开时三个槽已按 `defaultForgePicks` 预填、名号也预填好，凝成之后自动收起，
+ * 所以懒人路径恰好两次。想换部件的玩家每换一个槽多一次，但那是他自己要的
+ * ——「缺省要落在懒人路径上」是速猎那颗按钮立下的同一条规矩。
+ */
+const FORGE_CLICKS = 2;
 let STALK_PLAN: StalkPlan = "patient";
 let COMBAT_PLAN: CombatPlan = "screen";
 let HUNT_PLAN: HuntPlan = "mixed";
@@ -341,7 +353,9 @@ interface LifeSummary {
   bloodline: number;
   steps: number;
   /** 决策次数：事件抉择／行动选择／战斗指令／追猎指令，分别有不同的思考成本 */
-  decisions: { event: number; action: number; combat: number; stalk: number };
+  decisions: { event: number; action: number; combat: number; stalk: number; forge: number };
+  /** [M2-B2] 这一世凝成／习得了几手招（招式册满员是 `tuning.forgeSlots`） */
+  forged: number;
   /**
    * [饥饿节奏批] 这一世点了多少次鼠标 —— owner 的原话是「要经常点击狩猎」，
    * 而「经常」只有落成一个数才调得动。四类决策各算一次点击（追猎屏的每一息也是一次点击，
@@ -741,7 +755,7 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   });
   let steps = 0;
   let restsThisInjury = 0;
-  const decisions = { event: 0, action: 0, combat: 0, stalk: 0 };
+  const decisions = { event: 0, action: 0, combat: 0, stalk: 0, forge: 0 };
   const actionMix: Record<string, number> = {};
   let hunts = 0;
   let caught = 0;
@@ -782,6 +796,26 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
       continue;
     }
     if (!isHurt(state)) restsThisInjury = 0;
+    /*
+     * [M2-B2] 凝招 —— 照引擎的推荐来（`recommendForge` ＝ 玩家屏幕上被提醒的那一手，
+     * 三个包共用一份，理由同 S1 把推荐链上提）。
+     *
+     * **不推进季节**（`steps` 不加）：凝招是随时可做的经营动作，做成一个「行动」
+     * 会让它每次吃掉一季，而这一批的纪律是不许再推高点击与回合数。
+     *
+     * 点击账按**接受缺省**的那条路计：开框 1 次 ＋ 凝成 1 次 ＝ **2 次**
+     * （凝成之后招式框自动收起，名号栏预填好，见 `defaultForgePicks` 的注释）。
+     * 想换部件的玩家点得更多，但那是他自己要的，缺省路径才是该进账的那一条。
+     */
+    for (let guard = 0; guard < CONTENT.tuning.forgeSlots + 1; guard += 1) {
+      const intent = recommendForge(state, CONTENT);
+      if (intent === null) break;
+      state =
+        intent.kind === "lore"
+          ? learnLore(state, CONTENT, intent.synergyId)
+          : forgeSkill(state, CONTENT, intent.picks);
+      decisions.forge += FORGE_CLICKS;
+    }
     const action = decideAction(
       state,
       availableActions(state, CONTENT),
@@ -840,7 +874,8 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     Object.fromEntries(progress.ways.map((way) => [way.id, pick(way)])) as Record<WayId, T>;
   return {
     decisions,
-    clicks: decisions.event + decisions.action + decisions.combat + decisions.stalk,
+    clicks:
+      decisions.event + decisions.action + decisions.combat + decisions.stalk + decisions.forge,
     actionMix,
     chars,
     hunts,
@@ -861,6 +896,7 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     ending: state.ending,
     years: state.year,
     molts: state.records.filter((record) => record.kind === "molt").length,
+    forged: state.forgedSkills.length,
     kills: state.records.filter((record) => record.kind === "combat").length,
     organCount: state.organIds.length,
     bloodline: bloodlineGain(state, CONTENT),
@@ -1369,6 +1405,14 @@ function main(): number {
     clicks: {
       perLife: Math.round(mean(lives.map((life) => life.clicks))),
       stalkClicks: Math.round(mean(lives.map((life) => life.decisions.stalk))),
+      /**
+       * [M2-B2] 凝招点击：一世凝几手 × 每手 2 次（开框 ＋ 凝成）。
+       *
+       * 它必须单列：owner 的纪律是「凝招不得显著推高一世总点击」，而只报总数的话
+       * 分不出「涨的是凝招」还是「涨的是别处」。
+       */
+      forgeClicks: Math.round(mean(lives.map((life) => life.decisions.forge))),
+      forgedPerLife: Math.round(mean(lives.map((life) => life.forged)) * 100) / 100,
       actionClicks: Math.round(mean(lives.map((life) => life.decisions.action))),
       stalkEntries: Math.round(mean(lives.map((life) => life.hunts)) * 10) / 10,
       huntShare: pct(
@@ -1513,6 +1557,9 @@ function main(): number {
     `点击账：一世 ${report.clicks.perLife} 次（行动 ${report.clicks.actionClicks} ＋追猎屏 ${report.clicks.stalkClicks} ＋事件/战斗）　` +
       `狩猎占行动 ${report.clicks.huntShare}%（其中速猎 ${report.clicks.quickShare}%）　休憩占 ${report.clicks.restShare}%　` +
       `进追猎屏 ${report.clicks.stalkEntries} 次/世`,
+  );
+  console.log(
+    `凝招账：一世凝 ${report.clicks.forgedPerLife} 手（招式册上限 ${CONTENT.tuning.forgeSlots}）　凝招点击 ${report.clicks.forgeClicks} 次/世`,
   );
   console.log(
     `遭遇账：一世 ${report.encounters.perLife} 场（其中进交锋 ${report.encounters.clashesPerLife} 场）　` +

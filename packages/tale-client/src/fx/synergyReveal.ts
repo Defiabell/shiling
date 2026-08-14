@@ -77,9 +77,15 @@ export async function playSynergyReveal(
     el("div", { class: "synergy__stat", text: skillMulLine(synergy.skill, content.tuning) }),
     el("p", {
       class: "synergy__foot",
+      /*
+       * [M2-B2] 这两句被改过：组合表降级成「古法」之后，凑齐配方**不再**直接多一颗按钮 ——
+       * 它只是上了招式册的货架，还要付精气、占一个槽才用得上。原话
+       * 「此后搏杀屏上多一颗『异』印的按钮」现在是一句引擎不兑现的承诺，
+       * 而那正是 legibility 那一批立下的红线（界面不许承诺引擎不保证的事）。
+       */
       text: first
-        ? "此后搏杀屏上多一颗「异」印的按钮。已记入图鉴 —— 下一世也可以再去凑。"
-        : "搏杀屏上又有它了。",
+        ? "此后可在招式册里循此古法凝成 —— 要付精气，也要占一个槽。已记入图鉴，下一世也可以再去凑。"
+        : "招式册里又可以循它凝成了。",
     }),
     confirm,
   ]);

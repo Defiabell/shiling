@@ -55,7 +55,10 @@ def combat_screen(page: Page) -> dict:
             effect: n.querySelector('.cact__effect')?.textContent ?? '',
             lock: n.querySelector('.cact__lock')?.textContent ?? null,
             warn: n.querySelector('.cact__warn')?.textContent ?? null,
-            synergy: n.classList.contains('is-synergy'),
+            // [M2-B2] 「异」印那一类已换成招式册的「凝」（自拟）／「古」（循古法习得）两类。
+            // 这一行不跟着改的话，S1 那份验收报告会永远说「池子里没有组合按钮」——
+            // 一个不会崩、也不会有非零退出码的假阴性。
+            synergy: n.classList.contains('is-forged') || n.classList.contains('is-lore'),
             hot: n.classList.contains('is-hot'),
             disabled: n.disabled,
           }));

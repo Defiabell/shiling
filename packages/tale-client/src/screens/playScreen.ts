@@ -21,7 +21,14 @@ import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { EncounterChromeVm, MomentumVm, StatLineVm, WoundVm } from "../model/encounterVm.js";
 import type { StatusVm } from "../model/statusVm.js";
-import { approachOf, clashOf, type CombatAct, type WayId } from "@shiling/tale-sim";
+import type { ForgeVm } from "../model/forgeVm.js";
+import {
+  approachOf,
+  clashOf,
+  type CombatAct,
+  type ForgePicks,
+  type WayId,
+} from "@shiling/tale-sim";
 
 export type CenterVm =
   | {
@@ -80,6 +87,17 @@ export interface PlayProps {
   detail: DetailVm | null;
   /** 首世引导链的当前一步；null ＝ 已跳过／已看完 */
   guide: GuideVm | null;
+  /** [M2-B2] 右栏那颗入口按钮上的字（「凝招 · 招式册 1/4」） */
+  forgeLabel: string;
+  /** [M2-B2] 引擎建议现在凝一手（`recommendForge`）—— 入口发一点金光 */
+  forgeHot: boolean;
+  /**
+   * [M2-B2] 招式框（凝招屏）；null ＝ 没打开。
+   *
+   * 它是**浮层**而不是一屏：凝招不推进季节、也不该把主界面顶掉 —— 玩家开着它的时候
+   * 仍然要看得见状态栏那几个精气柱（「这一手付得起吗」的依据就在那儿）。
+   */
+  forge: ForgeVm | null;
   /** [饥饿节奏批] 拿的是**按钮 id**（含「速猎」），翻成行动＋参数由 `app` 负责 */
   onAction(id: ActionButtonId): void;
   /** [S2] 去某一处探索 —— 它**就是**这一季的行动（不是二级菜单里的一步） */
@@ -93,6 +111,23 @@ export interface PlayProps {
   /** 切换横带展开哪一条道；`null` ＝ 回到「跟着最接近的那条」。纯查看态，不进引擎 */
   onWayTab(way: WayId | null): void;
   onGuideDismiss(): void;
+  /** [M2-B2] 开／关招式框（传 null ＝ 关） */
+  onForgeOpen(open: boolean): void;
+  /**
+   * [M2-B2] 换部件 —— 拿的是**算好的下一副 picks**（`ForgePartOptionVm.picksAfter`）。
+   *
+   * 不传 `(slot, partId)` 的理由：那件部件可能正占着别的槽，此时点它是**两个槽对调**，
+   * 而「对调之后是哪三件」这道算式只该有一处（视图模型里那一处，纯函数、有测试）。
+   */
+  onForgePicks(picks: ForgePicks): void;
+  /** [M2-B2] 改名号（不改就用预填的） */
+  onForgeName(name: string): void;
+  /** [M2-B2] 凝成 */
+  onForgeCommit(): void;
+  /** [M2-B2] 循古法习得 */
+  onForgeLearn(synergyId: string): void;
+  /** [M2-B2] 忘掉册中一手，腾出槽位（不退精气） */
+  onForgeForget(forgedId: string): void;
 }
 
 const STAT_HUE: Record<string, string> = {
@@ -864,7 +899,7 @@ function combatButton(action: CombatActionVm, props: PlayProps): HTMLElement {
   return el(
     "button",
     {
-      class: `cact cact--${action.group}${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}${action.synergy ? " is-synergy" : ""}`,
+      class: `cact cact--${action.group}${action.enabled ? "" : " is-locked"}${action.highlight ? " is-hot" : ""}${action.warning ? " has-warn" : ""}${action.origin === "organ" ? "" : ` is-${action.origin}`}`,
       attrs: {
         type: "button",
         disabled: !action.enabled || props.busy,
@@ -892,6 +927,225 @@ function combatButton(action: CombatActionVm, props: PlayProps): HTMLElement {
       ]),
     ],
   );
+}
+
+
+/**
+ * [M2-B2] 招式框 —— owner 拍板的那张原型的实现。
+ *
+ * 版式与原型逐行对应：
+ * ```
+ * 【凝招 · 招式框】精气 猛 24 / 鳞 18
+ *  起手  [ 齿 ] ← 齿部件：咬定不放 —— 伤 ×1.4
+ *  力道  [ 鬃 ] ← 鬃部件：鬃根承住回震 —— 力道 +0.4 倍
+ *  附加  [ 毒 ] ← 毒部件：中者血凝 —— 数合不得起势
+ *  ──────────────────────
+ *  伤 9〜12 · 附毒 · 势 3 · 冷却 3
+ *  代价：猛之精气 18 · 槽 2/4
+ *  命名：[ 齿鬃蚀____ ]  ▸ 凝成
+ * ```
+ *
+ * 三处刻意的做法：
+ * 1. **每个槽的候选部件全列出来**（不是下拉菜单）：一次点击就换掉一个槽，
+ *    而每颗候选按钮上写的是**换上它之后这一手变成什么**（不是那件部件自己的数）——
+ *    玩家不该为了比较两件部件自己去做加法。这是追猎屏那条铁律在这一屏的形态。
+ * 2. **命名框预填**：不改就用默认名号，于是「接受缺省」＝ 0 次额外点击。
+ *    凝招的点击账（开框 1 ＋ 凝成 1 ＝ 2）全靠这一条。
+ * 3. **古法货架排在最后**：新玩家照着它看得懂三个槽在干什么，而未发现过的那几条
+ *    只显示「？」—— 配方与成品一个字都不进 DOM（同 S1 图鉴那条铁律）。
+ */
+function forgeSheet(forge: ForgeVm, props: PlayProps): HTMLElement {
+  return el(
+    "aside",
+    {
+      class: "forge",
+      /*
+       * `role="dialog"` ＋ `aria-modal`：与详情浮层（`role="region"`）不同 —— 这一张
+       * **是**模态（底下那一屏此刻不该被点），所以承诺得起 dialog 的语义。
+       */
+      attrs: { "data-forge": "1", role: "dialog", "aria-modal": "true", "aria-label": "凝招 · 招式框" },
+    },
+    [
+      el("div", { class: "forge__head" }, [
+        el("b", { class: "forge__title", text: "凝招 · 招式框" }),
+        el("span", { class: "forge__essence", attrs: { "data-forge-essence": "1" }, text: `精气 ${forge.essenceLine}` }),
+        el("span", { class: "forge__slots", attrs: { "data-forge-slots": "1" }, text: forge.slotLine }),
+        el("button", {
+          class: "forge__close",
+          text: "×",
+          attrs: { type: "button", "aria-label": "收起", "data-forge-close": "1" },
+          on: { click: () => props.onForgeOpen(false) },
+        }),
+      ]),
+      el("p", { class: "forge__parts", attrs: { "data-forge-parts": "1" }, text: `身内可拆：${forge.partsLine}` }),
+      forge.emptyReason
+        ? el("p", { class: "forge__empty", attrs: { "data-forge-empty": "1" }, text: forge.emptyReason })
+        : null,
+      ...forge.slots.map((slot) => forgeSlotRow(slot, props)),
+      forge.resultEffect
+        ? el("div", { class: "forge__result", attrs: { "data-forge-result": "1" } }, [
+            el("em", { class: "forge__result-effect", text: forge.resultEffect }),
+            el("i", { class: "forge__result-cost", text: forge.resultCost ?? "" }),
+          ])
+        : null,
+      forge.defaultName === null
+        ? null
+        : el("div", { class: "forge__name-row" }, [
+            el("label", { class: "forge__name-label", text: "命名", attrs: { for: "forge-name" } }),
+            el("input", {
+              class: "forge__name",
+              attrs: {
+                id: "forge-name",
+                type: "text",
+                maxlength: "6",
+                value: forge.nameValue,
+                "data-forge-name": "1",
+                placeholder: forge.defaultName,
+              },
+              on: {
+                input: (event: Event) =>
+                  props.onForgeName((event.target as HTMLInputElement).value),
+              },
+            }),
+            el("button", {
+              class: `forge__commit${forge.canForge ? " is-hot" : " is-locked"}`,
+              text: "▸ 凝成",
+              attrs: {
+                type: "button",
+                disabled: !forge.canForge || props.busy,
+                "data-forge-commit": "1",
+              },
+              title: forge.blockedReason ?? "把这三件凑成一手，记进招式册",
+              on: { click: () => props.onForgeCommit() },
+            }),
+            forge.blockedReason
+              ? el("i", { class: "forge__lock", attrs: { "data-forge-blocked": "1" }, text: forge.blockedReason })
+              : null,
+          ]),
+      forgeBookSection(forge, props),
+      forgeLoreSection(forge, props),
+    ],
+  );
+}
+
+/** 一个槽：标题 ＋ 当前选中 ＋ 候选部件那一排。 */
+function forgeSlotRow(slot: ForgeVm["slots"][number], props: PlayProps): HTMLElement {
+  return el("div", { class: "fslot", attrs: { "data-forge-slot": slot.slot } }, [
+    el("div", { class: "fslot__head" }, [
+      el("b", { class: "fslot__label", text: slot.label }),
+      el("span", { class: "fslot__picked", text: slot.pickedName ? `［ ${slot.pickedName} ］` : "［ ？ ］" }),
+      el("em", { class: "fslot__text", text: slot.pickedText ?? "" }),
+    ]),
+    el("p", { class: "fslot__hint", text: slot.hint }),
+    el(
+      "div",
+      { class: "fslot__opts" },
+      slot.options.map((option) =>
+        el(
+          "button",
+          {
+            class: `fopt${option.selected ? " is-on" : ""}${option.disabledReason ? " is-locked" : ""}${option.affordable ? "" : " is-poor"}`,
+            attrs: {
+              type: "button",
+              disabled: option.disabledReason !== null || props.busy,
+              "data-forge-opt": `${slot.slot}:${option.partId}`,
+            },
+            title: option.disabledReason ?? option.swapNote ?? option.text,
+            on: { click: () => props.onForgePicks(option.picksAfter) },
+          },
+          [
+            el("b", { class: "fopt__zi", text: option.name }),
+            el("span", { class: "fopt__text" }, [
+              el("i", { class: "fopt__what", text: option.text }),
+              // 换上它之后这一手变成什么 —— 这一行是这一屏「摊开后果」的全部主张
+              option.outcome ? el("i", { class: "fopt__outcome", text: option.outcome }) : null,
+              // 「与力道对调」：点它会顺带动到另一个槽，这件事必须写在脸上
+              option.swapNote ? el("i", { class: "fopt__swap", text: option.swapNote }) : null,
+              option.disabledReason
+                ? el("i", { class: "fopt__lock", text: option.disabledReason })
+                : null,
+            ]),
+          ],
+        ),
+      ),
+    ),
+  ]);
+}
+
+/** 招式册：已凝成的那几手 ＋ 遗忘（腾槽位的唯一办法，且不退精气）。 */
+function forgeBookSection(forge: ForgeVm, props: PlayProps): HTMLElement {
+  return el("div", { class: "forge__book", attrs: { "data-forge-book": "1" } }, [
+    el("div", { class: "forge__sub", text: `招式册（${forge.slotLine.replace("招式册 ", "")}）` }),
+    forge.forged.length === 0
+      ? el("p", { class: "forge__empty", text: "册中尚无一手。" })
+      : el(
+          "ul",
+          { class: "fbook" },
+          forge.forged.map((row) =>
+            el("li", { class: "fbook__row", attrs: { "data-forged": row.id } }, [
+              el("i", { class: "fbook__seal", text: row.glyph }),
+              el("div", { class: "fbook__text" }, [
+                el("b", { text: row.name }),
+                el("em", { text: row.effect }),
+                el("i", { class: "fbook__src", text: `${row.source} · ${row.paid}` }),
+              ]),
+              el("button", {
+                class: "fbook__forget",
+                text: "忘",
+                attrs: { type: "button", "data-forge-forget": row.id, disabled: props.busy },
+                title: "忘掉这一手腾出槽位 —— 已付的精气不退",
+                on: { click: () => props.onForgeForget(row.id) },
+              }),
+            ]),
+          ),
+        ),
+  ]);
+}
+
+/** 古法货架：凑齐配方即可直接习得的成品（未发现过的只显示「？」）。 */
+function forgeLoreSection(forge: ForgeVm, props: PlayProps): HTMLElement {
+  return el("div", { class: "forge__lore", attrs: { "data-forge-lore": "1" } }, [
+    el("div", { class: "forge__sub", text: "古法 —— 前代凑出来的成手，凑齐配方即可直接习得" }),
+    el(
+      "ul",
+      { class: "flore" },
+      forge.lore.map((row) =>
+        el(
+          "li",
+          {
+            class: `flore__row${row.known ? "" : " is-unknown"}${row.enabled ? "" : " is-locked"}`,
+            attrs: { "data-lore": row.synergyId },
+          },
+          [
+            el("div", { class: "flore__text" }, [
+              el("b", { text: row.name }),
+              el("i", { class: "flore__recipe", text: row.recipe }),
+              el("em", { text: row.effect }),
+              // 因果排在名号之后、账之前 —— 与揭示演出同一条：先懂道理，再谈价钱
+              row.reveal ? el("i", { class: "flore__reveal", text: row.reveal }) : null,
+              row.cost ? el("i", { class: "flore__cost", text: row.cost }) : null,
+              row.disabledReason
+                ? el("i", { class: "flore__lock", text: row.disabledReason })
+                : null,
+            ]),
+            row.known
+              ? el("button", {
+                  class: `flore__learn${row.enabled ? " is-hot" : " is-locked"}`,
+                  text: "习得",
+                  attrs: {
+                    type: "button",
+                    disabled: !row.enabled || props.busy,
+                    "data-forge-learn": row.synergyId,
+                  },
+                  title: row.disabledReason ?? "循古法凝成，记进招式册",
+                  on: { click: () => props.onForgeLearn(row.synergyId) },
+                })
+              : null,
+          ],
+        ),
+      ),
+    ),
+  ]);
 }
 
 /**
@@ -1159,6 +1413,20 @@ function logRail(props: PlayProps): HTMLElement {
               ),
             ),
       ),
+      /*
+       * [M2-B2] 凝招入口就摆在「身内」底下 —— 那一排器官 chip 正是凝招的原料，
+       * 「拆什么」与「拆出来能拼什么」挨着才读得成一句话。
+       *
+       * 它**不是第五颗行动按钮**：凝招不推进季节（做成行动会让它每次吃掉一季，
+       * 而这一批的纪律是不许再推高点击与回合数）。
+       */
+      el("button", {
+        class: `forge-entry${props.forgeHot ? " is-hot" : ""}`,
+        attrs: { type: "button", "data-forge-open": "1", disabled: props.busy },
+        title: "把身内的部件拼成一手自己的招 —— 不占一季",
+        text: props.forgeLabel,
+        on: { click: () => props.onForgeOpen(true) },
+      }),
     ]),
   ]);
 }
@@ -1209,5 +1477,11 @@ export function renderPlay(props: PlayProps): HTMLElement {
     fullscreen ? null : logRail(props),
     fullscreen ? null : actionBar(props),
     detail ? detailSheet(detail, props) : null,
+    /*
+     * [M2-B2] 招式框也**不进两个战术全屏**（同引导链与详情浮层）：遭遇进行中不该
+     * 还能改招式册 —— 引擎那边 `forgeSkill` 并不禁止，但「打到一半改装备」会把
+     * 「这一架用什么打」这道题的答案挪到架子中间去。判据只有这一处。
+     */
+    fullscreen || !props.forge ? null : forgeSheet(props.forge, props),
   ]);
 }
