@@ -5,5 +5,8 @@ dist/
 # AI 史官的本地遥测日志（每世 token／耗时／成本），不入库
 .ai-log/
 
-# E2E 的截图与实测报告（可重跑再生，几 MB 一批），不入库
+# E2E 的截图与实测报告（可重跑再生，几 MB 一批），不入库。
+# 两条都要：脚本的 `OUT` 缺省是**相对 cwd** 的（`screenshots/<批次>`），
+# 从仓库根跑就落在根上，从 packages/tale-client 跑就落在那儿 —— 漏一条就会被 auto-commit 收走。
 packages/tale-client/screenshots/
+screenshots/
