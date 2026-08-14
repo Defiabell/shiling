@@ -484,7 +484,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_XUAN_MANG,
     name: "玄蟒",
-    meng: 26,
+    meng: 32,
     hp: 60,
     tags: ["beast", "venom"],
     essence: { xue: 20, lin: 12 },
@@ -539,7 +539,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_QIONG_QI,
     name: "穷奇幼崽",
-    meng: 34,
+    meng: 42,
     hp: 78,
     tags: ["beast", "divine"],
     essence: { meng: 32, xue: 8 },

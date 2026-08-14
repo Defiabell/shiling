@@ -417,6 +417,52 @@ describe("数量与分布", () => {
     }
   });
 
+  /*
+   * [M2-B1] 行为段与弱点。这一组守的也是「内容改动时静默出错」那一类：
+   *
+   * 1. `stages[0].at` 必须是 1 —— 否则开场那一段根本进不去（`stageIndexOf` 取的是
+   *    「最后一个满足 hp/max ≤ at 的段」，第一段够不着就等于整头兽少一段）；
+   * 2. `at` 必须**严格递减** —— 两段同 `at` 会让「它变了」这件事变成一次随机跳变；
+   * 3. 除第一段外每段都要有 `text` —— 换段是玩家该当场读到的一句，缺了就是静默换打法；
+   * 4. `weakness.part` 必须是三个部位之一，且 `text` 非空。
+   */
+  it("[M2-B1] 行为段：第一段恒为 1、其后严格递减、换段都有宣告", () => {
+    for (const enemy of ENEMIES) {
+      const stages = enemy.stages;
+      if (!stages) continue;
+      expect(stages.length, `${enemy.id} 声明了 stages 却是空的`).toBeGreaterThan(1);
+      expect(stages[0]?.at, `${enemy.id} 第一段的 at 必须是 1（否则开场那一段进不去）`).toBe(1);
+      for (let i = 1; i < stages.length; i += 1) {
+        expect(
+          stages[i]!.at,
+          `${enemy.id} 第 ${i + 1} 段的 at 没有严格小于上一段`,
+        ).toBeLessThan(stages[i - 1]!.at);
+        expect(stages[i]!.at, `${enemy.id} 第 ${i + 1} 段的 at 不在 (0,1)`).toBeGreaterThan(0);
+        expect(
+          stages[i]!.text.length,
+          `${enemy.id} 第 ${i + 1} 段没有宣告句 —— 换段必须当场读得到`,
+        ).toBeGreaterThan(0);
+        expect(stages[i]!.name.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("[M2-B1] 弱点：部位合法、名号与宣告句都写了", () => {
+    const parts = new Set(["throat", "leg", "eye"]);
+    let withWeakness = 0;
+    for (const enemy of ENEMIES) {
+      const weakness = enemy.weakness;
+      if (!weakness) continue;
+      withWeakness += 1;
+      expect(parts.has(weakness.part), `${enemy.id} 弱点部位 ${weakness.part} 不合法`).toBe(true);
+      expect(weakness.name.length, `${enemy.id} 弱点没有名号`).toBeGreaterThan(0);
+      expect(weakness.text.length, `${enemy.id} 弱点没有识破那一句`).toBeGreaterThan(0);
+    }
+    // 「大多数兽有弱点、但不是全部」是这条机制的设计：没有弱点的那头（穷奇）逼玩家答另一道题
+    expect(withWeakness).toBeGreaterThanOrEqual(ENEMIES.length - 2);
+    expect(withWeakness).toBeLessThan(ENEMIES.length);
+  });
+
   it("追猎旁白：猎物表四头必须写全，每槽 ≥2 条变体且占位合法", () => {
     const SLOTS = ["begin", "creep", "circle", "wait", "stir", "catch", "miss", "escape"] as const;
     const KNOWN_VARS = /\{\{(enemy|steps)\}\}/g;

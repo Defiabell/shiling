@@ -3482,11 +3482,21 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
   const mayFlee = preview.intentKnown ? preview.enemyWillFlee : preview.intentClass === "hold";
   if (mayFlee && legBite?.stopsFlee !== false) return { kind: "bite", part: "leg" };
 
-  // 4. 它宣告重击：硬吃（免伤）优先于弄瞎（打空）—— 前者是确定的
+  /*
+   * 4. 它宣告重击：硬吃（免伤，确定）→ **伏低** → 弄瞎。
+   *
+   * [M2-B1] 中间那一格是这一批加的，而且是被实验台逼出来的：部位伤温和化之后（每层眼伤
+   * 只买一成二的打空），拿一整合去扑眼换不回一记 2.2 倍的扑，于是「读得出意图」的 build
+   * 反而比读不出的更弱 —— M1-P2 踩过同一个坑（「信息被误用了」）。**伏低把这一记压成
+   * 1.54 倍，而且换姿态只花这一合、此后整场都算数** —— 那才是知情权该换来的东西。
+   * 只在「撑不住四合」时换：局面宽裕时伏低的 ×0.75 出伤会把架拖长。
+   */
   const eyeBite = preview.bites.find((bite) => bite.part === "eye");
   if (preview.intentKnown && preview.intent.kind === "pounce") {
     const brace = withEffect("brace");
     if (brace) return skillAct(brace);
+    // 已经站在扑击姿态上（受伤 ×1.25）而它要来一记 2.2 倍的 —— 先把身子压下去
+    if (preview.stance === "lunge") return { kind: "stance", to: "low" };
     if (eyeBite?.woundLands === true) return { kind: "bite", part: "eye" };
   }
 
@@ -3548,7 +3558,15 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
    * 换姿态只在「这一口本来也没什么附带可捞」时才是最优。
    */
   if (preview.intentKnown && preview.intent.kind === "guard") {
-    const want: Stance = preview.roundsToLive <= 3 ? "low" : "lunge";
+    /*
+     * [M2-B1] 换哪个姿态从「还撑得住几合」换成**两个数的比较**。
+     *
+     * 扑击姿态出伤 ×1.35 但受伤也 ×1.25 —— 只有在「我杀得比它快」的局面里才划算。
+     * 旧判据（`roundsToLive <= 3` 才伏低）在一场 8〜10 合的长仗里会让读得出意图的 build
+     * **一路站在扑击姿态上挨打**，实验台量到的后果是它比读不出的还危险（1200 场：
+     * 死亡率 13.7% vs 13.6%，胜率反而低 14 个点）。信息被误用了 —— 同 M1-P2 那条教训。
+     */
+    const want: Stance = preview.roundsToLive >= preview.roundsToKill + 2 ? "lunge" : "low";
     if (preview.stance !== want) return { kind: "stance", to: want };
   }
   return bestBiteAct;

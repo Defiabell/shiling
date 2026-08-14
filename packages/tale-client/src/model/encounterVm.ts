@@ -169,8 +169,14 @@ function statLinesOf(preview: EncounterPreview): StatLineVm[] {
       name: "猛",
       value: s.meng,
       effects: approach
-        ? [`扑击命中 +${toPercent(s.pounceChanceBonus)}%`, `一咬基伤 ${s.biteBase}（其中猛给 +${s.mengBiteBonus}）`]
-        : [`一咬基伤 ${s.biteBase}　其中猛给 +${s.mengBiteBonus}`, "决杀也按猛算"],
+        ? [
+            `扑击命中 +${toPercent(s.pounceChanceBonus)}%`,
+            `一咬基伤 ${s.biteBase}　其中猛给 +${s.mengBiteBonus}`,
+          ]
+        : [
+            `一咬基伤 ${s.biteBase}　其中猛给 +${s.mengBiteBonus}`,
+            `咬喉 ×1.6　决杀也按猛算`,
+          ],
     },
     {
       key: "ti",
@@ -198,9 +204,15 @@ function statLinesOf(preview: EncounterPreview): StatLineVm[] {
       zi: "德",
       name: "德",
       value: s.de,
+      /*
+       * 闪避与暴击用**百分数**而不是汉字成数：德在开局只有 5 点，两者都落在个位数百分比里，
+       * 而汉字成数在那一档要么写成「〇成二」（读着别扭），要么被 `chanceCn` 归成「无」——
+       * 后者会让一个**真的在生效**的加成在屏幕上显示为「没有」，那正是这一盘要消灭的事。
+       * 「遁走」那一行仍用汉字：它是个大数，与追猎屏的读法保持一致。
+       */
       effects: [
-        `闪避 ${chanceCn(s.dodgeChance, "无")}`,
-        `暴击 ${chanceCn(s.critChance, "无")}`,
+        `闪避 ${toPercent(s.dodgeChance)}%`,
+        `暴击 ${toPercent(s.critChance)}%`,
         `它的退意 ×${s.enemyFleeMul.toFixed(2)}`,
       ],
     },

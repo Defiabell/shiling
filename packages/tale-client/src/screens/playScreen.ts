@@ -785,7 +785,7 @@ function statPanel(stats: StatLineVm[]): HTMLElement {
         "div",
         { class: "enc__stat", attrs: { "data-enc-stat": line.key } },
         [
-          el("b", { class: "enc__stat-zi", style: `--hue:${STAT_HUE[line.key] ?? "var(--c-ink)"}`, text: line.zi }),
+          el("b", { class: "enc__stat-zi", style: `--hue:${STAT_HUE[line.key] ?? "var(--txt)"}`, text: line.zi }),
           el("i", { class: "enc__stat-num", text: String(line.value) }),
           el(
             "div",

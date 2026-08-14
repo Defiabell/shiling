@@ -42,6 +42,7 @@ import {
   UNCLAMPED_CHANCE,
   contentWithoutEvents,
   enterCombat,
+  organWithSkill,
   enterStalk,
   makeContent,
 } from "./fixtures.js";
@@ -127,23 +128,32 @@ describe("[M2-B1] 统一遭遇流程：一个状态位、一个入口、两个�
     expect(jumped.encounter?.phase).toBe("clash");
   });
 
-  it("被扑个正着（ambush）比撞到一处（event）少两点起手势 —— 主动权落在数上", () => {
-    const ambushy = ambushEverywhere(
-      contentWithoutEvents({
-        tuning: {
-          encounterMomentumStartPerLing: 1,
-          encounterAmbushMomentumPenalty: 2,
-          encounterMomentumBase: 99,
-        },
-      }),
-    );
-    const born = scout(ambushy);
-    // 同一世、同一套调参：一边被扑（ambush），一边撞到一处（event）
-    const jumped = performAction(born, "explore", ambushy, { destinationId: "dest-far" }).state;
-    const evented = enterCombat(born, ENEMY_QIONG_QI, ambushy, {}, { origin: "event" });
+  it("被扑个正着（ambush）要扣起手势 —— 「它先动的手」落在数上", () => {
+    const make = (penalty: number): TaleContent =>
+      ambushEverywhere(
+        contentWithoutEvents({
+          tuning: {
+            encounterMomentumStartPerLing: 1,
+            encounterAmbushMomentumPenalty: penalty,
+            encounterMomentumBase: 99,
+          },
+        }),
+      );
+    /*
+     * 两边都走**真的入口**（`performAction → rollAmbush → beginEncounter`）：只把罚金拨掉。
+     * 拿 fixture 手搭的 event 遭遇去对比是不作数的 —— 那一份的 momentum 是测试自己写死的 0。
+     */
+    const withToll = make(2);
+    const noToll = make(0);
+    const jumped = performAction(scout(withToll), "explore", withToll, {
+      destinationId: "dest-far",
+    }).state;
+    const free = performAction(scout(noToll), "explore", noToll, {
+      destinationId: "dest-far",
+    }).state;
     expect(jumped.encounter?.origin).toBe("ambush");
-    expect(jumped.encounter?.momentum).toBe(Math.max(0, born.stats.ling - 2));
-    expect(evented.encounter?.momentum ?? -1).toBeGreaterThan(jumped.encounter?.momentum ?? -1);
+    expect(free.encounter?.momentum).toBe(free.stats.ling);
+    expect(jumped.encounter?.momentum).toBe(Math.max(0, jumped.stats.ling - 2));
   });
 
   it("接近转交锋是**换阶段**：同一个 encounter，日志接着写、部位伤与势带过去", () => {
@@ -268,18 +278,7 @@ describe("[M2-B1] 势：每合攒、强招花，出招节奏成为决策", () =>
     const content = calm({ encounterSkillMomentumCost: 3 });
     const armed = makeContent({
       ...content,
-      organs: [
-        ...content.organs,
-        {
-          id: "big",
-          name: "大招",
-          desc: "",
-          affinity: {},
-          statMods: {},
-          tags: [],
-          combatSkill: { name: "大招", desc: "", momentum: 3 },
-        },
-      ],
+      organs: [...content.organs, organWithSkill("big", "大招", [], 1, { momentum: 3 })],
       tuning: content.tuning,
       enemies: content.enemies,
       events: content.events,
@@ -422,7 +421,8 @@ function stagedContent(extra: Partial<TaleContent["tuning"]> = {}): TaleContent 
           hp: 100,
           intentBias: { pounce: 0, bite: 0, guard: 1, flee: 0 },
           stages: [
-            { at: 1, name: "戏弄", text: "" },
+            // 第一段只护眼 → 咬喉恒是「没被护住」的那一咬，血线推得准（测的是换段不是守备掷骰）
+            { at: 1, name: "戏弄", text: "", guardBias: { throat: 0, leg: 0, eye: 1 } },
             {
               at: 0.5,
               name: "暴怒",

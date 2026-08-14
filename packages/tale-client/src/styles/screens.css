@@ -3585,3 +3585,271 @@
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(198, 154, 78, 0.4);
 }
+
+/* =========================================================================
+   [M2-B1] 遭遇屏：接近与交锋共用的那一套外壳
+   =========================================================================
+
+   M1 的追猎屏与搏杀屏是两块长得像的屏，转阶段那一刻整块换掉 —— 玩家刚花四息攒下的东西
+   （潜到多近、它警觉多高、身上有多少势）从眼前消失。这一节的全部作用是让**换的只有中段**：
+   头、势条、伤牌、四相盘、日志在两个阶段是同一批 DOM 结构、同一套样式。
+*/
+
+.card--encounter {
+  /* 两个阶段同宽：转阶段时卡片不该跳一下 */
+  max-width: 1200px;
+  padding-bottom: 4px;
+}
+
+.card--encounter .enc__body {
+  display: contents;
+}
+
+/* 来路（我盯上了它／它扑了我／撞到一处）与阶段（接近／交锋）—— 两枚素牌 */
+.enc__origin,
+.enc__phase {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--txt-3);
+  padding: 1px 8px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.enc__phase {
+  color: var(--txt-2);
+  background: var(--glass-lo);
+}
+
+/* 行为段：它换打法那一刻这枚牌会变字 —— 所以给它一点朱砂，眼睛能扫到 */
+.enc__stage {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--cinnabar-lt);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(194, 59, 34, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(194, 59, 34, 0.32);
+}
+
+/* 破绽：未识破是灰的（一个「还没拿到」的目标），识破了转金 */
+.enc__weak {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--txt-3);
+  padding: 1px 8px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.enc__weak.is-found {
+  color: var(--gold);
+  background: rgba(232, 180, 95, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.4);
+}
+
+/*
+   势条 —— 一排小方块而不是进度条。
+
+   「攒了几点」是个**整数**，进度条会把它读成一个连续量，而玩家要算的恰恰是
+   「还差几点能发决杀」。方块数一眼数得清（上限最多 4＋floor(灵/18)，实际 4〜7 格）。
+*/
+.enc__momentum {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 24px 0;
+  padding: 6px 12px;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.enc__momentum-zi {
+  font-family: var(--kai);
+  font-size: 14px;
+  color: var(--txt-2);
+  letter-spacing: 0.1em;
+}
+
+.enc__pips {
+  display: flex;
+  gap: 4px;
+}
+
+.enc__pip {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.enc__pip.is-full {
+  background: rgba(127, 212, 232, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.7);
+}
+
+.enc__momentum.is-hot .enc__pip.is-full {
+  background: rgba(232, 180, 95, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.85);
+}
+
+.enc__momentum-label {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--txt-3);
+}
+
+.enc__momentum.is-hot .enc__momentum-label {
+  color: var(--gold);
+}
+
+/*
+   部位伤三牌 —— 整场累积，所以它们**不在日志里**：日志是流水，这三牌是账。
+   断腿／废眼那两条一劳永逸的效果亮起来时转朱砂：那是玩家经营了两三合才换来的东西。
+*/
+.enc__wounds {
+  display: flex;
+  gap: 8px;
+  margin: 6px 24px 0;
+}
+
+.enc__wound {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-weight: 400;
+  padding: 2px 10px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+  color: var(--txt-3);
+}
+
+.enc__wound-zi {
+  font-family: var(--kai);
+  font-size: 13px;
+}
+
+.enc__wound em {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.enc__wound.is-hurt {
+  color: var(--txt);
+  background: var(--glass-lo);
+}
+
+.enc__wound.is-landmark {
+  color: var(--cinnabar-lt);
+  background: rgba(194, 59, 34, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(194, 59, 34, 0.38);
+}
+
+/*
+   四相盘 —— owner 那句「好好展示积累的各项指标的作用」的落点。
+
+   四列并排（不是四行）：一屏之内看得完才叫看得见，而遭遇卡纵向已经很紧
+   （M1-P2 量过：卡片 608px／舞台 588px）。窄屏塌成两列，见文件末尾的响应式段。
+*/
+.enc__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 24px 0;
+}
+
+.enc__stat {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.enc__stat-zi {
+  font-family: var(--kai);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--hue, var(--txt));
+}
+
+.enc__stat-num {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 13px;
+  color: var(--txt);
+}
+
+.enc__stat-uses {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.enc__stat-uses em {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: var(--txt-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 场上生效的一时之效（致盲／迟滞／护体／流血／反刺／明识）：从遭遇头挪到指令上方 */
+.combat__marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 24px 4px;
+}
+
+.combat__marks:empty {
+  display: none;
+}
+
+/* 决杀：攒够之前灰着但**不隐藏** —— 看不见的目标没人会去攒 */
+.cact--finisher .cact__seal {
+  color: var(--gold);
+}
+
+.cact--finisher:not(.is-locked) {
+  box-shadow: inset 0 0 0 1px rgba(232, 180, 95, 0.42);
+}
+
+/* 接近阶段的风向也做成一个量表格（与距离／警觉／体力同形，两个阶段一套语汇） */
+.smeter--wind .smeter__note em {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--txt-3);
+}
+
+@media (max-width: 900px) {
+  .enc__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .enc__momentum,
+  .enc__wounds,
+  .enc__stats,
+  .combat__marks {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+}
