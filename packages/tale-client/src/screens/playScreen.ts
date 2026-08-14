@@ -636,6 +636,22 @@ function encounterHead(
     body.kind === "approach" ? body.stalk.roundLabel : body.combat.roundLabel;
   const badges: (HTMLElement | null)[] = [
     el("b", { class: "enc__phase", text: chrome.phaseLabel, attrs: { "data-enc-phase": "1" } }),
+    /*
+     * 交锋阶段的两枚常驻小牌：**它护着哪儿**与**我站什么姿态**。
+     *
+     * 它们决定「该咬哪儿」与「出伤受伤各打几折」，是玩家出手前必读的两个量 ——
+     * M2-B1 重排遭遇头时一度把它们漏在了旧的 `combatCard` 里，实机抄屏当场抓到
+     * （`guard: null`／`stance: null`）。这类丢失不会有任何单测变红：VM 照样算得出，
+     * 只是没人把它画到屏幕上。
+     */
+    ...(body.kind === "clash"
+      ? [
+          el("b", { class: "combat__guard", attrs: { "data-guard": body.combat.guardPart } }, [
+            el("span", { text: body.combat.guardLabel }),
+          ]),
+          el("b", { class: "combat__stance" }, [el("span", { text: body.combat.stanceLabel })]),
+        ]
+      : []),
     chrome.stageBadge
       ? el("b", {
           class: "enc__stage",

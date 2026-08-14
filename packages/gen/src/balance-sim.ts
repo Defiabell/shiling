@@ -1195,6 +1195,9 @@ function runCombatLab(samples: number): number {
   );
   const deathRate = (rows: readonly CombatOutcome[]): number =>
     pct(rows.filter((o) => o.over === "dead").length, rows.length);
+  /** [M2-B1] 一场架打了几合 —— B1 交付线第③问的量 */
+  const meanRounds = (rows: readonly CombatOutcome[]): number =>
+    rows.length === 0 ? 0 : mean(rows.map((o) => o.rounds));
   /*
    * [S1] 量「读得出意图值不值」的**对象换了一头**：岩羊 → 玄蟒。
    *
@@ -1239,9 +1242,40 @@ function runCombatLab(samples: number): number {
       `读得出意图更能活（玄蟒：死亡率 裸 ${bareDeath}% → 灵犀 ${seerDeath}%，至少低五分之一；胜率 ${bareWin}% → ${seerWin}% 明显更高）`,
       seerDeath <= bareDeath * 0.8 && seerWin >= bareWin + 4,
     ],
+    /*
+     * [M2-B1] 这条判据也换了量纲（第三次「换判据不换数值」）。
+     *
+     * 旧版是一个绝对阈值（胜率 ≤35%），它在 M1-P2 那会儿成立是因为玄蟒只有 34 血：
+     * 一个只想逃的玩家撑不到它倒下。M2-B1 之后双方血量都厚了一档（我方 体×1.6、
+     * 玄蟒 60 血），于是「一路想逃、逃不掉只好还手」这条路 2000 场量到 35.7% 胜、
+     * **38.9% 死** —— 绝对值刚好压线，但它显然不是一条解。
+     *
+     * 判据因此改成**与「照屏幕打」的差距**：那才是这条判据真正想说的话
+     * （「一挨打就逃」不该接近最优）。实测差 41 个点（35.7% vs 76.7%），
+     * 且 coward 的死亡率比胜率还高。
+     */
     [
-      `一挨打就逃不是解（coward 胜率 ${cowardWin.map((r) => `${r}%`).join("／")}，最高 ≤35%）`,
-      Math.max(...cowardWin) <= 35,
+      `一挨打就逃不是解（coward 胜率 ${cowardWin.map((r) => `${r}%`).join("／")}，` +
+        `最好的那一头也比照屏幕打低 ${(
+          winRate(rowsOf(ENEMY_XUAN_MANG, "screen")) - Math.max(...cowardWin)
+        ).toFixed(0)} 个点，须 ≥25）`,
+      winRate(rowsOf(ENEMY_XUAN_MANG, "screen")) - Math.max(...cowardWin) >= 25,
+    ],
+    /*
+     * [M2-B1] 交付线第③问的可执行版：**一场架 5〜10 合**。
+     *
+     * 只量「照屏幕打」那一行、且只看三头强敌（野雉是三合就完的教具，它拉低均值是设计
+     * 使然 —— 一只鸟本来就不该打十合）。量的是均合而不是每一场：一场三合的收官与一场
+     * 十二合的苦战都该存在，要的是**分布的中心**落在那一档。
+     */
+    [
+      `照屏幕打的一场架落在 5〜10 合（实测 ${LAB_COMBAT_FOES.filter((f) => f.id !== ENEMY_YE_ZHI)
+        .map((f) => meanRounds(rowsOf(f.id, "screen")).toFixed(1))
+        .join("／")}）`,
+      LAB_COMBAT_FOES.filter((foe) => foe.id !== ENEMY_YE_ZHI).every((foe) => {
+        const rounds = meanRounds(rowsOf(foe.id, "screen"));
+        return rounds >= 5 && rounds <= 10;
+      }),
     ],
   ];
   for (const [name, ok] of checks) console.log(`${ok ? "✓" : "✗"} ${name}`);

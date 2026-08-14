@@ -418,9 +418,10 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
   });
 
   /*
-   * [M2-B1] 判据从「迟滞还挂着」换成「腿伤已经拆到位」：部位伤整场累积之后，
-   * 前两层腿伤买的是「它逃不掉且扑不动」这件一劳永逸的事，第三层的边际收益
-   * （出伤再 ×0.86）不值一个回合 —— 那一合该拿去换姿态。
+   * [M2-B1] 两处改了：判据从「迟滞还挂着」换成「腿伤已经拆到位」（部位伤整场累积之后，
+   * 前两层腿伤买的是「它逃不掉且扑不动」这件一劳永逸的事，第三层不值一个回合）；
+   * 换成哪个姿态也从「还撑得住几合」换成**两个数的比较** —— 只有「我杀得比它快两合以上」
+   * 才值得站到扑击姿态上（受伤也 ×1.25），否则那个免费回合该用来伏低。
    */
   it("它在守、而腿已经拆到位（再咬一层不值）→ 那一合拿去换姿态", () => {
     const known = seeing(
@@ -435,7 +436,8 @@ describe("recommendCombatActId：同一时刻只推荐一手（链在 tale-sim�
         { wounds: { throat: 0, leg: 2, eye: 0 } },
       ),
     );
-    expect(recommendCombatActId(combatPreview(known, FIXTURE_CONTENT))).toBe("stance:lunge");
+    // 这一局面 roundsToLive 没有比 roundsToKill 多两合 —— 于是那一合拿去伏低而不是压上前
+    expect(recommendCombatActId(combatPreview(known, FIXTURE_CONTENT))).toBe("stance:low");
   });
 });
 
