@@ -241,8 +241,9 @@ describe("扑击", () => {
     expect(turn.over).toBe("caught");
     expect(turn.state.essence.zu).toBe(12);
     expect(turn.state.stalk).toBeNull();
-    // 得手的两句：扑中 ＋ 进食
-    expect(turn.roundLog).toHaveLength(2);
+    // [饥饿节奏批] 得手的三句：扑中 ＋ 进食 ＋ **余粮**（第三句是这一批加的，见 `huntSurplus`）
+    expect(turn.roundLog).toHaveLength(3);
+    expect(turn.roundLog[2]).toContain("够吃");
   });
 
   it("失手：小猎物遁走，反扑的猎物转入搏杀（起手血量＝ti、敌人满血）", () => {

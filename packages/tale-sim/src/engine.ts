@@ -19,7 +19,14 @@
  */
 
 import { createCursor, weightedPick, weightedSample, type RngCursor } from "./rng.js";
-import { BODY_PART_NAMES, COMBAT_MESSAGES, ENGINE_MESSAGES, STALK_MESSAGES, render } from "./messages.js";
+import {
+  BODY_PART_NAMES,
+  COMBAT_MESSAGES,
+  ENGINE_MESSAGES,
+  STALK_MESSAGES,
+  cnNumeral,
+  render,
+} from "./messages.js";
 import type {
   ActionId,
   BodyPart,
@@ -38,6 +45,7 @@ import type {
   EndingType,
   EssenceType,
   EventChoice,
+  HuntMode,
   LifePremise,
   LifeRecord,
   OrganDef,
@@ -126,7 +134,7 @@ export interface TurnResult {
   newTreasures: TreasureDef[];
 }
 
-/** [S2] `performAction` 的行动参数。今天只有探索需要它。 */
+/** [S2] `performAction` 的行动参数。探索用去处，狩猎用打法。 */
 export interface ActionOptions {
   /**
    * 去哪一处（`DestinationDef.id`）。
@@ -136,6 +144,44 @@ export interface ActionOptions {
    * 一个忘了传目的地的调用点会静默退回旧行为，而那正是这一批要消灭的东西。
    */
   destinationId?: string;
+  /**
+   * [饥饿节奏批] 这一季**怎么猎**：`"stalk"` 进追猎屏（缺省）／`"quick"` 一次点击就了。
+   *
+   * 只属于 `hunt`（别的行动填了抛错，同 `destinationId` 那条纪律）。**这一位允许缺省**，
+   * 而去处不允许 —— 分别在于缺省值的语义：`"stalk"` 就是这一批之前唯一存在的行为，
+   * 漏传拿到的是原样而不是「第二套语义」。
+   */
+  huntMode?: HuntMode;
+}
+
+/**
+ * [饥饿节奏批] 速猎按钮的只读预览。纯函数、零副作用、**不消耗任何抽取**。
+ *
+ * 存在的理由与 `stalkPreview` 逐字同形：**没有预览的按钮就是翻牌**（M1-P1 铁律）。
+ * 而这一批新加的决定恰恰是「这一季走哪条狩猎路」——两颗按钮并排，玩家要能一眼比出
+ * 「五息周旋换全额与余粮」和「一息了事换六成的肉、没有余粮」。
+ */
+export interface QuickHuntPreview {
+  /** 得手率（已按 minChance／maxChance 夹紧） */
+  chance: number;
+  /** 得手回多少饱食（＝ 一趟追猎总值 × `quickHuntFoodMul`，已取整） */
+  foodGain: number;
+  /** 追猎得手**当场**回多少饱食 —— 摆在一起才比得出折扣 */
+  stalkFoodGain: number;
+  /**
+   * 一趟追猎的**总值** ＝ 当场那一口 ＋ 缺省食余（`huntFoodGain + huntSurplusSeasons × huntSurplusGain`）。
+   *
+   * 报出来是因为界面要用它算「一次得手够几季」（饱食详情那一行）——
+   * 让客户端自己把这三项乘加一遍，就是把引擎的公式抄进了 tale-client，
+   * 而这一份抄本会在下一次调参时与 `quickHuntFoodOf` 分家。
+   */
+  stalkWorth: number;
+  /** 精气折扣（0.5 ＝ 只得半份），界面据它写「半份精气」 */
+  essenceMul: number;
+  /** 追猎得手留下的食余季数（速猎恒为 0，这里报的是**对照**那一份的缺省值） */
+  stalkSurplusSeasons: number;
+  /** 食余每季回多少饱食 */
+  surplusGain: number;
 }
 
 /**
@@ -1179,6 +1225,8 @@ export function createLife(
     stats,
     // [S3] 「世家印记·食」那一枚加在这里（照样吃 hungerMax 的上限）
     hunger: clamp(t.hungerInit + sigilHungerBonus, 0, t.hungerMax),
+    // [饥饿节奏批] 出生没有余粮 —— 食余只从「自己猎到的大猎物」来
+    surplusSeasons: 0,
     lifespanMax: Math.max(1, lifespan),
     essence: { zu: 0, lin: 0, xue: 0, meng: 0 },
     organIds,
@@ -1551,6 +1599,8 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
   let alertness = current.alertness;
   let over: StalkTurn["over"] = null;
   let caught = false;
+  /** [饥饿节奏批] 这一头留下几季食余（0 ＝ 没得手或这头留不下）—— 落账在 `closeSeason` 之后 */
+  let surplusGranted = 0;
 
   switch (act) {
     case "creep": {
@@ -1632,11 +1682,25 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
     if (caught) {
       draft.hunger = clamp(draft.hunger + t.huntFoodGain, 0, t.hungerMax);
       draft.essence = addEssence(draft.essence, prey.essence);
+      /*
+       * [饥饿节奏批] 大猎物留下食余 —— 这一批的核心，也是**追猎独有**的那一份
+       * （速猎「随手取一头」，没有拖回穴里的余粮）。
+       *
+       * 落账刻意排在 `closeSeason` **之后**（见下面那一行）：这一季的账已经由刚才那顿
+       * +32 付过了，食余算的是**此后**几季。若在这里就落，收束时会当场吃掉一季 ——
+       * 屏幕上写「够吃四季」而状态栏立刻显示三季，那是一次没人能解释的减一。
+       */
+      surplusGranted = Math.max(0, Math.round(prey.surplusSeasons ?? t.huntSurplusSeasons));
       // [2026-08-13] 得手就是夺了一命 —— 这一笔同时是妖王的进度与化灵的断门。
       // 它刻意**不写 LifeRecord**（见 LifeRecord 的记录纪律：一世几十次狩猎会把列传摘录占满），
       // 所以只有这个计数器记得住它。
       draft.livesTaken += 1;
       say(undefined, STALK_MESSAGES.feed);
+      // 直接 push 而不走 `say`：那一句是**唯一**的一条（没有变体可抽），而 `say` 恒消耗
+      // 一次抽取 —— 为一句没得选的话掷一次骰，会让「抽取次数随内容变化」多一个隐形来源
+      if (surplusGranted > 0) {
+        roundLog.push(render(ENGINE_MESSAGES.huntSurplus, { seasons: cnNumeral(surplusGranted) }));
+      }
     }
     if (over === "combat") {
       say(flavor?.retaliate, STALK_MESSAGES.retaliate);
@@ -1650,7 +1714,12 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
       }
     }
     // 本季到此才收束（起追那一次刻意没推进）
-    closeSeason(draft, content, t, records);
+    closeSeason(draft, content, t, records, roundLog);
+    // [饥饿节奏批] 食余从**下一季**起算，所以落在收束之后（理由见上面 `surplusGranted` 那段）。
+    // 死了就不落：一条给尸体记的余粮只会在列传与存档里留下一个没有意义的数。
+    if (draft.alive && surplusGranted > 0) {
+      draft.surplusSeasons = Math.max(draft.surplusSeasons, surplusGranted);
+    }
   }
 
   draft.records = [...state.records, ...records];
@@ -1666,16 +1735,33 @@ export function stalkAct(state: TaleState, act: StalkAct, content: TaleContent):
  * （刻意不推进季节，否则起追本身就白耗一季），真正的收束发生在 `stalkAct` 判出 `over`
  * 的那一步。两处必须走同一份季推进与死亡判定，否则「追猎中饿死」这类边界会两套行为。
  *
- * `records` 就地追加死亡记录（调用方负责最后并进 `draft.records`）。
+ * `records` 就地追加死亡记录（调用方负责最后并进 `draft.records`）；`notices` 就地追加
+ * 食余那两句（追猎那一侧传的是 `roundLog`，两条路的字都落在同一条日志栏里）。
  */
 function closeSeason(
   draft: TaleState,
   content: TaleContent,
   t: TaleTuning,
   records: LifeRecord[],
+  notices: string[],
 ): void {
   const cost = t.hungerPerSeason + (draft.season === WINTER ? t.winterHungerExtra : 0);
-  draft.hunger = clamp(draft.hunger - cost, 0, t.hungerMax);
+  /*
+   * [饥饿节奏批] 食余先抵一道 —— **这是这一批唯一改动的结算步骤**。
+   *
+   * 一次得手管的不再只是当季那一顿：`TaleState.surplusSeasons` 非零时，这一季自动补
+   * `huntSurplusGain` 点饱食并减一，**不需要任何点击**（正本：倾向状态位而非要点的存粮）。
+   * 加与减写成同一个表达式而不是「先加后减两次夹紧」：中间那次夹紧会在饱食接近上限时
+   * 悄悄吃掉一部分余粮，而玩家手里的账（按钮上写 +8、每季 −12）会对不上。
+   */
+  const fed = draft.surplusSeasons > 0;
+  if (fed) {
+    draft.surplusSeasons -= 1;
+    notices.push(ENGINE_MESSAGES.surplusFeed);
+    // 吃完的那一季要当场说一句：否则下一季饱食突然开始掉，玩家只会觉得莫名其妙
+    if (draft.surplusSeasons === 0) notices.push(ENGINE_MESSAGES.surplusGone);
+  }
+  draft.hunger = clamp(draft.hunger - cost + (fed ? t.huntSurplusGain : 0), 0, t.hungerMax);
   const nextSeason = ((draft.season + 1) % 4) as Season;
   if (nextSeason === 0) draft.year += 1;
   draft.season = nextSeason;
@@ -1926,6 +2012,7 @@ export function performAction(
     throw new Error(`performAction: 当前不可执行行动 ${action}`);
   }
   const destination = resolveDestinationArg(state, content, action, options.destinationId);
+  const huntMode = resolveHuntModeArg(action, options.huntMode);
 
   const premise = premiseOf(state, content);
   const t = tuningWithDeltas(content.tuning, [premise.sky.tuningDelta, premise.origin.tuningDelta]);
@@ -1974,7 +2061,15 @@ export function performAction(
    * 事件卡与追猎屏又占用同一块中央舞台，不能并存。于是这一季**要么撞上一桩事，要么起追**：
    * 前者是「狩猎路上遇见了别的东西」，后者是「盯上了一头具体的猎物」，两条都算狩猎。
    */
-  if (action === "hunt" && !drawn) beginStalk(draft, cursor, content, t, notices);
+  if (action === "hunt" && !drawn) {
+    /*
+     * [饥饿节奏批] 两条狩猎路在这里分叉，且**只在这里**分叉：事件抽取（上面那一步）对
+     * 两条路逐字相同 —— 12 条 `actions:["hunt"]` 的狩猎事件对速猎照样入池。
+     * 若速猎绕开事件池，「一次点击」就会顺带买断四分之一的内容，而那不是玩家付的价钱。
+     */
+    if (huntMode === "quick") resolveQuickHunt(draft, cursor, content, t, notices);
+    else beginStalk(draft, cursor, content, t, notices);
+  }
 
   // 1.5 起追早退：`beginStalk` 只把猎物摆上来，这一季**刻意不推进**（否则光是起追就白耗
   // 一季），也不抽事件（玩家此刻该盯着追猎屏，不该被别的事件插队）。季推进与死亡判定推迟到
@@ -1993,7 +2088,7 @@ export function performAction(
     };
   }
 
-  closeSeason(draft, content, t, records);
+  closeSeason(draft, content, t, records, notices);
 
   // 5. records 追加
   draft.records = [...state.records, ...records];
@@ -2039,6 +2134,111 @@ function resolveDestinationArg(
     throw new Error(`performAction: 去处 ${destinationId} 尚未开启`);
   }
   return destination;
+}
+
+/**
+ * [饥饿节奏批] 校验「怎么猎」这个参数。
+ *
+ * 与 `resolveDestinationArg` **一处不同形**：这里缺省合法（缺省 ＝ 追猎 ＝ 这一批之前
+ * 唯一存在的行为），而去处缺省抛错。分别在于漏传的后果：漏传去处会静默退回 S2 之前的
+ * 世界（第二套语义），漏传打法拿到的就是原样。非狩猎行动填了照样抛错 —— 那种调用一定是
+ * 写错了，而静默吞掉一个写错的参数比抛错危险（`--tune` 那条教训）。
+ */
+function resolveHuntModeArg(action: ActionId, huntMode: HuntMode | undefined): HuntMode {
+  if (action !== "hunt") {
+    if (huntMode !== undefined) {
+      throw new Error(`performAction: ${action} 不接受狩猎打法参数（huntMode 只属于狩猎）`);
+    }
+    return "stalk";
+  }
+  return huntMode ?? "stalk";
+}
+
+/**
+ * [饥饿节奏批] 速猎：一次点击就了的那条路。**恒定消耗两次抽取**（挑猎物 ＋ 成败）。
+ *
+ * 与追猎的分别，逐条都是玩家在按钮上读得到的：
+ * - 得手率一次掷定，**不进追猎屏**（没有距离／警觉／风向那四个量可算）；
+ * - 食与精气各打一道折（`quickHuntFoodMul`／`quickHuntEssenceMul`）；
+ * - **不留食余**（那是「盯上一头拖回穴里」才有的东西）；
+ * - **不会反噬**：随手一扑惊不动大猎物，扑空就是扑空 —— 所以它也换不到搏杀那份精气。
+ *
+ * 夺命照记（`livesTaken`）：随手取的也是一条命，妖王的进度与化灵的断门在这里与追猎同解。
+ */
+function resolveQuickHunt(
+  draft: TaleState,
+  cursor: RngCursor,
+  content: TaleContent,
+  t: TaleTuning,
+  notices: string[],
+): void {
+  const pool = preyPool(content, t);
+  const prey = pool[cursor.int(pool.length)];
+  if (!prey) throw new Error("resolveQuickHunt: 猎物表抽取失败");
+  // [S3] 照过面就算见过 —— 与起追那一处同解（追丢了也数，何况这是扑到了眼前的一头）
+  noteMetEnemy(draft, prey.id);
+  if (cursor.next() >= quickHuntChanceOf(draft.stats.meng, t)) {
+    notices.push(render(ENGINE_MESSAGES.quickHuntMiss, { enemy: prey.name }));
+    return;
+  }
+  draft.hunger = clamp(draft.hunger + quickHuntFoodOf(t), 0, t.hungerMax);
+  draft.essence = addEssence(draft.essence, scaleEssence(prey.essence, t.quickHuntEssenceMul));
+  draft.livesTaken += 1;
+  notices.push(render(ENGINE_MESSAGES.quickHuntCatch, { enemy: prey.name }));
+}
+
+function quickHuntChanceOf(meng: number, t: TaleTuning): number {
+  return clamp(t.quickHuntChance + meng * t.quickHuntPerMeng, t.minChance, t.maxChance);
+}
+
+/**
+ * 速猎得手回多少饱食 ＝ **一趟追猎总收益**的 `quickHuntFoodMul`（正本建议 55〜65%）。
+ *
+ * 「总收益」含食余（`huntFoodGain + huntSurplusSeasons × huntSurplusGain`），不是只按当场
+ * 那一口折算 —— 后者会让速猎随着食余变强而**相对越来越差**：食余是这一批把收益从「当场」
+ * 挪到「此后几季」的那一半，而速猎打的折该打在整趟的价值上，否则两颗按钮的价钱不同源，
+ * 调一次食余就要手动去追一次速猎的数（那种要靠人记住的耦合迟早会漂）。
+ */
+function stalkWorthOf(t: TaleTuning): number {
+  return t.huntFoodGain + t.huntSurplusSeasons * t.huntSurplusGain;
+}
+
+function quickHuntFoodOf(t: TaleTuning): number {
+  return Math.round(stalkWorthOf(t) * t.quickHuntFoodMul);
+}
+
+/** 按倍率折算一份精气（向下取整：折扣就该是折扣，四舍五入会让 0.5 倍偶尔比一半还多）。 */
+function scaleEssence(
+  essence: Partial<Record<EssenceType, number>>,
+  mul: number,
+): Partial<Record<EssenceType, number>> {
+  const out: Partial<Record<EssenceType, number>> = {};
+  for (const type of ESSENCE_ORDER) {
+    const value = essence[type];
+    if (value === undefined) continue;
+    out[type] = Math.floor(value * mul);
+  }
+  return out;
+}
+
+/**
+ * [饥饿节奏批] 速猎按钮要显示的那几个数（纯函数、零副作用、不消耗抽取）。
+ *
+ * 界面**不许自己算**这几个数：得手率是 `quickHuntChance + 猛×quickHuntPerMeng` 再夹紧，
+ * 食是 `huntFoodGain × quickHuntFoodMul` 再取整 —— 两条公式抄进 tale-client 就破了
+ * 「客户端零游戏逻辑」，而不显示则按钮又变回翻牌（M1-P1 铁律）。
+ */
+export function quickHuntPreview(state: TaleState, content: TaleContent): QuickHuntPreview {
+  const t = lifeTuning(state, content);
+  return {
+    chance: quickHuntChanceOf(state.stats.meng, t),
+    foodGain: quickHuntFoodOf(t),
+    stalkFoodGain: t.huntFoodGain,
+    stalkWorth: stalkWorthOf(t),
+    essenceMul: t.quickHuntEssenceMul,
+    stalkSurplusSeasons: t.huntSurplusSeasons,
+    surplusGain: t.huntSurplusGain,
+  };
 }
 
 /**

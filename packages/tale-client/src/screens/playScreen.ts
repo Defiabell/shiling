@@ -11,7 +11,7 @@
 
 import { el } from "../dom.js";
 import { inkArt } from "../art/placeholders.js";
-import type { ActionButtonVm } from "../model/actionVm.js";
+import type { ActionButtonId, ActionButtonVm } from "../model/actionVm.js";
 import type { DestinationButtonVm } from "../model/destinationVm.js";
 import type { CombatActionVm, CombatVm } from "../model/combatVm.js";
 import type { DetailSel, DetailVm } from "../model/detailVm.js";
@@ -20,7 +20,7 @@ import type { GuideVm } from "../model/guideVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
 import type { StatusVm } from "../model/statusVm.js";
-import type { ActionId, CombatAct, WayId } from "@shiling/tale-sim";
+import type { CombatAct, WayId } from "@shiling/tale-sim";
 
 export type CenterVm =
   | {
@@ -68,7 +68,8 @@ export interface PlayProps {
   detail: DetailVm | null;
   /** 首世引导链的当前一步；null ＝ 已跳过／已看完 */
   guide: GuideVm | null;
-  onAction(id: ActionId): void;
+  /** [饥饿节奏批] 拿的是**按钮 id**（含「速猎」），翻成行动＋参数由 `app` 负责 */
+  onAction(id: ActionButtonId): void;
   /** [S2] 去某一处探索 —— 它**就是**这一季的行动（不是二级菜单里的一步） */
   onExplore(destinationId: string): void;
   onChoice(idx: number): void;
@@ -378,6 +379,15 @@ function statusBar(status: StatusVm, props: PlayProps): HTMLElement {
             el("i", { class: "hunger__fill", style: `width:${status.hunger.percent}%` }),
           ]),
           el("span", { class: "hunger__num", text: String(status.hunger.value) }),
+          /*
+           * [饥饿节奏批] 食余那一枚小牌就贴在饱食条右边。
+           *
+           * 位置是有讲究的：它每季自动抵一道饱食，所以玩家的疑问（「这季怎么没怎么掉」）
+           * 会发生在**看着这根条**的时候 —— 答案要在同一处，不能只在日志里。
+           */
+          status.hunger.surplus
+            ? el("i", { class: "hunger__surplus", text: status.hunger.surplus })
+            : null,
         ],
       ),
       el(
@@ -896,13 +906,23 @@ function actionBar(props: PlayProps): HTMLElement {
 }
 
 /**
+ * [饥饿节奏批] 按钮上印的那个键 —— 第十颗印「0」。
+ *
+ * 行动排多了一颗「速猎」之后，面板一共十颗按钮，而键盘只有 1〜9。`app.onKey` 把 `0`
+ * 当第十颗，这里印的字必须跟着（印「10」而按 `1` 会先命中第一颗，那是最坏的一种不一致）。
+ */
+function kbdLabel(index: number): string {
+  return index === 10 ? "0" : String(index);
+}
+
+/**
  * [S2] 去处那一排 —— 「探索」这一季的全部内容。
  *
  * 每颗按钮四行恒在（地貌／遇事／风险＋此地有什么／路费），未开启的**后果照写、
  * 原因另起一行**（`dest__lock`）—— 与 S1 技能池那一条同解：只写「尚不得其门」的按钮，
  * 玩家既不知道那儿是什么，也就没法决定「要不要为它去凑一件浮鳔」。
  *
- * 键盘编号从 4 起（1／2／3 归上面那三颗行动）。
+ * 键盘编号接在行动排之后（本批行动排是四颗，所以去处从 5 起，第十颗印 `0`，见 `kbdLabel`）。
  */
 function destinationBar(props: PlayProps): HTMLElement {
   const offset = props.actions.length;
@@ -929,7 +949,7 @@ function destinationBar(props: PlayProps): HTMLElement {
               el("b", { text: dest.name }),
               dest.treasureFound ? el("i", { class: "dest__seal", text: "秘" }) : null,
               dest.visited && !dest.treasureFound ? el("i", { class: "dest__mark", text: "已至" }) : null,
-              el("kbd", { text: String(offset + index + 1) }),
+              el("kbd", { text: kbdLabel(offset + index + 1) }),
             ]),
             el("em", { class: "dest__desc", text: dest.desc }),
             el("span", { class: "dest__facts" }, [

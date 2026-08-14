@@ -17,6 +17,21 @@ export type RegionId = "qingqiu";
 export type ActionId = "hunt" | "explore" | "rest" | "dormant";
 
 /**
+ * [饥饿节奏批] 狩猎的两条路：进追猎屏的**追猎**，与一次点击就了的**速猎**。
+ *
+ * ## 为什么是 `ActionId` 的一个参数，而不是第五个行动
+ * 与 S2 的「探索去哪一处」逐字同形（`ActionOptions.destinationId`）：一颗行动、
+ * 一个参数、界面上摊成两颗按钮。做成第五个 `ActionId` 会让 12 条 `actions:["hunt"]`
+ * 的狩猎事件、四道判定、AI 槽位、三份机器玩家策略统统要跟着分叉一次 ——
+ * 而这两条路在规则上是同一件事（都叫「去猎食」，都夺命，都可能先撞上一桩狩猎事件）。
+ *
+ * 缺省是 `"stalk"`。这一处**允许缺省**而 `destinationId` 不允许，理由不同形：
+ * 缺省值就是这一批之前**唯一存在**的行为，所以一个漏改的调用点得到的是原样，
+ * 不是「第二套语义」（S2 那条纪律要挡的是后者）。
+ */
+export type HuntMode = "stalk" | "quick";
+
+/**
  * [M1-P1 正本] 风向，对玩家由有利到不利：逆（气味吹向自己）／侧／顺（气味送到猎物鼻子里）。
  *
  * 顺序不是装饰：`tuning.stalkWindAlertMul` 按它索引潜行的警觉倍率（0.5／1／2）。
@@ -564,6 +579,14 @@ export interface EnemyDef {
   retaliates?: boolean;
   /** 起手距离（步），缺省 `tuning.stalkStartDistance` */
   startDistance?: number;
+  /**
+   * [饥饿节奏批] 追猎得手后留下的**食余**能吃几季，缺省 `tuning.huntSurplusSeasons`。
+   *
+   * 只有猎物（`tuning.huntPreyIds`）用得上它。这个数就是「猎物有多大」的唯一落点 ——
+   * 一头穴鼠一顿吃完，一头岩羊拖回去能吃到开春。**不做成一件要点击的存粮**：这一批的
+   * 全部目的是减少点击，所以它是一位自动续命的状态（见 `TaleState.surplusSeasons`）。
+   */
+  surplusSeasons?: number;
   /** [M1-P1 补] 追猎旁白变体，缺省退回引擎通用变体 */
   stalkFlavor?: StalkFlavor;
 
@@ -978,6 +1001,17 @@ export interface TaleState {
   originId: string;
   stats: Stats;
   hunger: number;
+  /**
+   * [饥饿节奏批] **食余**：还能自动续命几季（0 ＝ 没有余粮）。
+   *
+   * 追猎得手时置为 `max(现有, 这头猎物的 surplusSeasons)`（**不累加** —— 余粮会坏，
+   * 而累加会让「连猎三头」变成一个囤积策略，那正是这一批要消灭的点击苦工的另一种形态）。
+   * 每一季在 `closeSeason` 里自动抵扣 `tuning.huntSurplusGain` 并减一，**不需要任何点击**。
+   *
+   * 为什么是状态位而不是「可消费的存粮」：计划正本写着倾向前者，理由是后者会**新增**
+   * 一种每季要点的东西 —— 而这一批的全部目的是减少点击。
+   */
+  surplusSeasons: number;
   lifespanMax: number;
   essence: Record<EssenceType, number>;
   /** [0] 恒为神种器官 */
@@ -1083,6 +1117,27 @@ export interface TaleTuning {
   huntPreyIds: string[];
   /** [补全] 追猎得手回饱食 */
   huntFoodGain: number;
+  /**
+   * [饥饿节奏批] 追猎得手留下的**食余**能吃几季（猎物可用 `EnemyDef.surplusSeasons` 各报各的）。
+   *
+   * 这一位是这一批的核心：一次得手不再只顶两季，而是此后若干季**自动**续命 ——
+   * 于是狩猎从「每隔一两回合的补给苦工」回到「偶尔的场面戏」。速猎**不留食余**
+   * （那是「盯上一头、拖回去」才有的东西），这也是两条路最要紧的分别。
+   */
+  huntSurplusSeasons: number;
+  /** [饥饿节奏批] 食余每季自动回多少饱食（在季耗之前抵扣，不需要任何点击） */
+  huntSurplusGain: number;
+  /**
+   * [饥饿节奏批] 速猎的三个数。它们**全部由追猎那一份折算**而不是各写一个绝对值 ——
+   * 天时改了 `huntFoodGain`（大旱 +12），速猎要跟着改，否则同一世里两颗按钮会说两套话。
+   *
+   * - `quickHuntChance` ＋ `quickHuntPerMeng`：得手率（猛越高越稳；按 min/maxChance 夹紧）。
+   * - `quickHuntFoodMul`／`quickHuntEssenceMul`：得手所得的折扣（食与精气各一道）。
+   */
+  quickHuntChance: number;
+  quickHuntPerMeng: number;
+  quickHuntFoodMul: number;
+  quickHuntEssenceMul: number;
   /** [补全] 休憩回饱食 */
   restHungerGain: number;
   /** [补全] 休憩清除的伤病 flag（计划「小回血」的落地形式：本模型无常驻 HP） */

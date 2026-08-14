@@ -37,7 +37,7 @@ import {
 import { CONTENT, USING_FIXTURE_CONTENT, clearInjectedEvents, injectedEvents, setInjectedEvents } from "./content.js";
 import { el, nextFrame } from "./dom.js";
 import { endingArt, eventArt, portraitArt } from "./art/assets.js";
-import { buildActionVms } from "./model/actionVm.js";
+import { actionOfButton, buildActionVms } from "./model/actionVm.js";
 import { buildDestinationVms, destinationCaption } from "./model/destinationVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm } from "./model/combatVm.js";
@@ -1013,7 +1013,15 @@ export class TaleApp {
         log: recentLogVm(this.log),
         freshLogIds: this.freshLogIds,
         busy: this.busy,
-        onAction: (id) => void this.safely(() => this.doAction(id)),
+        /*
+         * [饥饿节奏批] 按钮 id → 行动 ＋ 参数的翻译**只在这一处**（同去处那一排）。
+         * 「速猎」是 `hunt` 的一个参数而不是第五个行动（见 `ActionOptions.huntMode`），
+         * 界面这一层只负责把那颗按钮翻成 `{ huntMode: "quick" }`。
+         */
+        onAction: (id) =>
+          void this.safely(() =>
+            this.doAction(actionOfButton(id), id === "hunt-quick" ? { huntMode: "quick" } : undefined),
+          ),
         onExplore: (destinationId) =>
           void this.safely(() => this.doAction("explore", { destinationId })),
         onChoice: (idx) => void this.safely(() => this.doChoice(idx)),
@@ -1109,9 +1117,13 @@ export class TaleApp {
      * [S2] 数字键的上限从 4 提到 9：行动面板现在是「三颗行动 ＋ 六处去处」，
      * 1〜3 归行动、4〜9 归去处（编号与按钮上印的 `kbd` 逐一对应，见 `destinationBar`）。
      * 战斗／追猎／事件三屏照旧只用前几个 —— 越界时 `buttons[i]` 为 undefined，自然无事发生。
+     *
+     * [饥饿节奏批] 行动排多了一颗「速猎」，于是**十颗按钮**：1〜4 行动、5〜9 与 **0** 归去处。
+     * 「0 ＝ 第十颗」而不是「0 ＝ 无效」：最后那一处（焦原）是四条道之一的必经地，
+     * 把它留成唯一一颗按不到的按钮，等于让键盘玩家在那儿必须回去摸鼠标。
      */
-    const digit = Number.parseInt(event.key, 10);
-    if (Number.isInteger(digit) && digit >= 1 && digit <= 9) {
+    const digit = event.key === "0" ? 10 : Number.parseInt(event.key, 10);
+    if (Number.isInteger(digit) && digit >= 1 && digit <= 10) {
       if (this.center.kind === "combat" || this.center.kind === "stalk" || this.center.kind === "event") {
         const selector =
           this.center.kind === "combat"

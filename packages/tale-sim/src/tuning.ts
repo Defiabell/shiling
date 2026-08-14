@@ -31,6 +31,30 @@ export const BASELINE_TUNING: TaleTuning = {
   huntHunterTag: "hunter",
   huntPreyIds: [],
   huntFoodGain: 26,
+
+  /*
+   * [饥饿节奏批 2026-08-14] 食余与速猎 —— owner 的原话是「饿得太快，要经常点击狩猎」。
+   *
+   * 病因是两批各自正确的改动叠出来的：M1-P1 把狩猎做成 4〜5 次点击的追猎屏，S2 给探索加了
+   * 路费（险地 +6／绝境 +12）。于是一次得手（+32，净 +20）连一趟绝境（−24）都付不起，
+   * 而它要花五次点击 —— 狩猎退化成补给苦工。
+   *
+   * 两条药都下在**收益端**（正本要求：优先动收益而非消耗，保住「食」这个主题，
+   * 也别把 S2 的路费体系调没）：
+   *
+   * 1. `huntSurplusSeasons`／`huntSurplusGain` ＝ 一次得手管更久（一头岩羊 ≈ 拖回去吃四季）。
+   * 2. `quickHunt*` ＝ 一次点击的快路径，收益打折、**不留食余、不给全额精气**。
+   *
+   * 实测校准见 `tale-content/src/tuning.ts` 的覆写小节（复算：
+   * `pnpm -C packages/gen balance --lives 500 --profile wayseek`，看「点击账」那一行）。
+   */
+  huntSurplusSeasons: 2,
+  huntSurplusGain: 8,
+  quickHuntChance: 0.78,
+  quickHuntPerMeng: 0.004,
+  quickHuntFoodMul: 0.6,
+  quickHuntEssenceMul: 0.6,
+
   restHungerGain: 10,
   restHealFlags: [],
   eventChanceBase: 0.35,

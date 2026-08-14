@@ -104,7 +104,9 @@ export const GUIDE_STEPS: readonly GuideStepDef[] = [
     hint: (state, content) => {
       // 这一世生效的调参：大旱之年这一句必须写 −15 而不是基线的 −12
       const t = lifeTuning(state, content);
-      return `饱食 ${Math.round(state.hunger)}／${t.hungerMax}，每季 −${t.hungerPerSeason}；得手 +${t.huntFoodGain} 饱食，另有一份精气`;
+      // [饥饿节奏批] 第一步就要把「追猎 vs 速猎」说清：新玩家看到两颗猎字按钮，
+      // 而这条引导正是他会读的那一句 —— 不写分别，他只会随手点一颗
+      return `饱食 ${Math.round(state.hunger)}／${t.hungerMax}，每季 −${t.hungerPerSeason}；追猎得手 +${t.huntFoodGain} 饱食 ＋ 整份精气 ＋ 食余，速猎一击即走但只得六成`;
     },
   },
   {

@@ -83,6 +83,15 @@ if (import.meta.env.DEV) {
   (globalThis as unknown as Record<string, unknown>).__tale = {
     snapshot: () => app.debugSnapshot(),
     /*
+     * [饥饿节奏批] 内容库的**基线**调参（只读，**不含天时／出身的加成** ——
+     * 那一份要 `lifeTuning(state, content)`，而这个出口拿不到 state）。
+     * E2E 的驱动脚本要按「还够几季」决定这一季干什么，
+     * 而那个数 ＝ (饱食 ＋ 食余×每季那一份) ÷ 每季消耗 —— 三项全在 tuning 里。
+     * 让脚本自己抄一份常数，就会在下一次调参之后**量一个已经不存在的世界**
+     * （同实验台 import 客户端 `CHANCE_BANDS` 那条理由）。这些数本来就写在屏幕上，不是秘密。
+     */
+    tuning: () => CONTENT_FOR_E2E.tuning,
+    /*
      * [S3] 内容库里**全部**名号（只读）。E2E 的「不泄露」那一问要它：判据是
      * 「未发现的东西，它的名字在整页 innerText 里搜不到」，而那要有一份完整的名单去搜。
      * 从屏幕上是拿不到这份名单的 —— 那正是它该拿不到的原因。dev 专用（生产构建里

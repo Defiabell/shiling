@@ -7,6 +7,7 @@
 
 import {
   SYS_FLAG_STARVING,
+  cnNumeral,
   lifeTuning,
   ownedOrgans,
   premiseOf,
@@ -68,6 +69,14 @@ export interface HungerVm {
   caption: string;
   /** 悬停／详情第一行：「饱食 60／100　每季 −12（冬 −18）」 */
   hint: string;
+  /**
+   * [饥饿节奏批] 食余那一枚小牌：「食余 三季」；没有余粮时为 null。
+   *
+   * 它**必须**在状态栏上，不能只活在日志里：食余每季自动抵一道饱食（`closeSeason`），
+   * 于是玩家会看见「这一季怎么没怎么掉」。屏幕上不写，那就是让玩家自己去猜规则
+   * （legibility 批次那条 Critical：界面不许替引擎许诺，也不许把规则藏起来）。
+   */
+  surplus: string | null;
 }
 
 export interface EssenceBarVm {
@@ -311,6 +320,11 @@ export function buildStatusVm(
     caption: starving ? "再一季便要饿殍" : hungerPercent < 25 ? "腹中空空" : "饱食",
     // 每季扣多少、一次得手补多少 —— 开局第一回合就要知道的账，此前一个字没写
     hint: hungerLede(state, content),
+    // [饥饿节奏批] 「食余 三季（每季 +9）」—— 季数与每季多少并列：只写季数看不出它顶不顶用
+    surplus:
+      state.surplusSeasons > 0
+        ? `食余 ${cnNumeral(state.surplusSeasons)}季（每季 +${t.huntSurplusGain}）`
+        : null,
   };
 
   const essences: EssenceBarVm[] = ESSENCE_ORDER.map((type) => {

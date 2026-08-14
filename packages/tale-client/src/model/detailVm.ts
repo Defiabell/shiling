@@ -22,6 +22,7 @@
 import {
   SYS_FLAG_STARVING,
   lifeTuning,
+  quickHuntPreview,
   waysProgress,
   organIndex,
   type CombatSkillEffect,
@@ -438,18 +439,34 @@ function hungerDetail(state: TaleState, content: TaleContent): DetailVm {
   const winter = perSeason + t.winterHungerExtra;
   const starving = state.flags.includes(SYS_FLAG_STARVING);
   const seasonsLeft = Math.floor(value / Math.max(1, perSeason));
-  const huntEvery = Math.max(1, Math.floor(t.huntFoodGain / Math.max(1, perSeason)));
+  const quick = quickHuntPreview(state, content);
+  /*
+   * [饥饿节奏批] 「一次得手够几季」现在要把**食余**算进去，否则这一行会低报一半。
+   *
+   * 一次追猎得手的总值由**引擎**报（`quickHuntPreview().stalkWorth`），界面不自己乘加：
+   * 那三项相乘的式子在 `quickHuntFoodOf` 里已经有一份，抄第二份就会在下一次调参时分家。
+   * 用缺省季数算（各猎物自报的那一份写在「食余」那一行里）—— 一个平均值好过一个漏了一半的精确值。
+   */
+  const huntEvery = Math.max(1, Math.floor(quick.stalkWorth / Math.max(1, perSeason)));
 
   return {
     key: "hunger",
     title: `饱食　${value}／${t.hungerMax}`,
     lede: hungerLede(state, content),
     rows: [
-      row("出", `每季 −${perSeason}，冬季 −${winter}（行动不额外扣）`, "warn"),
+      row("出", `每季 −${perSeason}，冬季 −${winter}（远行另有路费）`, "warn"),
       row(
         "进",
-        `追猎得手 +${t.huntFoodGain}　·　搏杀取胜 +${t.combatWinHungerGain}　·　休憩 +${t.restHungerGain}`,
+        `追猎得手 +${t.huntFoodGain}　·　速猎得手 +${quick.foodGain}　·　搏杀取胜 +${t.combatWinHungerGain}　·　休憩 +${t.restHungerGain}`,
         "gain",
+      ),
+      // 食余单列一行：它是「进」里唯一**不需要再点一次**的一笔，与上面那三笔不是同一种东西
+      row(
+        "食余",
+        state.surplusSeasons > 0
+          ? `穴中还有肉，此后 ${state.surplusSeasons} 季每季自动 +${t.huntSurplusGain}（不必出猎）`
+          : `大猎物拖得回穴里：得手后若干季每季自动 +${t.huntSurplusGain}（岩羊最多，速猎没有）`,
+        state.surplusSeasons > 0 ? "gain" : "dim",
       ),
       row(
         "还够",
@@ -460,7 +477,7 @@ function hungerDetail(state: TaleState, content: TaleContent): DetailVm {
       ),
       row("饿死", "落到 0 之后再空一季即死；不是当场死，还有一季可救", "dim"),
     ],
-    foot: `一次得手够 ${huntEvery} 季 —— 所以每 ${huntEvery} 季至少要猎一次，余下的季才拿去探索或蛰伏。`,
+    foot: `一次追猎得手（连食余）够 ${huntEvery} 季 —— 余下的季拿去探索、蛰伏或养伤；只想垫一顿就走速猎，一次点击 +${quick.foodGain}。`,
   };
 }
 

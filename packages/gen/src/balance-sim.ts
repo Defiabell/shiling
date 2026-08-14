@@ -14,6 +14,8 @@
  *   pnpm -C packages/gen balance -- --lab --lives 400   # 追猎实验台：打法×风向×build 的得手率
  *       （--lives 就是每格的场数，缺省沿用整世模式的 200；手感判据的实测值都是按 400 报的）
  *   pnpm -C packages/gen balance -- --stalk-plan rush   # 整世模式里换机器猎手的打法
+ *   pnpm -C packages/gen balance -- --hunt-plan quick   # [饥饿节奏批] 全速猎／全追猎两个极端
+ *       （严格占优检查：两条狩猎路谁也不该把对方打死）
  *   pnpm -C packages/gen balance -- --lab combat --lives 400  # 搏杀实验台：打法×敌人×build 的胜率
  *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils   # [S3] 满员印记的天花板
  *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils sigil-mu,sigil-ren,sigil-gu
@@ -27,6 +29,7 @@ import {
   WAY_ORDER,
   availableActions,
   bloodlineGain,
+  lifeTuning,
   combatAct,
   combatPreview,
   recommendCombatAct,
@@ -44,6 +47,7 @@ import {
   type CombatAct,
   type EndingType,
   type EventChoice,
+  type HuntMode,
   type StalkAct,
   type TaleEvent,
   type TaleState,
@@ -107,6 +111,46 @@ function applyTuneOverrides(spec: string): typeof TALE_CONTENT {
 let CONTENT = TALE_CONTENT;
 let STALK_PLAN: StalkPlan = "patient";
 let COMBAT_PLAN: CombatPlan = "screen";
+let HUNT_PLAN: HuntPlan = "mixed";
+
+/**
+ * [饥饿节奏批] 怎么猎：三种。
+ *
+ * - `mixed`（缺省）＝ 明理玩家：**真饿了才花五次点击追一场**（要的是全额 ＋ 食余），
+ *   只是垫一顿就走速猎那条快路；穴里还有余粮时也走快路。
+ * - `stalk`／`quick` ＝ 两个极端，用来量**严格占优**：若「全速猎」在活过 8 岁／成道率上
+ *   压过「全追猎」（或反过来被压死），那两颗按钮就只剩一颗有人按 ——
+ *   这正是交付线第二问要的那个对照，不能靠手感说。
+ */
+type HuntPlan = "mixed" | "stalk" | "quick";
+
+/**
+ * 机器玩家怎么选狩猎打法 —— **只读屏幕上有的东西**（饱食、食余），
+ * 同 `decideStalk`／`screenCombat` 的纪律：不许用真人拿不到的信息。
+ */
+function decideHuntMode(state: TaleState): HuntMode {
+  if (HUNT_PLAN !== "mixed") return HUNT_PLAN;
+  /*
+   * 「值不值得花五次点击」这道题，明理玩家的答案是一句算得出来的话：
+   * **一整头猎物装不装得下**。饱食有上限（100），一次追猎得手 +32 —— 肚子已经 70 的时候
+   * 去追一场，溢出的那部分连同食余一起白扔；那正是速猎（一次点击、只取六成半）的用武之地。
+   * 反过来，真有地方装的时候，五次点击换回来的是全额 ＋ 整份精气 ＋ 几季余粮，没有道理不追。
+   *
+   * ⚠️ 这条判据换过**两次**，两次都是「先怀疑机器玩家」（同 P1／S2）：
+   * ① 第一版「饱食 ≤40 才追，否则速猎」：把狩猎占行动比从 42.5% 顶到 50%、平均蜕变
+   *    从 2.91 掉到 2.11 —— 速猎的期望净收益只有 +3，一顿垫不了几季，机器于是原地踏步式
+   *    地反复出猎。
+   * ② 第二版「≤35 才追」：同一个毛病，速猎占到八成，蜕变仍不达标（cautious 1.85 ✗）。
+   * 真正的错在于**把速猎当成常规饭票**。它不是 —— 它是「装不下」与「只想要一条命」
+   * （妖王刷夺命）这两种局面的工具。判据从 tuning 推而不写死 65：数值改了它得跟着改。
+   */
+  // **这一世生效的**调参：大旱之年每季多饿 3，而「还够几季」正是按季耗算的 ——
+  // 读 `CONTENT.tuning` 会让机器玩家在天时改过饱食的那些一世里算错自己的存粮
+  // （引擎与界面的硬纪律就是「凡读调参一律走 `lifeTuning`」，实验台不该破例）。
+  const t = lifeTuning(state, CONTENT);
+  const runway = (state.hunger + state.surplusSeasons * t.huntSurplusGain) / Math.max(1, t.hungerPerSeason);
+  return runway <= 3 ? "stalk" : "quick";
+}
 
 /**
  * 抉择策略。四种画像，因为「平衡」对不同玩法是不同的数：
@@ -130,6 +174,8 @@ interface Args {
   lab: "stalk" | "combat" | null;
   stalkPlan: StalkPlan;
   combatPlan: CombatPlan;
+  /** [饥饿节奏批] 怎么猎（见 `HuntPlan`）—— `stalk`／`quick` 两个极端是严格占优检查 */
+  huntPlan: HuntPlan;
   /**
    * [S3] 每一世带上的「世家印记」id（`--sigils`）。
    *
@@ -155,6 +201,7 @@ function parseArgs(argv: readonly string[]): Args {
     lab: null,
     stalkPlan: "patient",
     combatPlan: "screen",
+    huntPlan: "mixed",
     sigilIds: [],
     chartedDestinationId: null,
   };
@@ -181,6 +228,15 @@ function parseArgs(argv: readonly string[]): Args {
         throw new Error(`--combat-plan 只能是 ${COMBAT_PLANS.join("｜")}`);
       }
       args.combatPlan = value as CombatPlan;
+      i += 1;
+      continue;
+    }
+    if (flag === "--hunt-plan") {
+      const value = argv[i + 1];
+      if (value !== "mixed" && value !== "stalk" && value !== "quick") {
+        throw new Error("--hunt-plan 只能是 mixed｜stalk｜quick");
+      }
+      args.huntPlan = value;
       i += 1;
       continue;
     }
@@ -284,6 +340,14 @@ interface LifeSummary {
   steps: number;
   /** 决策次数：事件抉择／行动选择／战斗指令／追猎指令，分别有不同的思考成本 */
   decisions: { event: number; action: number; combat: number; stalk: number };
+  /**
+   * [饥饿节奏批] 这一世点了多少次鼠标 —— owner 的原话是「要经常点击狩猎」，
+   * 而「经常」只有落成一个数才调得动。四类决策各算一次点击（追猎屏的每一息也是一次点击，
+   * 那正是这一批要压下来的那一项）。
+   */
+  clicks: number;
+  /** [饥饿节奏批] 行动分布：`hunt`／`hunt:quick`／`explore`／`rest`／`dormant` 各点了几次 */
+  actionMix: Record<string, number>;
   /** 追猎场次与得手数（M1-P1 的核心手感指标） */
   hunts: number;
   caught: number;
@@ -338,7 +402,23 @@ function decideAction(
     if (hurt && restsThisInjury < 2) return "rest";
     return "explore";
   }
-  if (state.hunger <= 50) return "hunt";
+  /*
+   * [饥饿节奏批] 「饿了就猎」改成**按还够几季算**（`runway`），而不是死盯饱食那一个数。
+   *
+   * 这一条与屏幕上写的是同一个量：饱食详情里那一行「以每季 −12 算，还够 N 季」，
+   * 食余那一行又写着「此后 N 季每季自动 +9」—— 一个看得懂这两行的玩家算的就是这个和。
+   *
+   * ⚠️ 换过两版，两次都是「先怀疑机器玩家」（同 P1／S2）：
+   * ① 原版单一门槛「饱食 ≤50 就猎」在食余落地后会**在自己的余粮窗口里反复出猎**；
+   * ② 第二版「有余粮就等到 ≤30」矫枉过正 —— 余粮每季只补 6〜9 点而季耗是 12，
+   *    净额仍是负的，等到 30 才动手会把一批一世饿死在余粮吃完的那一季
+   *    （实测活过 8 岁掉到 55〜57%）。runway 把两件事算进同一个数，不必再拍门槛。
+   * 4 季这个数就是原来的 ≤50（50 ÷ 12 ≈ 4.2 季），换算过来的，不是新调的。
+   */
+  // 同 `decideHuntMode`：这一世生效的调参，不是内容库的基线
+  const t = lifeTuning(state, CONTENT);
+  const runway = (state.hunger + state.surplusSeasons * t.huntSurplusGain) / Math.max(1, t.hungerPerSeason);
+  if (runway <= 4) return "hunt";
   if (hurt && restsThisInjury < 2) return "rest";
   // 妖王要夺命数：肚子不饿也照猎（那是它唯一稳定的夺命来源）
   if (way === "yaowang") return roll() < 0.75 ? "hunt" : "explore";
@@ -649,6 +729,7 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
   let steps = 0;
   let restsThisInjury = 0;
   const decisions = { event: 0, action: 0, combat: 0, stalk: 0 };
+  const actionMix: Record<string, number> = {};
   let hunts = 0;
   let caught = 0;
   const chars: CharCount = { prose: 0, options: 0, chronicle: 0 };
@@ -681,13 +762,18 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     );
     if (action === "rest") restsThisInjury += 1;
     decisions.action += 1;
+    const huntMode = action === "hunt" ? decideHuntMode(state) : null;
+    actionMix[huntMode === "quick" ? "hunt:quick" : action] =
+      (actionMix[huntMode === "quick" ? "hunt:quick" : action] ?? 0) + 1;
     const turn = performAction(
       state,
       action,
       CONTENT,
       action === "explore"
         ? { destinationId: decideDestination(state, profile, roll, waySought) }
-        : undefined,
+        : huntMode !== null
+          ? { huntMode }
+          : undefined,
     );
     chars.prose += turn.notices.join("").length;
     state = turn.state;
@@ -721,6 +807,8 @@ function runLife(seed: number, profile: Profile, index = 0): LifeSummary {
     Object.fromEntries(progress.ways.map((way) => [way.id, pick(way)])) as Record<WayId, T>;
   return {
     decisions,
+    clicks: decisions.event + decisions.action + decisions.combat + decisions.stalk,
+    actionMix,
     chars,
     hunts,
     caught,
@@ -1129,6 +1217,7 @@ function main(): number {
   if (args.tune !== null) CONTENT = applyTuneOverrides(args.tune);
   STALK_PLAN = args.stalkPlan;
   COMBAT_PLAN = args.combatPlan;
+  HUNT_PLAN = args.huntPlan;
   SIGIL_IDS = args.sigilIds;
   CHARTED_DESTINATION = args.chartedDestinationId;
   if (args.lab === "combat") return runCombatLab(args.lives);
@@ -1196,6 +1285,40 @@ function main(): number {
       minutesMid: Math.round(mean(lives.map((life) => estimateMinutes(life, "mid")))),
       minutesFast: Math.round(mean(lives.map((life) => estimateMinutes(life, "fast")))),
       minutesMidP90: Math.round(quantile(lives.map((life) => estimateMinutes(life, "mid")), 0.9)),
+    },
+    /**
+     * [饥饿节奏批] 点击账 —— owner 的原话「饿得太快，要经常点击狩猎」的可量版。
+     *
+     * 三个数各回答一句话：
+     * - `perLife`：一世总共要点多少次（追猎屏的每一息都算，那正是它贵在哪儿）；
+     * - `huntShare`：**行动里有几成是去猎食**（不含追猎屏内部的点击 —— 那是「一次狩猎多贵」，
+     *   由 `stalkClicks` 报）。这一项是 owner 那句话最直接的落点；
+     * - `stalkEntries`：一世进了几次追猎屏。它与 `huntShare` 不是同一件事：速猎也算一次狩猎行动，
+     *   但**不进那一屏** —— 两个数分开，才看得出「少猎了」还是「猎得更省了」。
+     */
+    clicks: {
+      perLife: Math.round(mean(lives.map((life) => life.clicks))),
+      stalkClicks: Math.round(mean(lives.map((life) => life.decisions.stalk))),
+      actionClicks: Math.round(mean(lives.map((life) => life.decisions.action))),
+      stalkEntries: Math.round(mean(lives.map((life) => life.hunts)) * 10) / 10,
+      huntShare: pct(
+        lives.reduce(
+          (sum, life) => sum + (life.actionMix["hunt"] ?? 0) + (life.actionMix["hunt:quick"] ?? 0),
+          0,
+        ),
+        lives.reduce((sum, life) => sum + life.decisions.action, 0),
+      ),
+      quickShare: pct(
+        lives.reduce((sum, life) => sum + (life.actionMix["hunt:quick"] ?? 0), 0),
+        lives.reduce(
+          (sum, life) => sum + (life.actionMix["hunt"] ?? 0) + (life.actionMix["hunt:quick"] ?? 0),
+          0,
+        ),
+      ),
+      restShare: pct(
+        lives.reduce((sum, life) => sum + (life.actionMix["rest"] ?? 0), 0),
+        lives.reduce((sum, life) => sum + life.decisions.action, 0),
+      ),
     },
     eventCoverage: `${fired.size}/${EVENTS.length}`,
     missingEvents: missing,
@@ -1298,6 +1421,11 @@ function main(): number {
   console.log(`蜕变分布：${JSON.stringify(report.molts.histogram)}`);
   console.log(`一世回合数：均 ${report.turnsPerLife.mean}　列传字数：均 ${report.chronicleChars.mean}`);
   console.log(
+    `点击账：一世 ${report.clicks.perLife} 次（行动 ${report.clicks.actionClicks} ＋追猎屏 ${report.clicks.stalkClicks} ＋事件/战斗）　` +
+      `狩猎占行动 ${report.clicks.huntShare}%（其中速猎 ${report.clicks.quickShare}%）　休憩占 ${report.clicks.restShare}%　` +
+      `进追猎屏 ${report.clicks.stalkEntries} 次/世`,
+  );
+  console.log(
     `一世阅读量：正文 ${report.reading.proseChars} 字 ＋抉择 ${report.reading.optionChars} 字 ＋列传 ${report.reading.chronicleChars} 字；` +
       `决策 事件 ${report.reading.eventDecisions}／行动 ${report.reading.actionDecisions}／战斗 ${report.reading.combatDecisions}`,
   );
@@ -1340,6 +1468,20 @@ function main(): number {
   );
   console.log(`事件覆盖：${report.eventCoverage}　未触发：${report.missingEvents.join("、") || "无"}`);
   for (const [name, ok] of Object.entries(report.targets)) console.log(`${ok ? "✓" : "✗"} ${name}`);
+  /*
+   * [饥饿节奏批] **`--hunt-plan` 的两个极端是对照跑，不是护栏跑**，所以不吃退出码。
+   *
+   * 理由：全速猎那一档的平均蜕变（实测 1.16〜1.95）本来就低于「2〜4」——那正是这条快路径
+   * 该付的价钱，是**结论**不是回归。而 `tuning.ts` 的复核指令写着这三条命令「缺一不可」，
+   * 若这一档恒返 1，下一个照着跑的人会把一个设计使然的取舍读成红灯。
+   * 护栏按缺省玩法（`mixed`）判 —— 那是「一个明理玩家真的会怎么玩」。
+   */
+  if (args.huntPlan !== "mixed") {
+    console.log(
+      `（--hunt-plan ${args.huntPlan} 是**对照跑**：上面几条判据按缺省玩法 mixed 设的，这一档只看数、不判红绿）`,
+    );
+    return 0;
+  }
   return Object.values(report.targets).every(Boolean) ? 0 : 1;
 }
 

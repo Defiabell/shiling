@@ -327,6 +327,22 @@
   text-align: right;
 }
 
+/*
+ * [饥饿节奏批] 食余小牌：贴在饱食条右边，赭金（与秘藏同色系 —— 都是「攒下来的东西」），
+ * 不抢朱砂（那是告警色）。只有有余粮时才渲染，所以不留空位。
+ */
+.hunger__surplus {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+  color: var(--gold);
+  border: 1px solid rgba(232, 180, 95, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  opacity: 0.9;
+}
+
 .hunger.is-critical .hunger__fill {
   background: linear-gradient(90deg, #6d1c10, var(--cinnabar-lt) 92%);
   box-shadow: 0 0 14px -2px rgba(226, 105, 76, 0.85);
