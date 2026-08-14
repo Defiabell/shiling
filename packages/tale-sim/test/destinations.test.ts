@@ -27,6 +27,9 @@ import {
 import {
   DEST_FAR,
   DEST_NEAR,
+  ENEMY_QIONG_QI,
+  ENEMY_YE_ZHI,
+  FIXTURE_DESTINATIONS,
   FIXTURE_SEED_ID,
   NEAR,
   ORGAN_JI_ZU,
@@ -173,6 +176,54 @@ describe("遇袭：本季没撞上事才掷，且只摇此地的兽", () => {
     expect(after.state.combat?.enemyId).toBe("qiong-qi-you");
     expect(after.notices.join("")).toContain("远地");
     expect(after.notices.join("")).toContain("穷奇幼崽");
+  });
+
+  /**
+   * **多头兽的加权挑选真的按权重走**（不是恒取第一头）。
+   *
+   * 这一条是 code-reviewer 指出的覆盖缺口：上面几条都把概率钉成 0 或 1，而 fixture 的
+   * `DEST_FAR` 只有一头兽 —— 于是 `weightedPick(cursor, destination.denizens, ...)`
+   * 那一行**从来没有在「多头且权重不同」的局面下跑过**，而真内容里有三处是那样
+   * （古祠／秘窟／焦原）。一次把权重表写反（或按 id 排序）不会有任何测试变红。
+   *
+   * 判据是分布而不是某一次的结果：同一份 content 换 200 个种子，两头都摇得出来，
+   * 且**权重大的那一头明显更多**。这样它抓得到「恒取第一头」「权重反了」两类错。
+   */
+  it("多头兽按权重摇（不是恒取第一头，也不是等概率）", () => {
+    const TWO = contentWithoutEvents({
+      destinations: FIXTURE_DESTINATIONS.map((destination) =>
+        destination.id === DEST_FAR
+          ? {
+              ...destination,
+              denizens: [
+                { enemyId: ENEMY_QIONG_QI, weight: 80 },
+                { enemyId: ENEMY_YE_ZHI, weight: 20 },
+              ],
+            }
+          : destination,
+      ),
+      tuning: {
+        explorePeril: {
+          calm: { ambushChance: 1, travelCost: 0, eventMul: 1 },
+          wary: { ambushChance: 1, travelCost: 6, eventMul: 1 },
+          grim: { ambushChance: 1, travelCost: 0, eventMul: 1 },
+        },
+      },
+    });
+    const counts = new Map<string, number>();
+    for (let seed = 0; seed < 200; seed += 1) {
+      const swift = withOrgans(life(TWO, seed * 7919 + 13), ORGAN_JI_ZU);
+      const enemyId = performAction(swift, "explore", TWO, { destinationId: DEST_FAR })
+        .state.combat?.enemyId;
+      if (enemyId) counts.set(enemyId, (counts.get(enemyId) ?? 0) + 1);
+    }
+    const heavy = counts.get(ENEMY_QIONG_QI) ?? 0;
+    const light = counts.get(ENEMY_YE_ZHI) ?? 0;
+    expect(heavy + light).toBe(200);
+    // 两头都摇得出来（不是恒取第一头）
+    expect(light, "轻的那一头一次都没摇到").toBeGreaterThan(0);
+    // 且重的那一头明显更多（权重反了会让这条红）
+    expect(heavy).toBeGreaterThan(light * 2);
   });
 
   it("撞上事件那一季不掷遇袭（事件卡与搏杀屏占同一块舞台）", () => {

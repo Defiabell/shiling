@@ -40,8 +40,55 @@ GATES = {
 }
 
 
+# 各处**专属**事件的 id（`trigger.destinations` 声明了该处的那些）。
+#
+# 为什么要这张表：不声明 `actions` 的季候事件（「秋实」「孤影过冬」）在任何一处探索之后都
+# 可能撞上 —— 它们**确实**是那一处会看到的东西，但它们不回答「这一处读起来是不是另一个
+# 地方」。报告里两者分开列，判据只看专属那一半。
+PLACE_POOLS: dict[str, tuple[str, ...]] = {
+    "dest-shou-jing": (
+        "qiu-explore-spring", "qiu-explore-yinglong", "qiu-explore-mushroom",
+        "qiu-explore-fog-woods", "qiu-explore-hermit", "qiu-explore-cicada",
+        "qiu-explore-firefly", "qiu-explore-crow-omen", "qiu-explore-empty-nest",
+        "qiu-path-worn",
+    ),
+    "dest-xian-feng": (
+        "qiu-explore-baize", "qiu-explore-mulberry", "qiu-explore-stone-forest",
+        "qiu-feng-eyrie", "qiu-feng-gap", "qiu-feng-cloud-root",
+    ),
+    "dest-gu-ci": (
+        "qiu-explore-stele", "qiu-explore-altar", "qiu-explore-fox-grave",
+        "qiu-ci-incense", "qiu-ci-clay-figure", "qiu-ci-slips",
+    ),
+    "dest-you-tan": (
+        "qiu-explore-waterfall", "qiu-explore-mirror-pool",
+        "qiu-tan-sunken", "qiu-tan-scale-drift", "qiu-tan-no-bottom", "qiu-tan-heart-pearl",
+    ),
+    "dest-mi-ku": (
+        "qiu-explore-cave", "qiu-explore-mang-den",
+        "qiu-ku-blind-fish", "qiu-ku-stone-teat", "qiu-ku-old-mark", "qiu-ku-earth-marrow",
+    ),
+    "dest-jiao-yuan": (
+        "qiu-explore-thunder-tree", "qiu-explore-yinglong",
+        "qiu-yuan-ash-egg", "qiu-yuan-unburnt", "qiu-yuan-great-bones", "qiu-yuan-thunder-marrow",
+    ),
+}
+
+
 def snap(page: Page) -> dict:
-    return page.evaluate("() => JSON.parse(JSON.stringify(window.__tale.snapshot()))")
+    """
+    读调试快照。
+
+    ⚠️ 必须容忍「读的时候页面正在导航」：`start_life` 会 `goto`，而上一世的循环可能刚好
+    在那一刻还在读 —— Playwright 会抛「Execution context was destroyed」。撞上就当这一帧
+    读不到（返回空），下一轮自然会重来。这与 `click_first` 容忍句柄失效是同一回事。
+    """
+    for _ in range(3):
+        try:
+            return page.evaluate("() => JSON.parse(JSON.stringify(window.__tale.snapshot()))")
+        except Exception:
+            page.wait_for_timeout(200)
+    return {}
 
 
 def life_state(page: Page) -> dict | None:
@@ -49,9 +96,20 @@ def life_state(page: Page) -> dict | None:
     return snap(page).get("state")
 
 
+def safe_eval(page: Page, script: str):
+    """同 `snap` 的理由：导航中读 DOM 会抛，撞上就当这一帧读不到。"""
+    for _ in range(3):
+        try:
+            return page.evaluate(script)
+        except Exception:
+            page.wait_for_timeout(200)
+    return None
+
+
 def dest_screen(page: Page) -> dict:
     """把行动面板上玩家真的看得见的字抄下来（三颗行动 ＋ 一排去处）。"""
-    return page.evaluate(
+    return safe_eval(
+        page,
         """() => {
           const q = (sel) => document.querySelector(sel);
           const dests = [...document.querySelectorAll('[data-dest]')].map((n) => ({
@@ -77,13 +135,14 @@ def dest_screen(page: Page) -> dict:
             })),
             dests,
           };
-        }"""
-    )
+        }""",
+    ) or {"caption": None, "actions": [], "dests": []}
 
 
 def event_card(page: Page) -> dict | None:
     """事件卡上的全文（标题／正文／每颗抉择的字）。"""
-    return page.evaluate(
+    return safe_eval(
+        page,
         """() => {
           const card = document.querySelector('.card--event');
           if (!card) return null;
@@ -101,7 +160,8 @@ def event_card(page: Page) -> dict | None:
 
 def treasure_overlay(page: Page) -> dict | None:
     """秘藏揭示演出上的字（没在播则 None）。"""
-    return page.evaluate(
+    return safe_eval(
+        page,
         """() => {
           const card = document.querySelector('.treasure__card');
           if (!card) return null;
@@ -120,7 +180,8 @@ def treasure_overlay(page: Page) -> dict | None:
 
 def places_codex(page: Page) -> dict:
     """转世屏上的「山川」那一段。"""
-    return page.evaluate(
+    return safe_eval(
+        page,
         """() => ({
           caption: document.querySelector('[data-place-count]')?.textContent ?? null,
           rows: [...document.querySelectorAll('[data-place]')].map((n) => ({
@@ -132,15 +193,27 @@ def places_codex(page: Page) -> dict:
             treasure: n.querySelector('.place__treasure')?.textContent ?? '',
           })),
           html: document.querySelector('.screen--seed')?.innerHTML ?? '',
-        })"""
-    )
+        })""",
+    ) or {"caption": None, "rows": [], "html": ""}
+
+
+def has(page: Page, selector: str) -> bool:
+    """页面上有没有这个元素（导航中读会抛，当作「没有」）。"""
+    try:
+        return page.query_selector(selector) is not None
+    except Exception:
+        return False
 
 
 def click_first(page: Page, selectors: list[str], wait: int = 300) -> bool:
     """点第一个能点的按钮（容忍整屏重建导致的句柄失效，同 skills.py）。"""
     for selector in selectors:
         for _ in range(3):
-            button = page.query_selector(selector)
+            try:
+                button = page.query_selector(selector)
+            except Exception:
+                page.wait_for_timeout(160)
+                continue
             if button is None:
                 break
             try:
@@ -193,7 +266,11 @@ def audit_dests(view: dict, violations: list[dict]) -> None:
             violations.append({"id": dest["id"], "why": f"没写这一季的饱食账：{facts}"})
         if dest["disabled"] and not dest["lock"]:
             violations.append({"id": dest["id"], "why": "置灰却没说为什么"})
-        if dest["lock"] and "需 " not in dest["lock"] and "先了此事" not in dest["lock"]:
+        # 置灰的理由分两种，措辞不同、对玩家的下一步也不同：
+        #   门槛未达 → 必须写「需 <器官名>」（那是一件可以去做的事）
+        #   全局不可行（战斗中／已死／未结算的事件卡）→ 一句就够（此刻做什么都不行）
+        global_reasons = ("先了此事", "战事未了", "已　殁", "此刻不可行")
+        if dest["lock"] and "需 " not in dest["lock"] and dest["lock"] not in global_reasons:
             violations.append({"id": dest["id"], "why": f"置灰的理由没写清缺什么：{dest['lock']}"})
 
 
@@ -202,25 +279,27 @@ def step_forward(page: Page, violations: list[dict]) -> str:
     if treasure_overlay(page) is not None:
         click_first(page, [".treasure__confirm"], 400)
         return "treasure"
-    if page.query_selector(".synergy__card") is not None:
+    if has(page, ".synergy__card"):
         click_first(page, [".synergy__confirm"], 400)
         return "synergy"
     if click_first(page, [".molt__confirm"], 500):
         return "molt"
-    if page.query_selector(".card--combat") is not None:
+    if has(page, ".card--combat"):
         if click_first(page, [".cact.is-hot:not([disabled])", '[data-combat="bite:throat"]:not([disabled])']):
             return "combat"
-    if page.query_selector(".card--stalk") is not None:
+    if has(page, ".card--stalk"):
         if click_first(page, [".sact.is-hot:not([disabled])", '[data-stalk="pounce"]:not([disabled])']):
             return "stalk"
-    if page.query_selector(".card--event") is not None:
-        buttons = page.query_selector_all(".choice:not([disabled])")
-        if buttons:
-            buttons[0].click()
-            page.wait_for_timeout(300)
+    if has(page, ".card--event"):
+        # 走 `click_first`（它容忍句柄失效）而不是自己 click：整屏每一步都重建，
+        # 直接点拿到的句柄迟早撞上「Element is not attached to the DOM」
+        if click_first(page, [".choice:not([disabled])"], 300):
             return "event"
     if click_first(page, ["[data-continue]:not([disabled])"], 900):
         return "continue"
+    # 死亡之后还有两屏：列传卷轴（`[data-reincarnate]`）→ 择神种
+    if click_first(page, ["[data-reincarnate]:not([disabled])"], 900):
+        return "reincarnate"
     return "idle"
 
 
@@ -231,7 +310,7 @@ def audit_now(page: Page, violations: list[dict]) -> None:
     `busy` 那几帧要跳过：演出播放期间整排按钮都被禁用（防连点），此时「置灰却没说为什么」
     是必然的，而它不是缺陷 —— 那一刻玩家本来就不该点。第一版没跳，收上来 399 条全是这个。
     """
-    if page.query_selector("[data-dest]") is None:
+    if not has(page, "[data-dest]"):
         return
     if snap(page).get("busy"):
         return
@@ -247,9 +326,11 @@ def play_one_turn(page: Page, dest_id: str, violations: list[dict]) -> str:
     （P1 那条教训：先怀疑机器玩家）。
     """
     state = life_state(page)
-    if state is not None and page.query_selector("[data-dest]") is not None:
+    if state is not None and has(page, "[data-dest]"):
         audit_now(page, violations)
-        if state.get("hunger", 100) <= 45:
+        # 深处的路费是 12（绝境）—— 饿着去等于送死，所以门槛比常路高一档
+        floor = 45 if dest_id in ("dest-shou-jing",) else 62
+        if state.get("hunger", 100) <= floor:
             if click_first(page, ['[data-action="hunt"]:not([disabled])'], 340):
                 return "hunt"
         if click_first(page, [f'[data-dest="{dest_id}"]:not([disabled])'], 340):
@@ -261,7 +342,7 @@ def play_one_turn(page: Page, dest_id: str, violations: list[dict]) -> str:
 
 def explore_at(page: Page, dest_id: str, violations: list[dict]) -> bool:
     """去某一处探一季（若那颗按钮此刻点不了就返回 False）。"""
-    if page.query_selector("[data-dest]") is None:
+    if not has(page, "[data-dest]"):
         return False
     audit_now(page, violations)
     return click_first(page, [f'[data-dest="{dest_id}"]:not([disabled])'], 360)
@@ -292,7 +373,7 @@ def probe_choice_screen(page: Page, seed: int, out: Path, shots: list[str],
 
 
 def collect_events(page: Page, seed: int, dest_id: str, organs: list[str], want: int,
-                   violations: list[dict], max_turns: int = 90) -> list[dict]:
+                   violations: list[dict], max_turns: int = 170) -> list[dict]:
     """
     在某一处反复探索，把撞上的事件卡全文抄下来。
 
@@ -300,17 +381,29 @@ def collect_events(page: Page, seed: int, dest_id: str, organs: list[str], want:
     饿死就换个种子重开，继续在同一处收集。
     """
     seen: dict[str, dict] = {}
-    for attempt in range(6):
+    for attempt in range(8):
         start_life(page, seed + attempt * 101, organs=organs)
+        just_explored = False
         for _ in range(max_turns):
-            if len(seen) >= want:
+            if sum(1 for item in seen.values() if item["placeOnly"]) >= want:
                 return list(seen.values())
-            card = event_card(page)
-            if card is not None:
-                event_id = snap(page).get("pendingEventId")
-                if event_id and event_id not in seen:
-                    seen[event_id] = {"id": event_id, **card}
-            if play_one_turn(page, dest_id, violations) == "idle":
+            # **只收刚在目标去处探完那一步撞上的事件**。
+            #
+            # 第一版收了所有事件卡，于是狩猎事件（这个玩家饿了就猎）与不限行动的季候事件
+            # 全混进来了 —— 那份清单没法回答「那一处读起来是不是另一个地方」。
+            if just_explored:
+                card = event_card(page)
+                if card is not None:
+                    event_id = snap(page).get("pendingEventId")
+                    if event_id and event_id not in seen:
+                        seen[event_id] = {
+                            "id": event_id,
+                            "placeOnly": event_id in PLACE_POOLS.get(dest_id, ()),
+                            **card,
+                        }
+            move = play_one_turn(page, dest_id, violations)
+            just_explored = move == "explore"
+            if move == "idle":
                 break
     return list(seen.values())
 
@@ -376,10 +469,10 @@ def main() -> None:
 
         # 山川图鉴：跑到转世屏
         for _ in range(400):
-            if page.query_selector(".screen--seed") is not None:
+            if has(page, ".screen--seed"):
                 break
             play_one_turn(page, "dest-shou-jing", violations)
-        if page.query_selector(".screen--seed") is not None:
+        if has(page, ".screen--seed"):
             codex = places_codex(page)
             page.screenshot(path=str(OUT / "codex-places.png"), full_page=True)
             shots.append("codex-places.png")
