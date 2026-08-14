@@ -15,8 +15,8 @@
 运行前先自己起 dev server（**别 pkill 已有的**）：
     packages/tale-client $ ../../node_modules/.bin/vite --port 5174 --strictPort
 
-用法：
-    python packages/tale-client/e2e/legibility.py [输出目录] [种子]
+用法（参数顺序同 bestiary.py）：
+    python packages/tale-client/e2e/legibility.py [输出目录] [种子] [端口]
 """
 
 from __future__ import annotations
@@ -27,13 +27,15 @@ from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
-BASE = "http://localhost:5174/"
 VIEWPORT = {"width": 1440, "height": 900}
 SETTLE_MS = 620
 MAX_STEPS = 900
 
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "screenshots/legibility").resolve()
 SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 20260812
+# 端口可传（同 bestiary.py）：5174 常被别的 session 的 dev server 占着，**不要去杀它**
+PORT = sys.argv[3] if len(sys.argv) > 3 else "5174"
+BASE = f"http://localhost:{PORT}/"
 
 
 class Shots:
@@ -126,20 +128,32 @@ def sheet_text(page: Page) -> dict:
 
 
 def layout_check(page: Page) -> dict:
-    """按钮有没有被挤出视口／被浮层压住（P1/P2 各踩过一次的那件事）。"""
+    """按钮有没有被挤出**可达范围**／被浮层压住（P1/P2 各踩过一次的那件事）。
+
+    [2026-08-14 矮窗口修复] 判据从「在视口里」放宽成「在整壳的可滚范围里」：主界面
+    （`.play`）现在自己是滚动容器 —— 中央故事卡按内容排版、谁也不许裁它，纵向预算不够时
+    让步的是「一屏放得下」这件事，行动与去处滚一下就够得到（见 `styles/screens.css`
+    `.play` 的注释与 `e2e/layout.py` 的视口矩阵）。所以「在折线以下」不再等于「按钮消失」，
+    但「滚到底也够不到」「被浮层压住」「横向溢出」仍然是缺陷，判据只收紧不放松。
+    """
     return page.evaluate(
         """() => {
-          const vw = window.innerWidth, vh = window.innerHeight;
+          const shell = document.querySelector('.play');
+          const vw = window.innerWidth;
           const sheet = document.querySelector('.dsheet');
           const sr = sheet ? sheet.getBoundingClientRect() : null;
           const targets = [...document.querySelectorAll('[data-action], [data-choice], [data-stalk], [data-combat], [data-continue]')];
           const offscreen = [], covered = [];
+          // 整壳当前的可滚范围（换算成视口坐标）：往上还能滚 scrollTop、往下还能滚剩余量
+          const up = shell ? shell.scrollTop : 0;
+          const down = shell ? shell.scrollHeight - shell.clientHeight - shell.scrollTop : 0;
           for (const n of targets) {
             const r = n.getBoundingClientRect();
             const id = n.getAttribute('data-action') || n.getAttribute('data-choice')
                      || n.getAttribute('data-stalk') || n.getAttribute('data-combat') || 'continue';
             if (r.width === 0 || r.height === 0) continue;
-            if (r.bottom > vh + 1 || r.top < -1 || r.right > vw + 1 || r.left < -1) {
+            const reachable = r.top >= -up - 1 && r.bottom <= window.innerHeight + down + 1;
+            if (!reachable || r.right > vw + 1 || r.left < -1) {
               offscreen.push({ id, top: Math.round(r.top), bottom: Math.round(r.bottom) });
             }
             if (sr && !(r.right < sr.left || r.left > sr.right || r.bottom < sr.top || r.top > sr.bottom)) {
@@ -151,10 +165,8 @@ def layout_check(page: Page) -> dict:
             offscreen,
             covered,
             bodyScrollX: doc.scrollWidth > doc.clientWidth,
-            stageOverflow: (() => {
-              const s = document.querySelector('.stage');
-              return s ? s.scrollHeight > s.clientHeight + 2 : false;
-            })(),
+            shellScrollX: shell ? shell.scrollWidth > shell.clientWidth + 1 : false,
+            shellScroll: shell ? { top: Math.round(shell.scrollTop), h: shell.scrollHeight, client: shell.clientHeight } : null,
           };
         }"""
     )
@@ -301,7 +313,7 @@ def play(page: Page, shots: Shots) -> dict:
 
     for _ in range(MAX_STEPS):
         issues = layout_check(page)
-        if issues["offscreen"] or issues["covered"] or issues["bodyScrollX"]:
+        if issues["offscreen"] or issues["covered"] or issues["bodyScrollX"] or issues["shellScrollX"]:
             report["layoutIssues"].append({"turn": turns, "center": snap(page)["center"], **issues})
 
         if page.query_selector(".molt__card"):
@@ -352,15 +364,17 @@ def play(page: Page, shots: Shots) -> dict:
                 note_guide()
                 continue
 
-        if state["center"] == "stalk":
-            shots.once("stalk-fullscreen")
-            page.click(f'[data-stalk="{hot_or(page, ".sact", "data-stalk", "pounce")}"]')
-            page.wait_for_timeout(200)
-            continue
-
-        if state["center"] == "combat":
-            shots.once("combat-fullscreen")
-            page.click(f'[data-combat="{hot_or(page, ".cact", "data-combat", "bite:throat")}"]')
+        # [2026-08-14] 快照里追猎与搏杀是**同一个** kind（`encounter`），分不分得开看屏上是哪排按钮。
+        # 这两支原先写的是 `center == "stalk"`／`"combat"` —— 自遭遇合并成一个 kind 起就再也没进过，
+        # 于是脚本每次撞到遭遇都会走到「行动全灰 → 没有可点的目标 → break」，最后卡在等转世按钮
+        # 上超时（跑一次要五分钟才发现）。修的是脚本，不是界面。
+        if state["center"] == "encounter":
+            if page.query_selector("[data-stalk]"):
+                shots.once("stalk-fullscreen")
+                page.click(f'[data-stalk="{hot_or(page, ".sact", "data-stalk", "pounce")}"]')
+            else:
+                shots.once("combat-fullscreen")
+                page.click(f'[data-combat="{hot_or(page, ".cact", "data-combat", "bite:throat")}"]')
             page.wait_for_timeout(200)
             continue
 

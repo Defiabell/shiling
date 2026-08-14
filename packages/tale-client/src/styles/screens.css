@@ -122,16 +122,48 @@
    主界面
    ========================================================================== */
 
+/*
+ * [2026-08-14 矮窗口舞台被压扁] 舞台行的下限从 `0` 改成**卡片本身**，整壳改成滚动容器。
+ *
+ * 病灶：`grid-template-rows: auto minmax(0, 1fr) auto` ＋ `height: 100vh` 让中央舞台成了
+ * **残差** —— 状态栏、引导条、行动面板（四颗行动两行 ＋ 六处去处两行，实测 497px）先各取
+ * 所需，剩下多少舞台才多少，而 `minmax(0, …)` 允许它一路让到零。修复前实测（事件卡在场）：
+ *
+ *     1440×900 → 舞台 116px    1440×820 → 36px    1280×720 → 8px（卡片高度 0）
+ *
+ * 屏幕上就是「故事只剩一条几十像素的细缝」＋ 一排写着「先了此事」的灰按钮 —— 正文与抉择
+ * 全都不在视口里，玩家读出来的是「卡死了」。行动面板那段注释里的纵向预算（258px）是
+ * 1440×900 上量的，那时行动只有三颗一行、去处也还没长成两行 149px 的卡。
+ *
+ * 新纪律 —— **故事卡是主体，永远按自己的高度排版，谁都不许裁它**：
+ *   1. 舞台行 `minmax(min-content, 1fr)`：下限＝卡片自己的内容高度（不再是 0），
+ *      余量够时照旧靠 `1fr` 撑满（宽视口的「一屏放下、卡片居中」原样保留）。
+ *   2. 预算真的不够时，让步的是「一屏放得下」这件事：`.play` 自己成为滚动容器
+ *      （与 `.screen--seed`／`.screen--chronicle` 同一套写法），行动与去处滚一下就够得到。
+ *   3. 顺带解掉「看起来像死锁」：`renderPlay` 每回合整棵重建，新节点的 scrollTop 天然是 0，
+ *      所以每次点击之后玩家一定落回故事卡，而不是停在底部那排灰按钮前。
+ */
 .play {
+  /* 舞台行：下限＝卡片自身高度，有余量才长。`.play--guided` 与窄屏版式共用这一个定义 */
+  --stage-row: minmax(min-content, 1fr);
   display: grid;
   grid-template-columns: minmax(0, 1fr) 302px;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto var(--stage-row) auto;
   grid-template-areas:
     "status status"
     "stage  rail"
     "acts   acts";
   gap: 16px 20px;
   height: 100vh;
+  /*
+   * 纵向：装不下就整壳滚（横向永不滚 —— 卡片与面板都有 max-width，出现横条即是 bug）。
+   * 写成两条 longhand 而不是 `overflow: hidden auto`：这一行是整个版式最承重的一条，
+   * 而双值简写在老引擎上是**整条被丢掉**（退回 `visible` ＝ 不裁也不滚，内容直接溢出到
+   * 一屏之外且够不到）。longhand 没有这条尾巴，代价是零。
+   */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   max-width: 1340px;
   margin: 0 auto;
   padding: 18px 26px 22px;
@@ -421,8 +453,12 @@
 .stage {
   grid-area: stage;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  /*
+   * [2026-08-14] 舞台**自己不再滚**：它一滚，这一格对网格的 min-content 贡献就是 0
+   * （滚动容器的内在尺寸不算内容），舞台行的 `minmax(min-content, 1fr)` 下限也就跟着塌回 0，
+   * 于是卡片重新被压扁 —— 与病灶同一条因果。纵向滚动统一交给整壳（见 `.play`）。
+   */
+  overflow: visible;
   display: flex;
   justify-content: center;
   padding: 2px 4px 6px;
@@ -439,11 +475,13 @@
   max-width: 780px;
   margin: auto 0;
   /*
-   * 卡自身封顶到舞台高度，插图固定、正文与抉择在卡内滚 —— 四个抉择 ＋ 多条门槛提示时
-   * 整卡会超过一屏，此前是**整卡**被舞台裁掉，最后一个抉择连带它的门槛提示一起消失在
-   * 视口外（玩家根本不知道还有第三个选项）。插图钉住 ＋ 内容区滚动是唯一两头都成立的解法。
+   * [2026-08-14] 这里原先是 `max-height: 100%`（卡片封顶到舞台高度，插图钉住、正文与抉择
+   * 在卡内滚）。那一版的前提是「舞台总有几百像素」，而舞台恰恰是被压到零的那一行 ——
+   * 于是封顶把卡片一起压成了细缝。现在**不封顶**：卡片按内容排版，舞台行跟着它长
+   * （`.play` 的 `minmax(min-content, 1fr)`），装不下由整壳滚。它要解的老问题
+   * （四抉择 ＋ 门槛提示超过一屏时末条抉择消失且滚不到）由整壳滚动一并解掉，
+   * 而且不再需要嵌套滚动区。
    */
-  max-height: 100%;
   display: flex;
   flex-direction: column;
   border-radius: var(--r-lg);
@@ -540,10 +578,15 @@
   background: linear-gradient(180deg, rgba(7, 9, 12, 0.34) 0%, rgba(7, 9, 12, 0) 34%, rgba(20, 25, 34, 0.78) 100%);
 }
 
+/*
+ * [2026-08-14] 正文区**不再自己滚**（原为 `overflow-y: auto`）：与 `.stage` 同一条理由 ——
+ * 滚动容器对外不贡献内容高度，卡片的 min-content 就只剩插图那一块，舞台行的下限又塌了。
+ * 事件卡与旁白卡从此按内容排版，超长时由整壳滚（搏杀／追猎卡不走这个类，它们那套
+ * 「日志先让位、指令网格最后让位」的内部收缩规则原样不动）。
+ */
 .card__body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
   padding: 24px 34px 26px;
 }
 
@@ -1307,6 +1350,21 @@
 .rail {
   grid-area: rail;
   min-height: 0;
+  /*
+   * [2026-08-14] 「近事」**不参与舞台行的高度计算**（`contain: size` ＝ 我的高度不由我的
+   * 内容决定，由外面给）。
+   *
+   * 舞台行改成 `minmax(min-content, 1fr)` 之后，这一行的下限是**同一行里所有格子**的内容
+   * 高度 —— 而右栏这条日志和中央卡片在同一行。日志攒到八九条时它自己就有六百多像素，
+   * 于是舞台行被日志撑高，短卡（一句话的抉择结果）在 `margin: auto 0` 的居中里被推到
+   * 折线以下：实测 1200×560，卡片 152px 却落在 y=309，屏上只露得出半句。
+   * 病症与修复前一模一样，只是这次推手从行动面板换成了日志。
+   *
+   * 所以给它 `contain: size`：高度由舞台行（也就是卡片）给，装不下就它自己滚。
+   * 这与这个项目已有的排序一致 —— 日志是**回顾**（滚得到就行），卡片是**当下**。
+   * 单列版式里它自己占一行，那时必须由内容定高，见 ≤1080 那段的 `contain: none`。
+   */
+  contain: size;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1458,9 +1516,18 @@
   gap: 10px;
 }
 
+/*
+ * [2026-08-14] 列数从死钉的 3 列改成自适应。
+ *
+ * 行动早就是四颗（猎／速猎／息／蛰），三列意味着第四颗**必然**自己占一行 ——
+ * 1440×900 实测这一段 157px，其中 79px 是那颗孤零零的「蛰伏」带来的。同一段注释里
+ * 「行动一行 66px」的预算是三颗时代写的。宽屏一行排得下四颗（1440：每颗 ~316px），
+ * 省下来的 79px 直接还给中央舞台与去处那一排 —— 与 `.dests__grid` 同一条 auto-fit 理由：
+ * 列数写死会在别的视口把末尾几颗顶到下一行去。
+ */
 .actions__row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
 
@@ -2610,6 +2677,76 @@
   }
 }
 
+/*
+ * [2026-08-14 矮窗口] 矮窗口下**图先让位** —— 一屏里最贵的东西是字。
+ *
+ * 舞台不再被裁之后（见 `.play`），卡片有多高就占多高；于是插图的高度直接换算成
+ * 「正文与抉择要不要滚才看得见」。实测（1000×480，堆叠版式）：插图按 42vh 出图＝202px，
+ * 卡片 558px，屏上只露得出插图，标题与正文全在折线以下 —— 病症与压扁时一模一样。
+ *
+ *   ≤800px 高：插图收到 26vh（1280×720：274 → 187；1024×768：322 → 200）
+ *   ≤560px 高：整幅收起。480px 高的窗口再留一条 105px 的图，代价就是玩家读不到自己的故事。
+ *
+ * 图并没有被删掉，只是这一档窗口里不摊开：窗口拉高即回来（纯 CSS，无状态）。
+ */
+@media (max-height: 800px) {
+  .card__art {
+    max-height: 26vh;
+  }
+}
+
+@media (min-width: 1100px) and (max-height: 800px) {
+  /* 图文并排：高度给死、宽度由画幅比推出 —— 收的是高度，图仍是整幅不裁 */
+  .card--split .card__art {
+    height: clamp(150px, 26vh, 340px);
+  }
+}
+
+/*
+ * [2026-08-14] 极矮窗口（≤560px 高，owner 那扇 1000×477 就在这一档）：整幅插图收起，
+ * 外围内边距各压一档。
+ *
+ * 收起插图不是「砍内容」而是换算：480px 高的窗口里插图按 42vh 出图＝202px，摊开它等于
+ * 让玩家读不到自己的故事（修复前屏上只露得出图）。窗口拉高图就回来，纯 CSS 无状态。
+ *
+ * 后面这几处内边距是**把最后 40px 抠出来**用的：实测 1000×480，光收起插图之后
+ * 「标题 ＋ 正文 ＋ 第一颗抉择」还差十几像素才落进视口，而「不滚就看得见一颗抉择」
+ * 正是这次报障里「看起来像死锁」那一症的判据（e2e/layout.py 第 ③ 条断言）。
+ * 压的全是间距与标题字号，一个读数、一句正文都没砍。
+ */
+@media (max-height: 560px) {
+  .card__art {
+    display: none;
+  }
+
+  .play {
+    gap: 10px 20px;
+    padding: 10px 22px 14px;
+  }
+
+  .statusbar {
+    padding: 8px 18px;
+  }
+
+  .guide {
+    padding: 6px 14px;
+  }
+
+  .card__body,
+  .card--split .card__body,
+  .card--plain .card__body {
+    padding: 16px 26px 18px;
+  }
+
+  .card__title {
+    font-size: 22px;
+  }
+
+  .card__prose {
+    margin-top: 10px;
+  }
+}
+
 /* — [M1-P2] 卷轴脚上的差距报告：转世按钮旁边那句「你差两件器官」 — */
 
 .chronicle__gap {
@@ -2647,16 +2784,21 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* 登神之路：窄屏改成标题在上、四项在下（横排挤不出四条进度） */
-  .ascend {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
+  /*
+   * [2026-08-14] 这里原本还有一份 `.ascend`／`.ascend__gates` 的窄屏版，整份删掉：
+   * 它被文件末尾那份（四道横带那一段）逐条盖住，是死代码；而那一份现在的断点是 ≤860，
+   * 留着这一份会让 861〜1080 这一档拿到一个「一半窄屏一半宽屏」的杂交版式。
+   */
 
-  .ascend__gates {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
+  /*
+   * 窄屏单列。
+   *
+   * [2026-08-14] 这里原本还改了三处：`.play { height: auto; min-height: 100vh }`、
+   * `body { overflow: auto }`、`.stage { overflow: visible }` —— 也就是「窄屏改成整页滚」。
+   * 那一套现在是**所有宽度**的缺省（`.play` 自己就是滚动容器，见它的注释），三处都已删除。
+   * 留着的话 `.play` 高度变回 auto，滚动容器失效，行动面板又会把舞台挤回残差。
+   * 行数不必重申：基础模板的第二行就是舞台（`--stage-row`），第三、四行按 auto 隐式生成。
+   */
   .play {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
@@ -2664,22 +2806,27 @@
       "stage"
       "rail"
       "acts";
-    height: auto;
-    min-height: 100vh;
   }
 
-  body {
-    overflow: auto;
-  }
-
-  .stage {
-    overflow: visible;
+  /* 单列版式：「近事」自己占一行，必须由内容定高（`contain: size` 会让它塌成 0） */
+  .rail {
+    contain: none;
   }
 
   .rail__list {
     max-height: 200px;
   }
+}
 
+/*
+ * [2026-08-14] 状态栏塌成单列的断点从 ≤1080 收到 ≤860。
+ *
+ * 理由是实测：单列会把「时地／四读数／饱食精气／四道」摞成四段，在 1000px 宽的窗口里量到
+ * **348px** —— 玩家那扇 1000×477 的窗户，光一条状态栏就吃掉七成，故事卡只剩七十来像素露在
+ * 屏上（这次报障的另一半）。而三栏版式在 1000px 宽下只要 156px，且横向绰绰有余
+ * （200 ＋ 读数 ＋ 240 ＋ 两道 24px 间隙 ≈ 740，可用 904）。860 以下才真的排不开。
+ */
+@media (max-width: 860px) {
   .statusbar {
     grid-template-columns: minmax(0, 1fr);
     gap: 14px;
@@ -2857,7 +3004,8 @@
 /* — 首世引导链 —
    占网格里独立的一行（不是浮层）：它要跟着屏幕滚、不遮任何东西。只在非全屏模式渲染。 */
 .play--guided {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  /* 舞台行仍用 `--stage-row`（下限＝卡片本身）—— 引导条多占一行，正是最容易把舞台挤没的一档 */
+  grid-template-rows: auto auto var(--stage-row) auto;
   grid-template-areas:
     "status status"
     "guide  guide"
@@ -2931,7 +3079,8 @@
   /* 窄屏：.play 已改成单列，引导那一行跟着单列排（否则会被自动放到第二列而消失） */
   .play--guided {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto auto;
+    /* 第三行是舞台：仍走 `--stage-row`，别退回 auto（auto 不吃余量，宽视口会在底下留白） */
+    grid-template-rows: auto auto var(--stage-row) auto auto;
     grid-template-areas:
       "status"
       "guide"
@@ -3098,7 +3247,24 @@
    * 机制那一行（`.omens__effect`）与门槛数（`.birthways__gates`）**一个都不许砍** ——
    * 那两样正是这一批要让玩家看到的东西。
    */
-  /* 窄屏退回两层：横向放不下「四颗 tab ＋ 说明 ＋ 门槛」 */
+  .omens {
+    gap: 4px 10px;
+    padding: 9px 11px;
+    margin-top: 10px;
+  }
+
+}
+
+/*
+ * 四道横带退回两层的断点：≤860（原为 ≤1080）。
+ *
+ * [2026-08-14] 与状态栏那条同因同解。两层版式在 1000〜1080 这一档要多吃 ~40px，而这一档
+ * 恰恰是 owner 那扇矮窗口所在的地方 —— 状态栏每高一像素中央舞台就矮一像素（这句是
+ * `.ways` 自己的注释，2026-08-13 写的，那次为它把横带从两层压回一层）。实测 1024 宽下
+ * 横向仍绰绰有余：状态栏内宽 928，四颗 tab ≈300 ＋ 说明与门槛 ≈610，一行排得开。
+ * 真排不开时 `.ways__tabs` 会自己换行、`.ascend__gates` 是 auto-fit —— 退化是平滑的。
+ */
+@media (max-width: 860px) {
   .ways {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
@@ -3122,13 +3288,6 @@
     grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
     gap: 8px;
   }
-
-  .omens {
-    gap: 4px 10px;
-    padding: 9px 11px;
-    margin-top: 10px;
-  }
-
 }
 
 /* ==========================================================================
