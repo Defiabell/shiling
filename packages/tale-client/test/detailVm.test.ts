@@ -376,7 +376,20 @@ describe("蛰伏按钮预览（交付内容 D）", () => {
     const text = moltPreviewText(state, TALE_CONTENT);
     expect(text).toContain(`尚需足之精气 ${T.moltThreshold - 30}`);
     expect(text).toContain("满则蜕一器官");
-    expect(text).toMatch(/猎野雉|猎穴鼠|猎岩羊/);
+    /*
+     * [M2-B3] 原来这一条写死了三个猎物名（猎物表从 4 头扩到 7 头之后，这一句实际报的是
+     * 「猎鹿蜀、野雉可增」—— 内容加了一头兽就把它打红了，而它想测的从来不是名单）。
+     * 改成按语义断言：**它必须点名一头真的产足之精气的猎物**。
+     */
+    const zuPrey = TALE_CONTENT.enemies.filter(
+      (enemy) => TALE_CONTENT.tuning.huntPreyIds.includes(enemy.id) && (enemy.essence.zu ?? 0) > 0,
+    );
+    expect(zuPrey.length).toBeGreaterThan(0);
+    expect(text).toMatch(/^.*猎/);
+    expect(
+      zuPrey.some((enemy) => text.includes(enemy.name)),
+      `「怎么攒」那一句没点名任何一头产足之精气的猎物：${text}`,
+    ).toBe(true);
   });
 
   it("达阈值：报是哪一型、候选偏向哪几件", () => {

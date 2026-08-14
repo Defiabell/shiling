@@ -106,11 +106,40 @@ describe("美术资源接线", () => {
     expect(onDiskNames.filter((name) => !referenced.has(name)), "有图没人引用").toEqual([]);
   });
 
-  it("8 个敌人都有头像（战斗界面按 EnemyDef.id 取图）", () => {
+  /**
+   * [M2-B3] 8 → 21 头。B4 只画了 8 张胸像，十三头新兽**逐个显式**借一张老兽的脸
+   * （`EnemyDef.artId`）。这条断言因此改成「每一头解析之后都在磁盘上」——
+   * 而不是放宽成「有图的才检查」：放宽等于给「新加一头忘了配 artId」留藏身处，
+   * 而那种失效在运行时是静默的（`<img>` 加载失败不报错，玩家只看到一块空框）。
+   */
+  it("21 个敌人解析后都有头像（新兽按 artId 借老兽的脸）", () => {
     const enemies = TALE_CONTENT.enemies;
-    expect(enemies.length).toBe(8);
-    const missing = enemies.filter((enemy) => !exists(enemyArt(enemy.id)));
+    expect(enemies.length).toBe(21);
+    const missing = enemies.filter((enemy) => !exists(enemyArt(enemy)));
     expect(missing.map((enemy) => enemy.id), "敌人头像缺文件").toEqual([]);
+  });
+
+  it("借脸不许接力（artId 指向的那一头必须自己有图）", () => {
+    const byId = new Map(TALE_CONTENT.enemies.map((enemy) => [enemy.id, enemy]));
+    for (const enemy of TALE_CONTENT.enemies) {
+      if (enemy.artId === undefined) continue;
+      const lender = byId.get(enemy.artId);
+      expect(lender, `${enemy.id} 借的 ${enemy.artId} 不是一头真的兽`).toBeDefined();
+      expect(
+        lender?.artId,
+        `${enemy.id} 借了 ${enemy.artId}，而后者自己也在借 —— 一次改名会让一串脸集体错位`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("enemies/ 里没有孤儿文件（8 张老图全部仍被指着）", () => {
+    const onDiskNames = readdirSync(new URL("enemies/", PUBLIC_ART)).filter((name) =>
+      name.endsWith(".webp"),
+    );
+    const referenced = new Set(
+      TALE_CONTENT.enemies.map((enemy) => `${enemy.artId ?? enemy.id}.webp`),
+    );
+    expect(onDiskNames.filter((name) => !referenced.has(name)), "有图没人引用").toEqual([]);
   });
 
   it("四种结局各有一张结局图（死亡／登神过场按 EndingType 取图）", () => {

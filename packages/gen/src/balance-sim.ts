@@ -17,6 +17,8 @@
  *   pnpm -C packages/gen balance -- --hunt-plan quick   # [饥饿节奏批] 全速猎／全追猎两个极端
  *       （严格占优检查：两条狩猎路谁也不该把对方打死）
  *   pnpm -C packages/gen balance -- --lab combat --lives 400  # 搏杀实验台：打法×敌人×build 的胜率
+ *   pnpm -C packages/gen balance -- --lab matrix --lives 400  # [M2-B3] 克制矩阵：build×全部敌人的胜率
+ *       （同时量「基础 build 的胜率分布是不是一条连续的坡」—— B1 遗留 3 的可执行版）
  *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils   # [S3] 满员印记的天花板
  *   pnpm -C packages/gen balance -- --lives 500 --profile wayseek --sigils sigil-mu,sigil-ren,sigil-gu
  *   pnpm -C packages/gen balance -- --lives 500 --profile reckless --chart dest-mi-ku  # [S3] 图录直通秘窟
@@ -185,7 +187,7 @@ interface Args {
   json: boolean;
   tune: string | null;
   /** 实验台：只跑一个子系统、按打法拆表，不跑整世。`null` ＝ 跑整世 */
-  lab: "stalk" | "combat" | null;
+  lab: "stalk" | "combat" | "matrix" | null;
   stalkPlan: StalkPlan;
   combatPlan: CombatPlan;
   /** [饥饿节奏批] 怎么猎（见 `HuntPlan`）—— `stalk`／`quick` 两个极端是严格占优检查 */
@@ -228,7 +230,7 @@ function parseArgs(argv: readonly string[]): Args {
     if (flag === "--lab") {
       // `--lab`（缺省 stalk，兼容 P1 的用法）／`--lab combat`
       const next = argv[i + 1];
-      if (next === "combat" || next === "stalk") {
+      if (next === "combat" || next === "stalk" || next === "matrix") {
         args.lab = next;
         i += 1;
       } else {
@@ -1123,12 +1125,19 @@ function runCombat(
   plan: CombatPlan,
   enemyId: string,
   organIds: readonly string[],
+  stats?: Partial<TaleState["stats"]>,
 ): CombatOutcome | null {
   let state = createLife(seed, SEED_CHANG_TAI, CONTENT);
   if (organIds.length > 0) {
     // 只借 tag 与战技，不叠 statMods —— bare 与 seer 两组的血量伤害完全一致，差的只有「看得见什么」
     state = { ...state, organIds: [...state.organIds, ...organIds] };
   }
+  /*
+   * [M2-B3] 属性覆写：克制矩阵量的是**四项属性各自克哪一类兽**，所以那一台必须能
+   * 只动属性、不动别的（器官会连带塞进 tag、战技与部件，量到的就不是「猛值不值」
+   * 而是「狩齿值不值」）。整世模式与另外两个实验台一个字都没用到它。
+   */
+  if (stats) state = { ...state, stats: { ...state.stats, ...stats } };
   state = { ...state, hunger: CONTENT.tuning.hungerMax };
   state = resolveChoice(state, LAB_COMBAT_EVENT(enemyId), 0, CONTENT).state;
   if (!clashOf(state)) return null;
@@ -1318,6 +1327,258 @@ function runCombatLab(samples: number): number {
   return checks.every(([, ok]) => ok) ? 0 : 1;
 }
 
+// ===== [M2-B3] 克制矩阵实验台 =====
+
+/**
+ * build × **全部**敌人的胜率表。这一台回答 B3 交付线的头两问，而且只用实测数：
+ *
+ * ① **不同 build 是否真的对上了不同的敌人**（克制关系存在 ⇔ 矩阵里有「交叉」：
+ *    存在两个 build 与两头兽，使甲在这头兽上明显强于乙、在那头兽上明显弱于乙）。
+ *    没有交叉的话，所谓「克制」只是「有一个 build 全面更强」——那是强度差，不是克制。
+ * ② **中段坡度补上了没有**（基础 build 对全部敌人的胜率**分布**：要是一条连续的坡，
+ *    而不是 100% 与 0% 两堆 —— B1 遗留 3 的原话）。
+ *
+ * ## 为什么 build 是按**属性**造的，不是按器官
+ * 克制关系要说的是「猛／体／灵／德各自克哪一类兽」。器官会连带塞进 tag、战技与部件，
+ * 于是量到的会是「狩齿值不值」而不是「猛值不值」，而那是另一个问题（`--lab combat`
+ * 的 build 那一段量的正是它）。所以这里五组 build **同一份属性预算**（各 +26 点），
+ * 只是把它压在不同的一项上 —— 五行之间除了那一项，其余完全相同。
+ */
+/*
+ * ## 四组 build 的加点**不等量**，而这正是这一台唯一讲究的地方
+ *
+ * 第一版给四项各 +26 点（听起来最公平），量出来的是一张**没有一处交叉**的表：
+ * 体系二十一头全是 100%，猛系第二，灵德垫底 —— 那不是克制，是量纲差。
+ * 原因很直白：**四项的每一点买到的东西不是一个量级**。
+ * 体每点买 1.6 点血（+26 ＝ 血翻一倍），猛每 8 点才买 1 点伤，
+ * 德每点买 0.4% 闪避。按点数等量分配，量到的必然是「哪一项的兑换率高」。
+ *
+ * 所以四组按**平均胜率相当**校准（判据钉着极差 ≤10 个点），再看**形状**的差别 ——
+ * 形状才是克制。校准值是扫出来的，扫的过程与结论写在 B3 报告里。
+ */
+const MATRIX_BUILDS: readonly { name: string; stats: Partial<TaleState["stats"]> }[] = [
+  { name: "基础（出生态）", stats: {} },
+  { name: "猛系（猛 20）", stats: { meng: 20 } },
+  { name: "体系（体 28）", stats: { ti: 28 } },
+  { name: "灵系（灵 65）", stats: { ling: 65 } },
+  { name: "德系（德 44）", stats: { de: 44 } },
+];
+
+/** 一行里的「它是什么原型」—— 表头那一列，让矩阵读得出因果而不只是数字。 */
+const FOE_ARCHETYPE: Record<string, string> = {
+  "ye-zhi": "教具·逃",
+  "xue-shu": "教具·逃",
+  "wen-yao": "教具",
+  "guan-guan": "教具·逃",
+  "chi-ru": "教具",
+  "yan-yang": "重·护喉",
+  "lu-shu": "重·护腿",
+  "xuan-gui": "甲·守",
+  "li-li": "咬·会跑",
+  "cao-hu": "均衡",
+  "luo-yu": "啄",
+  "bi-fang": "重",
+  "shan-xiao": "壁",
+  "ming-she": "甲·会退",
+  "gu-diao": "重",
+  "hua-huai": "壁",
+  "tu-lou": "重·护喉",
+  "xuan-mang": "甲·守",
+  "shu-hu": "壁·护眼",
+  "jiu-wei-hu": "甲·顶格",
+  "qiong-qi-you": "墙·无弱点",
+};
+
+function runMatrixLab(samples: number): number {
+  CONTENT = { ...CONTENT, tuning: { ...CONTENT.tuning, eventChanceBase: 0 } };
+  // 难度序：meng×hp 是敌人「出伤 × 耐打」的粗代理，与实测胜率单调相关（schema 测试用的是同一把尺）
+  const foes = [...CONTENT.enemies].sort((a, b) => a.meng * a.hp - b.meng * b.hp);
+  /*
+   * **这一台的判据要 400 场一格才稳**：胜率的标准误在 n=400 时约 2.5 个点，而「每个 build
+   * 都有自己最吃的那一头」是在比两个相邻的差额 —— 样本小的时候它会在 2 种／3 种之间跳
+   * （实测 150 场那一档就跳过）。所以少了就吵一句，别让人拿一个抖出来的数去调参。
+   */
+  const MATRIX_MIN_SAMPLES = 400;
+  console.log(
+    `[克制矩阵] ${MATRIX_BUILDS.length} build × ${foes.length} 敌人，每格 ${samples} 场` +
+      `（照屏幕金光打，饱食拉满，只量这一场架）\n`,
+  );
+  if (samples < MATRIX_MIN_SAMPLES) {
+    console.log(
+      `⚠️ 每格只有 ${samples} 场。这一台的判据（尤其「各有最吃的那一头」）在 ` +
+        `${MATRIX_MIN_SAMPLES} 场以下会被抖动带偏 —— 调参请用 ` +
+        `\`--lab matrix --lives ${MATRIX_MIN_SAMPLES}\`。\n`,
+    );
+  }
+
+  const winOf = (rows: readonly CombatOutcome[]): number =>
+    pct(rows.filter((o) => o.over === "win").length, rows.length);
+  const cell = new Map<string, CombatOutcome[]>();
+  const key = (build: string, foe: string): string => `${build}｜${foe}`;
+  for (const build of MATRIX_BUILDS) {
+    for (const foe of foes) {
+      const rows: CombatOutcome[] = [];
+      for (let i = 0; i < samples; i += 1) {
+        const outcome = runCombat(3000 + i * 7919, "screen", foe.id, [], build.stats);
+        if (outcome) rows.push(outcome);
+      }
+      cell.set(key(build.name, foe.id), rows);
+    }
+  }
+  const win = (build: string, foe: string): number => winOf(cell.get(key(build, foe)) ?? []);
+
+  // — 矩阵本体 —
+  const nameCol = 18;
+  console.log(
+    `${"敌人（易→难）".padEnd(nameCol)}${"原型".padEnd(12)}` +
+      MATRIX_BUILDS.map((build) => build.name.padStart(9)).join(""),
+  );
+  for (const foe of foes) {
+    console.log(
+      `${`${foe.name}（${foe.meng}/${foe.hp}）`.padEnd(nameCol)}` +
+        `${(FOE_ARCHETYPE[foe.id] ?? "—").padEnd(12)}` +
+        MATRIX_BUILDS.map((build) => `${win(build.name, foe.id)}%`.padStart(9)).join(""),
+    );
+  }
+
+  // — 每组的平均胜率（校准用：极差大 ＝ 量到的是强度差，不是克制） —
+  const meanWin = (build: string): number =>
+    mean(foes.map((foe) => win(build, foe.id)));
+  console.log("\n— 每组的平均胜率（四组要相当，否则这张表量的是强度差）—");
+  for (const build of MATRIX_BUILDS) {
+    console.log(`${build.name.padEnd(14)} ${meanWin(build.name).toFixed(1)}%`);
+  }
+
+  // — 基础 build 的胜率分布（第②问） —
+  const baseName = MATRIX_BUILDS[0]!.name;
+  const baseWins = foes.map((foe) => win(baseName, foe.id));
+  const bandOf = (rate: number): string =>
+    rate >= 95 ? "≥95%" : rate >= 80 ? "80〜95%" : rate >= 55 ? "55〜80%" : rate >= 25 ? "25〜55%" : "<25%";
+  const bands = ["≥95%", "80〜95%", "55〜80%", "25〜55%", "<25%"];
+  const histogram = new Map<string, string[]>(bands.map((band) => [band, []]));
+  foes.forEach((foe, index) => histogram.get(bandOf(baseWins[index]!))?.push(foe.name));
+  console.log("\n— 基础 build 的胜率分布（这一条就是「坡」本身）—");
+  for (const band of bands) {
+    const names = histogram.get(band) ?? [];
+    console.log(`${band.padStart(8)}　${String(names.length).padStart(2)} 头　${names.join("、") || "—"}`);
+  }
+
+  // — 每个 build 最擅长／最不擅长的兽 —
+  console.log("\n— 每个 build 相对基础 build 的最大顺差／逆差 —");
+  for (const build of MATRIX_BUILDS.slice(1)) {
+    const deltas = foes.map((foe) => ({
+      foe,
+      delta: win(build.name, foe.id) - win(baseName, foe.id),
+    }));
+    const best = deltas.reduce((a, b) => (b.delta > a.delta ? b : a));
+    const worst = deltas.reduce((a, b) => (b.delta < a.delta ? b : a));
+    console.log(
+      `${build.name.padEnd(14)} 最吃 ${best.foe.name}（+${best.delta.toFixed(0)}）　` +
+        `最不吃 ${worst.foe.name}（${worst.delta.toFixed(0)}）`,
+    );
+  }
+
+  // — 判据 —
+  /*
+   * ## 三处刻意的口径（都是被数据逼出来的，不是为了让这一版过线）
+   *
+   * ① **坡度只量「战斗档」**（`meng×hp ≥ 200`，即五头教具之外的十六头）。
+   *    教具层（野雉／穴鼠／文鳐／灌灌／赤鱬）本来就该接近必胜 —— 它们那一段的题目是
+   *    **追猎**不是搏杀，把它们算进「必胜档太多」是在罚一件设计对了的事。
+   *    同 `--lab combat` 把野雉排除在「一场架 5〜10 合」之外，是同一条口径。
+   * ② **「坡」的判据是「没有断崖」而不是「每一档都有几头」**：把战斗档按胜率排开，
+   *    相邻两头的落差不许超过 25 个点。B1 遗留 3 抱怨的正是一处断崖
+   *    （100% 的那一堆之后直接是打不过），而不是「某一档头数不够」。
+   * ③ **交叉的阈值是 8 个点**：每格 `samples` 场，胜率的标准误在 n=250 时约 2.5 个点，
+   *    8 个点是三倍标准误 —— 再低就会把噪声读成克制。
+   */
+  const FIGHT_TIER = 200;
+  const fightFoes = foes.filter((foe) => foe.meng * foe.hp >= FIGHT_TIER);
+  const fightWins = fightFoes.map((foe) => win(baseName, foe.id)).sort((a, b) => b - a);
+  let biggestCliff = 0;
+  let cliffAt = "";
+  for (let i = 1; i < fightWins.length; i += 1) {
+    const drop = fightWins[i - 1]! - fightWins[i]!;
+    if (drop > biggestCliff) {
+      biggestCliff = drop;
+      cliffAt = `${fightWins[i - 1]!.toFixed(0)}% → ${fightWins[i]!.toFixed(0)}%`;
+    }
+  }
+  const midCount = fightWins.filter((rate) => rate >= 20 && rate <= 90).length;
+  const sureCount = fightWins.filter((rate) => rate >= 98).length;
+
+  const means = MATRIX_BUILDS.slice(1).map((build) => meanWin(build.name));
+  const meanSpread = Math.max(...means) - Math.min(...means);
+
+  const CROSS = 8;
+  let crossings = 0;
+  let crossExample = "";
+  for (let i = 1; i < MATRIX_BUILDS.length; i += 1) {
+    for (let j = i + 1; j < MATRIX_BUILDS.length; j += 1) {
+      const a = MATRIX_BUILDS[i]!.name;
+      const b = MATRIX_BUILDS[j]!.name;
+      const aOver = foes
+        .map((foe) => ({ foe, d: win(a, foe.id) - win(b, foe.id) }))
+        .filter((row) => row.d >= CROSS)
+        .sort((x, y) => y.d - x.d);
+      const bOver = foes
+        .map((foe) => ({ foe, d: win(b, foe.id) - win(a, foe.id) }))
+        .filter((row) => row.d >= CROSS)
+        .sort((x, y) => y.d - x.d);
+      if (aOver.length > 0 && bOver.length > 0) {
+        crossings += 1;
+        if (!crossExample) {
+          crossExample =
+            `${a} 在${aOver[0]!.foe.name}上高 ${aOver[0]!.d.toFixed(0)} 个点，` +
+            `在${bOver[0]!.foe.name}上低 ${bOver[0]!.d.toFixed(0)} 个点（对手 ${b}）`;
+        }
+      }
+    }
+  }
+  // 每个 build 都要有**自己最吃的那一头**，且四组最吃的不许全是同一头
+  const nicheOf = (build: string): { name: string; delta: number } => {
+    const rows = foes.map((foe) => ({
+      name: foe.name,
+      delta: win(build, foe.id) - win(baseName, foe.id),
+    }));
+    return rows.reduce((best, row) => (row.delta > best.delta ? row : best));
+  };
+  const niches = MATRIX_BUILDS.slice(1).map((build) => nicheOf(build.name));
+  const eachHasNiche = niches.every((niche) => niche.delta >= 12);
+  const distinctNiches = new Set(niches.map((niche) => niche.name)).size;
+
+  console.log("\n— 交付判据 —");
+  const checks: readonly [string, boolean][] = [
+    [
+      `坡上没有断崖：战斗档（${fightFoes.length} 头）相邻两头的胜率落差 ≤25 个点` +
+        `（实测最大 ${biggestCliff.toFixed(0)}　${cliffAt}）`,
+      biggestCliff <= 25,
+    ],
+    [
+      `中段是有人的：战斗档里 20〜90% 至少 6 头（实测 ${midCount} 头），` +
+        `且必胜档（≥98%）不超过 6 头（实测 ${sureCount} 头）`,
+      midCount >= 6 && sureCount <= 6,
+    ],
+    [
+      `四组强度相当（否则这张表量的是量纲差）：平均胜率极差 ≤8 个点（实测 ${meanSpread.toFixed(1)}）`,
+      meanSpread <= 8,
+    ],
+    [
+      `每个 build 都有自己最吃的一头（≥12 个点）且不全是同一头：` +
+        niches.map((niche) => `${niche.name}+${niche.delta.toFixed(0)}`).join("／") +
+        `　（${distinctNiches} 种）`,
+      eachHasNiche && distinctNiches >= 3,
+    ],
+    [
+      `克制而不是强度差：至少一对 build 出现交叉（实测 ${crossings} 对）` +
+        (crossExample ? `　例：${crossExample}` : ""),
+      crossings >= 1,
+    ],
+  ];
+  for (const [name, ok] of checks) console.log(`${ok ? "✓" : "✗"} ${name}`);
+  return checks.every(([, ok]) => ok) ? 0 : 1;
+}
+
 function main(): number {
   const args = parseArgs(process.argv.slice(2));
   if (args.tune !== null) CONTENT = applyTuneOverrides(args.tune);
@@ -1326,6 +1587,7 @@ function main(): number {
   HUNT_PLAN = args.huntPlan;
   SIGIL_IDS = args.sigilIds;
   CHARTED_DESTINATION = args.chartedDestinationId;
+  if (args.lab === "matrix") return runMatrixLab(args.lives);
   if (args.lab === "combat") return runCombatLab(args.lives);
   if (args.lab === "stalk") return runLab(args.lives);
   const lives = Array.from({ length: args.lives }, (_, index) =>

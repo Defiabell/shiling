@@ -78,6 +78,24 @@ export interface StatLineVm {
   effects: string[];
 }
 
+/**
+ * [M2-B3] 「食之所偏」的一格：吃下这一头，攒的是哪一件部件的本钱。
+ *
+ * 它是凝招（B2）与「去哪儿打什么」之间那条链唯一写在屏幕上的地方 —— 见
+ * `EnemyDef.partBias`。`owned` 为真时那一件此刻就拼得进招式框（措辞跟着变，
+ * 因为「已在手」与「还得先蜕出那件器官」是两条不同的下一步）。
+ */
+export interface PartBiasVm {
+  partId: string;
+  /** 「齿」 */
+  name: string;
+  /** 「猛」—— 凝这一件起手要付的精气型 */
+  essenceZi: string;
+  owned: boolean;
+  /** 「齿 · 猛之精气 · 已在手」 */
+  label: string;
+}
+
 export interface EncounterChromeVm {
   enemyName: string;
   enemyDesc: string;
@@ -98,8 +116,15 @@ export interface EncounterChromeVm {
   momentum: MomentumVm;
   wounds: WoundVm[];
   stats: StatLineVm[];
+  /** [M2-B3] 食之所偏（内容没写偏好时为空数组，界面就不出这一行） */
+  partBias: PartBiasVm[];
+  /** 「食之所偏」那一行的说明 */
+  partBiasHint: string;
   log: string[];
 }
+
+/** 四型精气的单字说法（同 `statusVm` 那一套，写死在措辞层）。 */
+const ESSENCE_ZI: Record<string, string> = { meng: "猛", zu: "足", lin: "鳞", xue: "穴" };
 
 const ORIGIN_LABEL = {
   hunt: "我盯上了它",
@@ -154,7 +179,13 @@ function woundVmsOf(preview: EncounterPreview): WoundVm[] {
       (part === "leg" && preview.legCrippled) || (part === "eye" && preview.eyeRuined);
     return {
       part,
-      label: meta.label,
+      /*
+       * [M2-B3] 腿那一格的**名字**也按兽念（`preview.partNames`）：这一批之后名册里有
+       * 鱼、鸟、蛇，而这三枚伤牌是屏幕上关于「打哪儿」最常被扫到的一行。
+       * 喉与眼对所有兽都是同一个词，所以 `WOUND_META` 里那两个 label 实际上永不被换掉 ——
+       * 留着它们是为了这张表仍然是「一格三样东西（名字／已成那一句／未成那一句）」的正本。
+       */
+      label: preview.partNames[part] === BODY_PART_NAMES[part] ? meta.label : preview.partNames[part],
       stacks,
       cap: preview.woundCap,
       neverWounds: part === "throat",
@@ -236,14 +267,18 @@ export function buildEncounterChromeVm(
 ): EncounterChromeVm {
   const preview = encounterPreview(state, content);
   const weaknessBadge = preview.weaknessFound
-    ? `破绽 · ${preview.weaknessName ?? BODY_PART_NAMES[preview.weaknessPart ?? "throat"]}`
+    ? `破绽 · ${preview.weaknessName ?? preview.partNames[preview.weaknessPart ?? "throat"]}`
     : preview.weaknessPart === null
       ? null
       : "尚未看出破绽";
   return {
     enemyName: preview.enemyName,
     enemyDesc: preview.enemyDesc,
-    enemyPortrait: { kind: "image", src: enemyArt(preview.enemyId), aspect: "1 / 1" },
+    enemyPortrait: {
+      kind: "image",
+      src: enemyArt({ id: preview.enemyId, artId: preview.enemyArtId }),
+      aspect: "1 / 1",
+    },
     originLabel: ORIGIN_LABEL[preview.origin],
     phase: preview.phase,
     phaseLabel: PHASE_LABEL[preview.phase],
@@ -265,6 +300,18 @@ export function buildEncounterChromeVm(
     momentum: momentumVmOf(preview),
     wounds: woundVmsOf(preview),
     stats: statLinesOf(preview),
+    partBias: preview.partBias.map((bias) => {
+      const zi = ESSENCE_ZI[bias.essenceType] ?? bias.essenceType;
+      return {
+        partId: bias.partId,
+        name: bias.partName,
+        essenceZi: zi,
+        owned: bias.owned,
+        // 「已在手」与「尚须蜕出那件器官」是两条不同的下一步，所以措辞分开
+        label: `${bias.partName} · ${zi}之精气 · ${bias.owned ? "已在手" : "尚未得"}`,
+      };
+    }),
+    partBiasHint: "吃下它，攒的是这几件部件的本钱 —— 凝招要的就是它们。",
     log: preview.log,
   };
 }

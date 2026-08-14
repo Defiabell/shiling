@@ -202,3 +202,81 @@ describe("[M2-B1] 行为段牌：多段的兽要看得出「它还会变」", ()
     expect(vm.stageProgress).toBe("2／3 段");
   });
 });
+
+/**
+ * ===== [M2-B3] 食之所偏那一行 ＋ 借来的头像 =====
+ *
+ * 这一行接的是 B2 那条断在半路的链：凝招要部件、部件跟着器官、器官跟着精气型开奖 ——
+ * 于是「我要凝一手齿起手的招」等价于「我得去猎猛精气的兽」。它此前一个字都没上屏。
+ */
+describe("[M2-B3] 食之所偏", () => {
+  it("每一格都写得出名号、精气型与「已在手／尚未得」两态", () => {
+    // 蠃鱼偏浮鳔与鳞甲两件（那正是幽潭门槛的两件）
+    const vm = buildEncounterChromeVm(
+      fightingState(realState(), { enemyId: "luo-yu" }),
+      CONTENT,
+    );
+    expect(vm.partBias.length).toBeGreaterThan(0);
+    for (const bias of vm.partBias) {
+      expect(bias.name.length).toBeGreaterThan(0);
+      expect(["猛", "足", "鳞", "穴"]).toContain(bias.essenceZi);
+      expect(bias.label).toContain(bias.name);
+      expect(bias.label).toContain(`${bias.essenceZi}之精气`);
+      expect(bias.label).toContain(bias.owned ? "已在手" : "尚未得");
+    }
+    expect(vm.partBiasHint.length).toBeGreaterThan(0);
+  });
+
+  it("蜕出了产出那一件的器官之后，同一格改口说「已在手」", () => {
+    const foe = { enemyId: "cao-hu" };
+    const bare = buildEncounterChromeVm(fightingState(realState(), foe), CONTENT);
+    const owner = buildEncounterChromeVm(
+      fightingState(withPatch(realState(), { organIds: ["organ-ling-yun", "ji-zu"] }), foe),
+      CONTENT,
+    );
+    // 草狐偏「速」（疾足产出的那一件）—— 蜕了疾足之后它该转「已在手」
+    const su = (vm: typeof bare): boolean =>
+      vm.partBias.find((bias) => bias.name === "速")?.owned ?? false;
+    expect(su(bare)).toBe(false);
+    expect(su(owner)).toBe(true);
+  });
+
+  /**
+   * 内容库现在**每一头兽都写了偏好**（schema 测试钉着），所以这一条测的是
+   * 「空数组时整行不渲染」这个契约本身仍然成立 —— 而不是某一头兽今天恰好没写。
+   */
+  it("没写偏好时是空数组（界面据此整行不渲染）", () => {
+    const stripped: TaleContent = {
+      ...CONTENT,
+      enemies: CONTENT.enemies.map((enemy) => ({ ...enemy, partBias: [] })),
+    };
+    const vm = buildEncounterChromeVm(
+      fightingState(realState(), { enemyId: "cao-hu" }),
+      stripped,
+    );
+    expect(vm.partBias).toEqual([]);
+  });
+
+  it("[M2-B3] 三枚伤牌里「腿」那一格也按兽念（蠃鱼的是「翼根」）", () => {
+    const at = (enemyId: string): string | undefined =>
+      buildEncounterChromeVm(fightingState(realState(), { enemyId }), CONTENT).wounds.find(
+        (wound) => wound.part === "leg",
+      )?.label;
+    expect(at("luo-yu")).toBe("翼根");
+    expect(at("bi-fang")).toBe("那一足");
+    // 有后腿的兽一个字没变
+    expect(at("cao-hu")).toBe("腿");
+  });
+
+  it("新兽的头像走它借的那一头（不是它自己的 id —— 那张图不存在）", () => {
+    const borrowed = buildEncounterChromeVm(
+      fightingState(realState(), { enemyId: "jiu-wei-hu" }),
+      CONTENT,
+    );
+    // 九尾狐借草狐的脸
+    expect(borrowed.enemyPortrait?.src).toContain("cao-hu");
+    expect(borrowed.enemyPortrait?.src).not.toContain("jiu-wei-hu");
+    const own = buildEncounterChromeVm(fightingState(realState(), { enemyId: "cao-hu" }), CONTENT);
+    expect(own.enemyPortrait?.src).toContain("cao-hu");
+  });
+});

@@ -62,6 +62,17 @@ const grantEssence = import.meta.env.DEV
   ? Number.parseInt(params.get("essence") ?? "0", 10) || 0
   : 0;
 
+/**
+ * `?foe=jiu-wei-hu` —— **仅 dev**：降世那一刻直接摆一场与这头兽的遭遇。
+ *
+ * B3 的验收要「抽三头新兽贴屏幕全文」，而十三头新兽全部只从探索遇袭里来
+ * （绝境也才三成二遇袭）—— 想在实机上见到指定的一头，期望要探十几季，
+ * 而那一世多半先饿死。同另外三个 dev 入口：只在**降世那一刻**生效，不是运行时后门。
+ */
+const devFoeId = import.meta.env.DEV
+  ? (params.get("foe") ?? "").trim().match(/^[a-z0-9-]+$/)?.[0] ?? ""
+  : "";
+
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) throw new Error("main: 找不到 #app 挂载点");
 
@@ -83,6 +94,7 @@ const app = new TaleApp(root, {
   ...(grantOrganIds.length > 0 ? { grantOrganIds } : {}),
   ...(grantLoreEnemyIds.length > 0 ? { grantLoreEnemyIds } : {}),
   ...(grantEssence > 0 ? { grantEssence } : {}),
+  ...(devFoeId === "" ? {} : { devFoeId }),
   ai,
   scenario,
 });

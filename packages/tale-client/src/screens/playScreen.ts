@@ -653,6 +653,7 @@ function encounterCard(
         ? stalkBody(body.stalk, props)
         : clashBody(body.combat, props),
       statPanel(chrome.stats),
+      partBiasRow(chrome),
       el(
         "ol",
         { class: "combat__log", attrs: { "data-encounter-log": "1" } },
@@ -849,6 +850,38 @@ function statPanel(stats: StatLineVm[]): HTMLElement {
         ],
       ),
     ),
+  );
+}
+
+/**
+ * [M2-B3] 食之所偏 —— 「吃下它攒的是哪几件部件的本钱」。
+ *
+ * 它接的是 B2 那条断在半路的链：凝招要部件、部件跟着器官、器官跟着精气型开奖，
+ * 于是「我要凝一手齿起手的招」在玩法上等价于「我得去猎猛精气的兽」——
+ * 而这句话此前一个字都没上屏。放在四相盘之下、日志之上：它是**这一场值不值得打**
+ * 的依据之一，不是打完才看的战利品清单。
+ *
+ * 内容没给这一头写偏好时整行不渲染（空行比没有更糟）。
+ */
+function partBiasRow(chrome: EncounterChromeVm): HTMLElement | null {
+  if (chrome.partBias.length === 0) return null;
+  return el(
+    "div",
+    { class: "enc__bias", attrs: { "data-enc-bias": "1" }, title: chrome.partBiasHint },
+    [
+      el("b", { class: "enc__bias-zi", text: "食之所偏" }),
+      el(
+        "div",
+        { class: "enc__bias-list" },
+        chrome.partBias.map((bias) =>
+          el("em", {
+            class: `enc__bias-item${bias.owned ? " is-owned" : ""}`,
+            text: bias.label,
+            attrs: { "data-enc-bias-part": bias.partId },
+          }),
+        ),
+      ),
+    ],
   );
 }
 

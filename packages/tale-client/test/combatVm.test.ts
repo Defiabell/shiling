@@ -116,6 +116,37 @@ describe("buildCombatVm：三颗咬击按钮都写着按下去会发生什么", 
     expect(ready?.effect).toContain("耗尽全部势");
   });
 
+  /**
+   * [M2-B3] 够门槛之后还要分「满没满」两态。
+   *
+   * B3 把势的上限做成灵性 build 的主要回报（上限越高，同一记决杀越重），于是
+   * 「现在发还是再攒一合」第一次成了一道真的题 —— 而这颗按钮原来在 4 点与 12 点上
+   * 写的是同一句话。这一条钉住的是**两态在屏幕上真的分得开**。
+   */
+  it("[M2-B3] 决杀按钮分「势已满」与「再攒更重」两态", () => {
+    const armed = makeContent({ tuning: { encounterFinisherMomentum: 4 } });
+    const at = (momentum: number, momentumMax: number): string | null => {
+      const next = fightingState(
+        newState(),
+        { enemyId: "qiong-qi-you", enemyHp: 40 },
+        { momentum, momentumMax },
+      );
+      return (
+        buildCombatVm(next, next.encounter!.clash!, armed).actions.find(
+          (action) => action.id === "finisher",
+        )?.warning ?? null
+      );
+    };
+    // 够门槛但没满：明说再攒更重（那正是灵性 build 买到的东西）
+    expect(at(4, 8)).toContain("再攒");
+    expect(at(4, 8)).not.toContain("已满");
+    // 满了：明说再攒是白攒（溢出的势直接丢掉，这是玩家该知道的事实）
+    expect(at(8, 8)).toContain("势已满");
+    expect(at(8, 8)).toContain("白攒");
+    // 两态的措辞必须不同 —— 否则「满没满」在屏幕上根本读不出来
+    expect(at(4, 8)).not.toBe(at(8, 8));
+  });
+
   it("打在守备处的那颗按钮挂警告，写清减半与反击概率", () => {
     const view = vm({ enemyId: "qiong-qi-you", enemyHp: 40, guardPart: "throat" });
     const throat = actionById(view.actions, "bite:throat");
@@ -183,6 +214,41 @@ describe("buildCombatVm：守备、形势与遁走", () => {
     expect(vm({ guardPart: "throat" }).guardLabel).toBe("护 咽喉");
     expect(vm({ guardPart: "leg" }).guardLabel).toBe("护 后腿");
     expect(vm({ guardPart: "eye" }).guardLabel).toBe("护 眼");
+  });
+
+  /**
+   * [M2-B3] 「腿」这个部位按兽换词（`EnemyDef.legWord`）。
+   *
+   * 屏幕上有三处会念它：守备牌（「护 后腿」）／咬腿那颗按钮的「它正护着 X」／
+   * 凝招那一手的「断其 X」。名册里现在有鱼、鸟、蛇 —— 而一条长着鸟翼的鱼没有后腿。
+   * 客户端**不自己查 `BODY_PART_NAMES`**，读的是引擎给的 `preview.partNames`。
+   */
+  it("[M2-B3] 守备牌按兽念「腿」（喉与眼对所有兽都是同一个词）", () => {
+    const content = makeContent({
+      enemies: FIXTURE_CONTENT.enemies.map((enemy) => ({ ...enemy, legWord: "翼根" })),
+    });
+    const at = (part: "throat" | "leg" | "eye"): string => {
+      const next = fightingState(newState(), { guardPart: part });
+      return buildCombatVm(next, next.encounter!.clash!, content).guardLabel;
+    };
+    expect(at("leg")).toBe("护 翼根");
+    expect(at("throat")).toBe("护 咽喉");
+    expect(at("eye")).toBe("护 眼");
+    // 缺省仍是「后腿」（既有的兽一个字没变）
+    expect(vm({ guardPart: "leg" }).guardLabel).toBe("护 后腿");
+  });
+
+  it("[M2-B3] 咬腿那颗按钮的部位伤读法也跟着换（「翼根伤 0 → 1」）", () => {
+    const content = makeContent({
+      enemies: FIXTURE_CONTENT.enemies.map((enemy) => ({ ...enemy, legWord: "翼根" })),
+    });
+    const next = fightingState(newState(), { guardPart: "eye" });
+    const view = buildCombatVm(next, next.encounter!.clash!, content);
+    const leg = view.actions.find((action) => action.id === "bite:leg");
+    expect(leg?.effect).toContain("翼根伤");
+    expect(leg?.effect).not.toContain("腿伤");
+    // 缺省那一份仍是「腿伤」
+    expect(actionById(vm({ guardPart: "eye" }).actions, "bite:leg")?.effect).toContain("腿伤");
   });
 
   it("形势一行给「还撑得住几合／它还需几下」，撑不住两合就转朱砂", () => {

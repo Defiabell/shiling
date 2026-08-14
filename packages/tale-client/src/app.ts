@@ -147,6 +147,21 @@ export interface AppOptions {
    */
   grantEssence?: number;
   /**
+   * [M2-B3] **仅 dev**：降世那一刻直接摆一场与这头兽的遭遇（`?foe=jiu-wei-hu` 传入）。
+   *
+   * 存在的理由与另外三个 dev 入口逐字同形：B3 的验收要「抽三头新兽贴屏幕全文」，
+   * 而十三头新兽全部只从**探索遇袭**里来（去处的 `denizens`，绝境也才三成二遇袭）——
+   * 想在实机上见到指定的一头，期望要探十几季，而那一世多半先饿死。要看的是**屏幕上
+   * 写的字**，不是撞见它的过程。
+   *
+   * **它走的是与内容完全同一条路**：造一条只有一个分支的合成事件，交给引擎的
+   * `resolveChoice`（`startCombat`）—— 与 `packages/gen` 的搏杀实验台同一个手法，
+   * 理由也同一条：手搓 `EncounterState` 会让第一合的守备与意图变成固定值，
+   * 量到／拍到的就是一个玩家永远遇不到的开局。生产构建里 `import.meta.env.DEV` 为假，
+   * main.ts 连读都不读。
+   */
+  devFoeId?: string;
+  /**
    * [P1] AI 史官的配置。由 main.ts 从 URL ＋ `import.meta.env.DEV` 算出来传进来 ——
    * app.ts 因此不必认识 vite 的 env，测试里也能直接关掉它（缺省即关）。
    */
@@ -169,6 +184,8 @@ export class TaleApp {
   private readonly grantOrganIds: readonly string[];
   private readonly grantLoreEnemyIds: readonly string[];
   private readonly grantEssence: number;
+  /** [M2-B3] 仅 dev：降世即摆一场与它的遭遇（`?foe=`），见构造参数的注释 */
+  private readonly devFoeId: string;
 
   private screen: ScreenId = "title";
   private titleHandle: ScreenHandle | null = null;
@@ -261,6 +278,7 @@ export class TaleApp {
     this.grantOrganIds = options.grantOrganIds ?? [];
     this.grantLoreEnemyIds = options.grantLoreEnemyIds ?? [];
     this.grantEssence = Math.max(0, Math.floor(options.grantEssence ?? 0));
+    this.devFoeId = options.devFoeId ?? "";
     // 缺省关：没显式给配置的调用方（测试、任何非 dev 入口）不该在死亡路径上发网络请求
     this.aiConfig = options.ai ?? historianConfig("", false);
     this.scenarioConfig = options.scenario ?? scenarioConfig("", false);
@@ -428,7 +446,13 @@ export class TaleApp {
             },
           }
         : granted;
-    this.state = state;
+    /*
+     * [M2-B3] `?foe=` 的落点：走合成事件 ＋ `resolveChoice`，与实验台同一个手法
+     * （见 `devFoeId` 的注释）。未知 id 由引擎自己抛错 —— 拼错一个兽名该当场吵，
+     * 而不是静默降世成一个没有遭遇的开局。
+     */
+    const opened = this.devFoeId === "" ? state : this.openDevEncounter(state, this.devFoeId);
+    this.state = opened;
     this.pendingEvent = null;
     // 上一世的作传任务到这里必然已经取过货；置空是为了让 `commit` 认得出「新的一世」
     this.chronicleTask = null;
@@ -466,6 +490,18 @@ export class TaleApp {
      * 「今年大旱、我是孤生、有四条路可走」。两条前提各带机制那一行（不是风味字），
      * 四道各带门槛数（都从引擎的 `waysProgress` 现算，界面不写第二份门槛）。
      */
+    /*
+     * [M2-B3] `?foe=` 那一支到这里要**换掉中央那张卡**：降世旁白卡上没有「继续」，
+     * 而遭遇未收束时四颗行动全灰（「战事未了」）—— 于是若照常摆降世卡，
+     * 屏幕会卡在一张按不动的卡上。这一行只在 dev 的 `?foe=` 下成立。
+     */
+    const devEncounter = this.devFoeId === "" ? null : this.encounterCenter(this.state);
+    if (devEncounter !== null) {
+      this.center = devEncounter;
+      this.screen = "play";
+      this.renderPlayScreen();
+      return;
+    }
     const { sky, origin } = premiseOf(state, CONTENT);
     this.center = {
       kind: "narration",
@@ -507,6 +543,30 @@ export class TaleApp {
    * 同一个判据要**同时递给 `isStale`**：注入停了而落盘没停，等于把玩家没见过的那几批
    * 补进上一局的存档（重放读到的就不是当时玩的那一份），还会把更新的一局挤出缓存。
    */
+  /**
+   * [M2-B3] `?foe=` —— 仅 dev：降世那一刻直接摆一场与指定那头兽的遭遇。
+   *
+   * **不手搓 `EncounterState`**：造一条只有一个分支的合成事件交给 `resolveChoice`，
+   * 走的是内容里 `startCombat` 完全同一条路（同 `packages/gen` 搏杀实验台的手法）。
+   * 手搓状态会让第一合的守备与意图变成固定值 —— 那样拍到的是一个玩家永远遇不到的开局。
+   * 未知 id 由引擎抛错：拼错一个兽名该当场吵。
+   */
+  private openDevEncounter(state: TaleState, enemyId: string): TaleState {
+    const event: TaleEvent = {
+      id: `dev-foe:${enemyId}`,
+      trigger: { region: "any", weight: 1 },
+      title: "遇",
+      body: "遇。",
+      choices: [
+        {
+          label: "迎上去",
+          outcomes: [{ weight: 1, text: "打起来了。", effects: { startCombat: enemyId } }],
+        },
+      ],
+    };
+    return resolveChoice(state, event, 0, CONTENT).state;
+  }
+
   private startScenario(state: TaleState, seedNum: number, seedId: string): void {
     const token = this.lifeIndex;
     this.scenarioInfo = { source: this.scenarioConfig.enabled ? "pending" : "none", injected: 0 };

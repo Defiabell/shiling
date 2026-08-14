@@ -26,7 +26,6 @@
  */
 
 import {
-  BODY_PART_NAMES,
   FORGE_SLOTS,
   combatPreview,
   recommendCombatAct,
@@ -154,8 +153,18 @@ const PART_ACT: Record<BodyPart, { glyph: string; label: string; hint: string }>
   eye: { glyph: "眼", label: "扑眼", hint: "几乎不伤，但它会有几合看不见你。" },
 };
 
-/** [M2-B1] 部位伤在按钮上的一字读法（「腿伤 1 → 2」）。 */
+/**
+ * [M2-B1] 部位伤在按钮上的一字读法（「腿伤 1 → 2」）。
+ *
+ * [M2-B3] 腿那一枚现在**跟着兽换**（`preview.partNames`，见 `EnemyDef.legWord`）：
+ * 一条长着鸟翼的鱼没有「腿伤」。喉与眼对所有兽都是同一个字，所以这张表里那两个照旧。
+ */
 const WOUND_ZI: Record<BodyPart, string> = { throat: "喉", leg: "腿", eye: "眼" };
+
+/** [M2-B3] 这一头兽的一字读法（腿走 `partNames`，其余照 `WOUND_ZI`）。 */
+function woundZi(part: BodyPart, partNames: Record<BodyPart, string>): string {
+  return part === "leg" ? partNames.leg : WOUND_ZI[part];
+}
 
 const STANCE_META: Record<Stance, { glyph: string; label: string }> = {
   low: { glyph: "伏", label: "伏低" },
@@ -248,7 +257,11 @@ function costText(cost: CombatSkillCost): string {
  * 四项**恒在**（哪怕是 0 伤的纯效果技也写清它不出伤），因为这排按钮有五到八颗，
  * 少写一项就得靠玩家记住哪颗技是什么 —— 那正是「摸不着头脑」的来源。
  */
-function skillEffectText(skill: CombatSkillPreview): string {
+function skillEffectText(
+  skill: CombatSkillPreview,
+  /** [M2-B3] 这一头兽的部位说法（「断其翼根」而不是「断其后腿」） */
+  partNames: Record<BodyPart, string>,
+): string {
   /*
    * 伤害那一格**恒有**：出伤就报区间，不出伤就明说「不出伤」。
    *
@@ -261,7 +274,7 @@ function skillEffectText(skill: CombatSkillPreview): string {
   ];
   for (const effect of skill.effects) parts.push(SKILL_EFFECT_LABELS[effect]);
   // [M2-B2] 断伤：凝招力道槽那一件顺带断的部位（整场累积，与咬击那三颗共用一条线）
-  if (skill.woundPart) parts.push(`断其${BODY_PART_NAMES[skill.woundPart]}`);
+  if (skill.woundPart) parts.push(`断其${partNames[skill.woundPart]}`);
   parts.push(`冷却 ${skill.cooldown} 合`);
   // [M2-B1] 势是第三样价钱，与冷却、代价并排 —— 三样都写清才知道「现在按还是攒两合」
   if (skill.momentumCost > 0) parts.push(`耗势 ${skill.momentumCost}`);
@@ -307,8 +320,8 @@ export function buildCombatVm(
      * 分别不只是措辞：M1-P2 那两句说的是「买两个回合」，而现在说的是「这条线经营到哪一步」。
      * 满了就明说满了 —— 那正是「该换回收官」的信号（没有它，玩家会一直咬同一处）。
      */
-    if (bite.woundLands) parts.push(`${WOUND_ZI[bite.part]}伤 ${bite.woundStacks} → ${bite.woundStacks + 1}`);
-    else if (bite.woundStacks > 0) parts.push(`${WOUND_ZI[bite.part]}伤已满 ${bite.woundStacks}`);
+    if (bite.woundLands) parts.push(`${woundZi(bite.part, preview.partNames)}伤 ${bite.woundStacks} → ${bite.woundStacks + 1}`);
+    else if (bite.woundStacks > 0) parts.push(`${woundZi(bite.part, preview.partNames)}伤已满 ${bite.woundStacks}`);
     parts.push(`势 +${bite.momentumGain}`);
     /*
      * 受伤那一栏只在读得出意图时给数 —— 给了就等于把意图告诉玩家（0 ＝ 它在守或要走）。
@@ -333,7 +346,7 @@ export function buildCombatVm(
         : bite.stopsFlee
           ? "拦住它 —— 不然这顿肉就没了。"
           : bite.guarded
-            ? `它正护着${BODY_PART_NAMES[bite.part]}：伤减半${
+            ? `它正护着${preview.partNames[bite.part]}：伤减半${
                 bite.counterChance > 0
                   ? `，${chanceCn(bite.counterChance)}会被反咬（${damageText(bite.counterDamage)}）`
                   : ""
@@ -351,6 +364,12 @@ export function buildCombatVm(
   /*
    * [M2-B1] 决杀：势的兑现按钮。**攒不够时照样出按钮**（灰着，写明还差几点）——
    * 一个看不见的目标不会有人去攒，而这一颗正是「出招节奏」这件事在屏幕上的样子。
+   *
+   * [M2-B3] 够门槛之后还要分「**满没满**」两态。B3 把势的上限做成了灵性 build 的主要回报
+   * （上限越高，同一记决杀越重），于是「现在发还是再攒一合」第一次成了一道真的题 ——
+   * 而这一颗按钮原来在 4 点与 12 点上写的是同一句话。code-reviewer 抓到的正是这一处：
+   * `atMax` 在引擎里算出来了、推荐链也用了，却没有一个字上屏。
+   * 满了那一态明写「势已满 —— 再攒是白攒」（溢出的部分直接丢掉，这是玩家该知道的事实）。
    */
   const finisherVm: CombatActionVm = {
     id: "finisher",
@@ -360,7 +379,11 @@ export function buildCombatVm(
     effect: preview.finisher.ready
       ? `伤 ${damageText(preview.finisher.damage)} · 耗尽全部势（${preview.finisher.momentumCost}）· 无视守备`
       : `攒够 ${preview.finisher.momentumNeeded} 点势可发 · 势越多这一记越重 · 无视守备`,
-    warning: preview.finisher.ready ? "发完从零攒起。" : null,
+    warning: !preview.finisher.ready
+      ? null
+      : preview.finisher.atMax
+        ? "势已满 —— 再攒是白攒。发完从零攒起。"
+        : "再攒一合这一记更重（上限之内）。发完从零攒起。",
     highlight: recommended === "finisher",
     enabled: preview.finisher.ready,
     disabledReason: preview.finisher.ready
@@ -410,7 +433,7 @@ export function buildCombatVm(
     act: { kind: "skill", skillId: skill.skillId },
     glyph: skill.forged === null ? "技" : skill.forged.loreId === null ? "凝" : "古",
     label: skill.name,
-    effect: skillEffectText(skill),
+    effect: skillEffectText(skill, preview.partNames),
     warning: null,
     /*
      * [M2-B2] 招式册里的那几手多一行它的出处：
@@ -479,7 +502,7 @@ export function buildCombatVm(
     enemyDesc: enemy?.desc ?? "",
     enemyTags: enemy?.tags ?? [],
     enemyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
-    enemyPortrait: enemy ? { kind: "image", src: enemyArt(enemy.id), aspect: "1 / 1" } : null,
+    enemyPortrait: enemy ? { kind: "image", src: enemyArt(enemy), aspect: "1 / 1" } : null,
     enemyHp: Math.max(0, combat.enemyHp),
     enemyHpMax,
     enemyPercent: toPercent(combat.enemyHp / enemyHpMax),
@@ -490,7 +513,7 @@ export function buildCombatVm(
     round: combat.round,
     roundLabel: `第 ${combat.round + 1} 合`,
     guardPart: preview.guardPart,
-    guardLabel: `护 ${BODY_PART_NAMES[preview.guardPart]}`,
+    guardLabel: `护 ${preview.partNames[preview.guardPart]}`,
     intentLabel: known ? preview.intent.text : INTENT_CLASS_LABEL[preview.intentClass],
     intentDetail: intentDetail ?? INTENT_CLASS_HINT[preview.intentClass],
     // eslint 之外的自我提醒：上面那个 ?? 只在 known 为假时落到 HINT，两支都非空

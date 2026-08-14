@@ -63,9 +63,18 @@ export function eventArt(illustration: string): string {
   return ART_DIR + illustration;
 }
 
-/** 敌人头像（1:1 胸像），文件名恒等于 `EnemyDef.id`。 */
-export function enemyArt(enemyId: string): string {
-  return `${ART_DIR}enemies/${enemyId}.webp`;
+/**
+ * 敌人头像（1:1 胸像），文件名恒等于 `EnemyDef.id` —— 或它**显式借的那一头**。
+ *
+ * [M2-B3] B4 只出了 8 张胸像，而敌人已经二十一头。新兽在 `EnemyDef.artId` 里逐个声明
+ * 借哪一张脸（鸟借野雉、鱼借文鳐、带甲借玄蟒、人形借山魈……）。这里读的就是那一位。
+ *
+ * **刻意不做「文件不在就退占位」的兜底**：那会把「忘了配图」与「有意复用」写成同一件事，
+ * 而前者恰恰是这个项目最该吵出来的那类静默失效（`<img>` 加载失败不报错，玩家只看到空框）。
+ * 缺图由 `test/artAssets.test.ts` 对着磁盘核 —— 少一张就变红，而不是等 owner 试玩时看见。
+ */
+export function enemyArt(enemy: { id: string; artId?: string }): string {
+  return `${ART_DIR}enemies/${enemy.artId ?? enemy.id}.webp`;
 }
 
 /** 结局图（16:9），文件名恒等于 `EndingType`。 */

@@ -3804,6 +3804,52 @@
   text-overflow: ellipsis;
 }
 
+/*
+   [M2-B3] 食之所偏 —— 「吃下它攒的是哪几件部件的本钱」。
+
+   排在四相盘之下、日志之上，**一行不换行**：它是「这一场值不值得打」的依据之一，
+   不是打完才看的战利品清单。已在手的那几件转赭金（与秘藏揭示同一色系：
+   「已经收进来的东西」在这套配色里一律是赭金，朱砂留给「还差什么」）。
+*/
+.enc__bias {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 24px 0;
+  padding: 5px 10px;
+  border-radius: var(--r);
+  background: var(--glass-lo);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+
+.enc__bias-zi {
+  flex: none;
+  font-family: var(--kai);
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--txt-3);
+}
+
+.enc__bias-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.enc__bias-item {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--txt-3);
+  white-space: nowrap;
+}
+
+.enc__bias-item.is-owned {
+  color: var(--gold);
+}
+
 /* 场上生效的一时之效（致盲／迟滞／护体／流血／反刺／明识）：从遭遇头挪到指令上方 */
 .combat__marks {
   display: flex;
@@ -3840,6 +3886,7 @@
   .enc__momentum,
   .enc__wounds,
   .enc__stats,
+  .enc__bias,
   .combat__marks {
     margin-left: 14px;
     margin-right: 14px;

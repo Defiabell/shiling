@@ -333,7 +333,7 @@ export function buildStalkVm(
     preyDesc: prey?.desc ?? "",
     preyBadge: preview.retaliates ? "会反扑" : null,
     preyLoreBadge: preview.loreKnown ? "已入图鉴" : null,
-    preyPortrait: prey ? { kind: "image", src: enemyArt(prey.id), aspect: "1 / 1" } : null,
+    preyPortrait: prey ? { kind: "image", src: enemyArt(prey), aspect: "1 / 1" } : null,
     roundLabel: `第 ${stalk.round + 1} 息`,
     distance,
     alert,
