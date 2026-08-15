@@ -1016,6 +1016,231 @@
 }
 
 /*
+ * ── [交锋节奏] 先手那一行 ＋ 逐拍演出 ────────────────────────────────
+ *
+ * 三块新东西：
+ *   `.combat__first` 先手标记（意图之下、指令之上，整合不变）
+ *   `.beat`          拍面板（演出中占住指令区上方那一格，整块可点＝跳拍）
+ *   `.hp__pop` / `.hp.is-beating` 伤害飘字与血条那一段动画
+ *
+ * 全部尊重 `prefers-reduced-motion`（fx.css 末尾统一关停动画时长）——
+ * 那时演出仍然逐拍**渲染**，只是不等时间，app 那边直接跳到最后一拍。
+ */
+
+.combat__first {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 5px 14px;
+  border-radius: var(--r);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+}
+
+/* 先手在我＝青（与我方血条同色系）；在它＝朱砂（与它的血条、重击告警同色系） */
+.combat__first.is-player {
+  background: rgba(127, 212, 232, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.2);
+}
+
+.combat__first.is-enemy {
+  background: rgba(194, 59, 34, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.3);
+}
+
+.combat__first-text {
+  font-family: var(--kai);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.combat__first.is-player .combat__first-text {
+  color: var(--cyan);
+}
+
+.combat__first.is-enemy .combat__first-text {
+  color: var(--cinnabar-lt);
+}
+
+.combat__first-why {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--txt-3);
+}
+
+/*
+ * 演出中卡片自己不再入场（每一拍重放一次「水墨浮现」＝整屏每半秒闪一下）。
+ * 动的只有拍面板、血条与飘字 —— 那三样才是这一批要让玩家看见的东西。
+ */
+.card--encounter.is-beating {
+  animation: none;
+}
+
+/*
+ * 演出中指令区**看上去也该是锁着的**。
+ *
+ * 按钮的 `disabled` 早就置上了（`props.busy`），但 `is-locked` 那套灰样式只跟着
+ * 「这一手本身可不可用」走 —— 于是实机抄屏里那一排按钮长得跟能按一模一样。
+ * 一颗看起来能按、按下去没反应的按钮，与这个项目最不该有的那类谎是同一件事。
+ */
+.enc__body--clash.is-playing .combat__acts,
+.enc__body--clash.is-playing .combat__stand .cact {
+  opacity: 0.42;
+  filter: saturate(0.55);
+}
+
+.beat {
+  margin: 8px 30px 0;
+}
+
+/*
+ * 整块拍面板是一颗按钮（点一下＝下一拍）。它长得**不像按钮**是有意的：
+ * 跳拍是可选的加速，不是这一合的必点 —— 做成一颗显眼的按钮会让玩家以为非点不可，
+ * 那就等于把每合的必点次数从 1 涨到 N（历次裁决的硬约束）。
+ */
+.beat__card {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  text-align: left;
+  border: 0;
+  border-radius: var(--r);
+  background: rgba(232, 236, 242, 0.045);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+  cursor: pointer;
+  animation: beat-in 220ms var(--ease) both;
+}
+
+.beat__card--player {
+  background: rgba(127, 212, 232, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 232, 0.26);
+}
+
+.beat__card--enemy {
+  background: rgba(194, 59, 34, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(226, 105, 76, 0.34);
+}
+
+.beat__card.is-crit {
+  box-shadow: inset 0 0 0 1px var(--gold, #d8b76a);
+}
+
+.beat__actor {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  font-family: var(--kai);
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 6px;
+  color: var(--txt-2);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+}
+
+.beat__card--player .beat__actor {
+  color: var(--cyan);
+}
+
+.beat__card--enemy .beat__actor {
+  color: var(--cinnabar-lt);
+}
+
+.beat__body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 招名先亮出来 —— 一拍的读法是「谁 → 什么招 → 结果」 */
+.beat__move {
+  display: block;
+  font-family: var(--kai);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  color: var(--txt);
+}
+
+.beat__lines {
+  display: block;
+  margin-top: 2px;
+}
+
+.beat__lines em {
+  display: block;
+  font-family: var(--kai);
+  font-style: normal;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--txt-2);
+}
+
+.beat__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 5px;
+}
+
+.beat__tick {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--txt-3);
+}
+
+.beat__skip {
+  padding: 3px 10px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--txt-3);
+  box-shadow: inset 0 0 0 1px var(--hair-2);
+  cursor: pointer;
+}
+
+.beat__skip:hover {
+  color: var(--txt-2);
+}
+
+/* 演出中血条走一段（起止值由数据带着，见 fx.css 的 hp-drain 注释） */
+.hp.is-beating .hp__fill {
+  animation: hp-drain 360ms var(--ease) both;
+}
+
+.hp__pop {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--cinnabar-lt);
+  animation: hp-pop 900ms var(--ease) both;
+}
+
+.hp--self .hp__pop {
+  color: var(--cinnabar-lt);
+}
+
+.hp__pop--heal {
+  color: var(--cyan);
+}
+
+/*
  * 战斗日志：**高度稳定**（约四行），不随内容增长 —— 同追猎屏那条教训（M1-P1 第五个缺陷）。
  * P2 的一个回合最多吐五行（咬中／守备减半／反击／附带落地／它的动作），原来的
  * `max-height` 会让下面那片按钮一步一步往下挪，而搏杀是一屏之内连按五六次的界面。

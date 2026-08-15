@@ -230,4 +230,26 @@ describe("主界面版式契约（screens.css）", () => {
       expect(base(".actions__row")["grid-template-columns"]).toMatch(/^repeat\(auto-fit/);
     });
   });
+
+  /*
+   * [交锋节奏] 逐拍演出的两条承重规则。
+   *
+   * 它们与上面那几条同一个性质：**改的时候看不出是承重墙**，而坏了不会有任何别的测试变红
+   * （VM 照样造得出那一拍的起止值，只是屏幕上不动）。
+   */
+  describe("逐拍演出", () => {
+    it("血条走 `@keyframes` 而不是 `transition` —— 整棵重建之后 transition 播不出来", () => {
+      // `renderPlay` 每一拍整棵重建 DOM：新节点身上没有「上一个宽度」，
+      // transition 无从过渡。起止值由数据带着（`--hp-from` / `--hp-to`）。
+      expect(base(".hp.is-beating .hp__fill")["animation"]).toMatch(/^hp-drain /);
+      const css = readFileSync(new URL("../src/styles/fx.css", import.meta.url), "utf8");
+      expect(css).toMatch(/@keyframes hp-drain\s*\{[\s\S]*?from\s*\{\s*width:\s*var\(--hp-from\)/);
+      expect(css).toMatch(/@keyframes hp-drain\s*\{[\s\S]*?to\s*\{\s*width:\s*var\(--hp-to\)/);
+    });
+
+    it("演出中卡片自己不入场 —— 否则整张卡每半秒重新水墨浮现一次", () => {
+      expect(base(".card")["animation"]).toMatch(/^ink-rise /);
+      expect(base(".card--encounter.is-beating")["animation"]).toBe("none");
+    });
+  });
 });

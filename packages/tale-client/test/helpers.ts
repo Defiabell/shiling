@@ -55,6 +55,7 @@ export function combatState(patch: ClashPatch = {}): ClashState {
     bleed: 0,
     thorns: 0,
     insight: 0,
+    brace: 0,
     skillCooldowns: {},
     ...rest,
   };

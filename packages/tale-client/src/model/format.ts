@@ -247,7 +247,9 @@ export const SKILL_EFFECT_LABELS: Record<CombatSkillEffect, string> = {
   blind: "蒙目·多半打空",
   armor: "护体·受伤减半",
   thorns: "反刺·它打你自伤",
-  brace: "硬受·这合免伤",
+  // [交锋节奏] 硬受不再是「这一合免伤」而是**一位一次性的盾**：它先动的那些合里，
+  // 那一记已经挨过了，盾留到下一合。措辞跟着语义走 —— 承诺必须兑现得了。
+  brace: "硬受·挡下它下一记",
   bolt: "必定脱身",
   insight: "明识·读得出意图",
   heal: "回血",

@@ -530,6 +530,7 @@ export function enterCombat(
         bleed: 0,
         thorns: 0,
         insight: 0,
+        brace: 0,
         skillCooldowns: {},
         ...overrides,
       },

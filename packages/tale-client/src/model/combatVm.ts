@@ -43,6 +43,7 @@ import {
   type TaleState,
   clashOf,
 } from "@shiling/tale-sim";
+import { initiativeText } from "./beatVm.js";
 import { ESSENCE_LABELS, SKILL_EFFECT_LABELS } from "./format.js";
 import { enemyArt } from "../art/assets.js";
 import { chanceCn as chanceCnOf, toPercent } from "./format.js";
@@ -136,6 +137,17 @@ export interface CombatVm {
   intentHot: boolean;
   /** 「正对」「伏低」「扑击」 */
   stanceLabel: string;
+  /**
+   * [交锋节奏] **这一合谁先动** —— 出手之前就摆在屏上。
+   *
+   * 它不是一枚装饰徽章：受伤那几个数（咬完它能打我多少、换姿态这一合少挨多少、
+   * 咬腿拦不拦得住）全都跟着它翻面，所以玩家必须先读到这一条，那几颗按钮上的账
+   * 才读得懂。三个字段分开是因为屏幕上它们各占一格：印（谁）／标题（先手在谁）／
+   * 依据（两个可以直接比的数）。
+   */
+  initiativeSide: "player" | "enemy";
+  initiativeLabel: string;
+  initiativeDetail: string;
   /** 场上生效的状态：「它半盲 2 合」「它迟滞 1 合」「护体 1 合」 */
   marks: string[];
   /** 「还撑得住约 3 合 · 它还需 4 下」—— 「什么时候该逃」的依据 */
@@ -486,6 +498,13 @@ export function buildCombatVm(
   if (preview.bleed > 0) marks.push(`它流血 ${preview.bleed} 合`);
   if (preview.thorns > 0) marks.push(`反刺 ${preview.thorns} 合`);
   if (preview.insight > 0) marks.push(`明识 ${preview.insight} 合`);
+  /*
+   * [交锋节奏] 硬受也要上屏（同上面那五枚：看不见的状态等于不存在）。
+   *
+   * 它与那五枚的分别在于**它不是按合数走的**：挡下一记就消耗掉。所以这一枚写的是
+   * 「挡下它下一记」而不是「硬受 1 合」—— 后者会让玩家以为这一合它打两下也都免。
+   */
+  if (preview.brace > 0) marks.push("硬受 · 挡下它下一记");
 
   const intentDetail = known
     ? [
@@ -522,6 +541,8 @@ export function buildCombatVm(
       ? preview.intent.kind === "pounce" || preview.intent.kind === "flee"
       : preview.intentClass === "act",
     stanceLabel: STANCE_META[preview.stance].label,
+    initiativeSide: preview.initiative.first,
+    ...initiativeText(preview.initiative, preview.partNames.leg),
     marks,
     outlook: `还撑得住约 ${preview.roundsToLive} 合 · 它还需 ${preview.roundsToKill} 下`,
     outlookHot: preview.roundsToLive <= 2,

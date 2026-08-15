@@ -195,6 +195,8 @@ export const BASELINE_TUNING: TaleTuning = {
   combatThornsRounds: 3,
   combatThornsDamage: 2,
   combatInsightRounds: 3,
+  // [交锋节奏] 硬受挡「一记」，所以是 1。它不按回合衰减 —— 挡到才消失（见 `ClashState.brace`）
+  combatBraceRounds: 1,
 
   /*
    * [M2-B1] 势。一场架 5〜10 合，自涨 1／合、乘隙 +1、没挨伤 +1 —— 打得好的一场大约
@@ -260,6 +262,23 @@ export const BASELINE_TUNING: TaleTuning = {
   weaknessRevealRounds: 5,
   weaknessRevealPerLing: 16,
   weaknessRevealHits: 2,
+
+  /*
+   * [交锋节奏] 先手。我方的快慢直接读**灵**（`encounterSpeedPerLing` 是 1 —— 这一位存在
+   * 是为了让「灵不再是先手来源」这种改法有一个可调的地方，而不是为了现在就调它）。
+   *
+   * 尺度对齐：基础 build 灵 13，一世蜕到二三十，灵性 build 五六十。敌人的 `speed` 在
+   * `enemies.ts` 里逐头写死在 6〜24 之间 —— 于是**开局的基础 build 抢得到大半头兽的先手，
+   * 但抢不到会飞会游的那几头**（毕方 22／九尾狐 24／蠃鱼 20），而那几头正好也是中段最难的。
+   *
+   * 每层腿伤 −4 是这一组里最要紧的一个数：三层腿伤 ＝ −12，足以把全库最快的兽压到基础
+   * build 之下。它让「咬腿」从「拦逃 ＋ 削出伤」长出第三样用处，也让「先手」成为一件
+   * **打得出来**的东西，而不是开局就定死的属性差。
+   */
+  encounterSpeedPerLing: 1,
+  encounterEnemySpeedDefault: 12,
+  encounterSpeedPerLegWound: 4,
+  encounterSpeedSlowPenalty: 3,
 
   /*
    * [M2-B2] 凝招。全部代价由**一个整数分量**决定：

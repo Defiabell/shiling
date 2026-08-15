@@ -245,8 +245,89 @@ export interface ChoiceResult {
  */
 export interface CombatTurn {
   state: TaleState;
+  /**
+   * 这一合的全部旁白，**由 `beats` 派生**（`beats.flatMap(b => b.lines)`）——
+   * 一条日志只有一个来源，界面爱一次性倒完还是一拍一拍放都读同一份字。
+   */
   roundLog: string[];
-  over: "win" | "fled" | "dead" | "escaped" | null;
+  over: CombatOver | null;
+  /**
+   * [交锋节奏] 这一合按先手排好的**拍序**：我一拍、它一拍（＋回合末那一拍，若有事发生）。
+   *
+   * 先手方那一拍若收束了整场（打死／打逃／被打死），**后手那一拍不在数组里** ——
+   * 这不是渲染省略，是它真的没发生（宝可梦式对战的核心规则）。
+   */
+  beats: CombatBeat[];
+  /** [交锋节奏] 这一合谁先动、快慢各多少 —— 屏幕上那句「先手」的全部依据 */
+  initiative: CombatInitiative;
+}
+
+/** 一场交锋的四种收束。 */
+export type CombatOver = "win" | "fled" | "dead" | "escaped";
+
+/** 一拍是谁出的：我方半合／敌方半合／回合末（流血、换段、识破 —— 不属于任何一方）。 */
+export type BeatSide = "player" | "enemy" | "round";
+
+/**
+ * [交锋节奏] 一拍出的是什么招 —— **结构化**，措辞归客户端。
+ *
+ * 与 `roundLog` 的分工：`lines` 是这一拍发生了什么（引擎的旁白），`move` 是这一拍
+ * **叫什么**（屏幕上先亮出来的那三四个字）。后者必须是结构化的，否则客户端就得去
+ * 解析日志字符串才画得出「咬喉」那个招牌 —— 而那正是 `combatActId` 头注里禁掉的反向解析。
+ */
+export type CombatBeatMove =
+  | { kind: "bite"; part: BodyPart }
+  | { kind: "finisher" }
+  | { kind: "stance"; to: Stance }
+  | { kind: "skill"; skillId: string; name: string }
+  | { kind: "flee" }
+  /** 敌方半合：它执行**它自己宣告过的意图**（不再是玩家动作的「反击」附属） */
+  | { kind: "enemyAct"; intent: EnemyIntentKind }
+  /** 回合末：流血、换段、识破 —— 有事才有这一拍 */
+  | { kind: "round" };
+
+/**
+ * [交锋节奏] 一拍。
+ *
+ * 血量给**前后两个值**是给血条动画用的：客户端每回合整棵重建 DOM，
+ * CSS `transition` 在新节点上不会播，只有 `@keyframes from/to` 会 —— 所以起点必须由数据带着。
+ */
+export interface CombatBeat {
+  side: BeatSide;
+  move: CombatBeatMove;
+  lines: string[];
+  /** 这一拍打掉它多少血（0 ＝ 没伤到） */
+  toEnemy: number;
+  /** 这一拍打掉我多少血（**被护住招来的反咬算在我方那一拍里** —— 那是这一咬的后果） */
+  toPlayer: number;
+  /** 这一拍里有一记暴击 */
+  crit: boolean;
+  enemyHpBefore: number;
+  playerHpBefore: number;
+  enemyHp: number;
+  playerHp: number;
+  /** 这一拍收束了整场；非 null 时它必是最后一拍 */
+  over: CombatOver | null;
+}
+
+/**
+ * [交锋节奏] 先手判定的**全部依据**（纯数，措辞归客户端）。
+ *
+ * 不掷骰：先手是玩家该看得懂、也该争得到的东西 —— 涨自己的灵，或者拆它的腿。
+ * 同速归玩家。
+ */
+export interface CombatInitiative {
+  first: "player" | "enemy";
+  /** 我方的快慢（＝灵 × `encounterSpeedPerLing`） */
+  playerSpeed: number;
+  /** 它此刻的快慢（已扣掉腿伤与迟滞，下限 1） */
+  enemySpeed: number;
+  /** 它的底子（没受伤时的快慢）—— 屏幕上「本来 22，被你拆到 10」那句话要它 */
+  enemyBaseSpeed: number;
+  /** 腿伤压掉了它几点（0 ＝ 还没拆过腿） */
+  enemyLegPenalty: number;
+  /** 迟滞压掉了它几点 */
+  enemySlowPenalty: number;
 }
 
 /**
@@ -657,8 +738,18 @@ export interface CombatPreview {
   thorns: number;
   /** [S1] 我方明识剩余回合（期间 `intentKnown` 为真，哪怕没有洞察器官） */
   insight: number;
+  /** [交锋节奏] 我方硬受剩余回合（挡下它下一记；命中即消耗） */
+  brace: number;
   /** 它这一回合真的会走掉（意图＝逃且未被迟滞）—— 不拦就什么都拿不到 */
   enemyWillFlee: boolean;
+  /**
+   * [交锋节奏] **这一合谁先动** —— 出手之前就看得见（这是所有受伤预览的前提）。
+   *
+   * 它必须在预览里，不能只在结果里：它先动的那些合里，「咬完这一下它能打我多少」
+   * 与「换个姿态这一合能少挨多少」这两个数的答案完全不同（它那一记已经落过了）。
+   * 少了这一位，那两颗按钮上的数就是假的。
+   */
+  initiative: CombatInitiative;
 }
 
 // ===== 保留 flag =====
@@ -2639,6 +2730,7 @@ function openClash(
     bleed: 0,
     thorns: 0,
     insight: 0,
+    brace: 0,
     skillCooldowns: {},
   };
   if (encounter.weaknessFound && enemy.weakness) {
@@ -4047,6 +4139,47 @@ function canFlee(t: TaleTuning, slow: number, legWounds: number): boolean {
   return slow <= 0 && legWounds < t.woundLegNoFleeAt;
 }
 
+/**
+ * [交锋节奏] 这一合谁先动 —— **预览与真跑共用这一份**。
+ *
+ * ## 为什么不掷骰
+ * 先手是玩家该看得懂、也该争得到的东西：涨自己的灵（跨世积累），或者当场拆它的腿
+ * （`encounterSpeedPerLegWound`，这是咬腿的第三样用处）。掷骰会把一条可经营的线变回运气，
+ * 而屏幕上那句「你更快」也就没法解释。同速归玩家 —— 取整的好处给有利的那一边。
+ *
+ * ## 它凭什么算得出来
+ * 只吃**这一合开始时**就已经定死的东西（灵／它的 speed／腿伤／迟滞），所以
+ * `combatPreview` 报的先手与 `combatAct` 真跑用的先手必然是同一个。玩家的动作**不改**
+ * 先手（没有「抢攻」那一档）—— 那是刻意的：屏幕上摆着的先手标记若会被自己按的按钮
+ * 改掉，它就不再是一条可据以决策的信息。
+ */
+function combatInitiativeOf(
+  stats: Stats,
+  enemy: EnemyDef,
+  t: TaleTuning,
+  slow: number,
+  legWounds: number,
+): CombatInitiative {
+  const playerSpeed = Math.round(stats.ling * t.encounterSpeedPerLing);
+  const enemyBaseSpeed = enemy.speed ?? t.encounterEnemySpeedDefault;
+  const legPenalty = legWounds * t.encounterSpeedPerLegWound;
+  const slowPenalty = slow > 0 ? t.encounterSpeedSlowPenalty : 0;
+  // 下限 1：一头被拆到走不动的兽仍然会挣扎，只是几乎恒后手
+  const enemySpeed = Math.max(1, enemyBaseSpeed - legPenalty - slowPenalty);
+  return {
+    first: playerSpeed >= enemySpeed ? "player" : "enemy",
+    playerSpeed,
+    enemySpeed,
+    enemyBaseSpeed,
+    // 报的是**真的压下去了多少**（被下限截掉的那部分不算数，否则屏幕上两个数加不起来）
+    enemyLegPenalty: Math.min(legPenalty, Math.max(0, enemyBaseSpeed - 1)),
+    enemySlowPenalty: Math.min(
+      slowPenalty,
+      Math.max(0, enemyBaseSpeed - legPenalty - 1),
+    ),
+  };
+}
+
 /** 逃跑成功率（正本公式 ＋ [M1-P2] 致盲加成：它看不见你往哪去）。 */
 function fleeChanceOf(
   state: TaleState,
@@ -4244,6 +4377,15 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
   const stageMul = stageDamageMulOf(enemy, encounter.stage);
   const toughness = toughnessOf(state.stats, t);
   const weakPart = encounter.weaknessFound ? (enemy.weakness?.part ?? null) : null;
+  /*
+   * [交锋节奏] 先手先算 —— 它是下面每一处「受伤」预览的前提。
+   *
+   * **它先动的那些合里，我这一手的附带效果一律赶不上它那一记**：咬腿的迟滞、扑眼的致盲、
+   * 换姿态的减伤，全都在它出手之后才生效。所以下面三处按钮预览都按 `enemyFirst` 分两支，
+   * 而不是照旧一律按「咬完之后」算 —— 那样算出来的数在半数回合里是骗人的。
+   */
+  const initiative = combatInitiativeOf(state.stats, enemy, t, combat.slow, wounds.leg);
+  const enemyFirst = initiative.first === "enemy";
 
   const bites: BitePreview[] = BODY_PARTS.map((part) => {
     const guarded = part === combat.guardPart;
@@ -4261,8 +4403,9 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     const stacks = wounds[part];
     // 咬喉不留伤（`woundOf` 那条），所以它那颗按钮上恒不写「伤 N → N+1」
     const woundLands = woundOf(part) !== null && survives && stacks < t.woundCap;
-    const legAfter = part === "leg" && woundLands ? wounds.leg + 1 : wounds.leg;
-    const eyeAfter = part === "eye" && woundLands ? wounds.eye + 1 : wounds.eye;
+    // [交锋节奏] 它先动的合里，这一咬留下的伤对**它这一记**毫无影响 —— 那一记已经落过了
+    const legAfter = part === "leg" && woundLands && !enemyFirst ? wounds.leg + 1 : wounds.leg;
+    const eyeAfter = part === "eye" && woundLands && !enemyFirst ? wounds.eye + 1 : wounds.eye;
     const afterMul = incomingMultiplier(
       t,
       combat.intent.kind,
@@ -4288,10 +4431,18 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
        */
       momentumGain:
         t.encounterMomentumPerRound + (guarded ? 0 : t.encounterMomentumOpenGuard),
+      /*
+       * [交锋节奏] **它先动的那一合拦不住** —— 等你咬到它的腿，它已经走了。
+       *
+       * 这一位是「咬腿」在屏幕上最响的一句承诺（「拦住它 —— 不然这顿肉就没了」），
+       * 所以它必须跟着先手翻面：宣告不了做不到的事。真正的解法在上一合 ——
+       * 早一点拆它的腿，腿伤既封死它的「逃」意，也把先手还给你。
+       */
       stopsFlee:
         part === "leg" &&
         combat.intent.kind === "flee" &&
         canFlee(t, combat.slow, wounds.leg) &&
+        !enemyFirst &&
         survives,
       incomingAfter: softenRange(damageRange(enemy.meng, t, afterMul), toughness),
       incomingAfterMissChance: enemyMissChanceOf(t, combat.blind, eyeAfter),
@@ -4302,7 +4453,9 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     const mul = incomingMultiplier(
       t,
       combat.intent.kind,
-      to,
+      // [交锋节奏] 它先动的合里换姿态**这一合不算数**（它那一记按现在的架势挨），
+      // 所以这个数按当前姿态给 —— 按钮上的「这合受伤」不许许一个下一合才兑现的好处
+      enemyFirst ? combat.stance : to,
       combat.slow,
       wounds.leg,
       combat.ward,
@@ -4436,7 +4589,9 @@ export function combatPreview(state: TaleState, content: TaleContent): CombatPre
     bleed: combat.bleed,
     thorns: combat.thorns,
     insight: combat.insight,
+    brace: combat.brace,
     enemyWillFlee: combat.intent.kind === "flee" && canFlee(t, combat.slow, wounds.leg),
+    initiative,
   };
 }
 
@@ -4506,8 +4661,12 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
    * 2. 撑不过两合 —— 保命的四条。
    *
    * 排序按「它把**这场架**了结到什么程度」，不是按「这一合有多确定」：
-   * `bolt` 必定脱身（威胁归零）＞ 逃（掷骰，但同样是了结）＞ `brace`（把这一下归零，
+   * `bolt` 必定脱身（威胁归零）＞ 逃（掷骰，但同样是了结）＞ `brace`（挡下它下一记，
    * 只是把死推迟一合，不解决问题）＞ `heal`（回 8 血，可能盖不住一记重击）。
+   *
+   * [交锋节奏] **这条链不看先手**：它先动的那些合里，`brace` 挡的是下一合那一记，
+   * 于是「撑不过两合」这个判据会晚半合才想到逃。实测没有把战死率推出护栏
+   * （32.4%，基线 33.6%），所以这一批没动它 —— 记在报告的遗留 5 里。
    */
   if (preview.roundsToLive <= 2) {
     const bolt = withEffect("bolt");
@@ -4525,7 +4684,7 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
   if (mayFlee && legBite?.stopsFlee !== false) return { kind: "bite", part: "leg" };
 
   /*
-   * 4. 它宣告重击：硬吃（免伤，确定）→ **伏低** → 弄瞎。
+   * 4. 它宣告重击：硬吃（[交锋节奏] 挡下它下一记 —— 我先动时就是这一记）→ **伏低** → 弄瞎。
    *
    * [M2-B1] 中间那一格是这一批加的，而且是被实验台逼出来的：部位伤温和化之后（每层眼伤
    * 只买一成二的打空），拿一整合去扑眼换不回一记 2.2 倍的扑，于是「读得出意图」的 build
@@ -4630,34 +4789,48 @@ export function recommendCombatAct(preview: CombatPreview): CombatAct {
 /**
  * 打一个**交锋阶段**的回合（遭遇状态机的后半）。
  *
- * ## 一个回合的固定顺序（不可变更）
- * 1. 玩家动作（咬／换姿态／技／**决杀**／逃）；咬中被护部位可能招来**即时反击**。
- *    [S1] 技先付代价（自伤／精气／[M2-B1] **势**）再结算效果；`bolt` 那一档当场判 `fled`。
- *    [M2-B1] 每一咬都留下一层**整场不消**的部位伤（到 `woundCap` 封顶）。
- * 2. 敌人血尽 → `win`（吞精气回饱食、[M2-B1] 留食余，写一条 combat 记录），到此结束。
- * 3. 敌人按**已宣告的意图**动作：扑／咬（致盲与眼伤期间可能打空、[M2-B1] 德还可能整下闪开）／
- *    守（不出手）／逃（腿伤未到那一层则 `escaped`，玩家什么也拿不到）。
- *    [S1] 它这一下命中我方时，若挂着反刺（`thorns`）它自伤一记；`brace` 让这一下伤害归零。
- * 4. 玩家血尽 → `dead`（ending＝slain）。
- * 5. [S1] 流血（`bleed`）在回合**末**结算 —— 它守着不动也照掉。掉光了算 `win`。
- * 6. 计数器各减一（致盲／迟滞／护体／流血／反刺／明识／技能冷却）。
- *    **部位伤不减** —— 那正是它与这一族计数器的分界。
- * 7. [M2-B1] 结算这一回合攒到的**势**（自涨 ＋ 乘隙 ＋ 它没伤到我）。
- * 8. [M2-B1] 按血线推进**行为段**（换了就宣告一句），并判**弱点**识不识得破。
- * 9. 摇下一回合的守备与意图（`rollFace`，恒 3 次抽取）—— **玩家下一次出手前就看得见**。
+ * ## [交锋节奏] 一合 ＝ 按先手排序的两个半合（宝可梦式）
+ * owner 的原话：「我方一回合，对方一回合，类似宝可梦这种对战的机制」。改版前这里恒是
+ * 「玩家动作 → 敌人回应」，两半揉在一段日志里一次结算完 —— 引擎虽是回合制，但**先手
+ * 不存在**（永远是我），于是它也不是一件能争的东西。现在：
  *
- * 反刺与流血刻意排在两处不同的地方：反刺是**对它出手的惩罚**（跟着它那一下走），
- * 流血是**独立于出手的损耗**（跟着回合走）。两者若并到一处，「它爱守」这类敌人就分不出
- * 该用哪一个了。
+ * 1. **先手判定**（`combatInitiativeOf`，不掷骰）：灵 vs 它的 speed（扣腿伤与迟滞），同速归玩家。
+ * 2. **先手方那半合完整结算**；
+ * 3. **它若在这半合里被打死／打逃，后手那半合真的不发生** —— 这是这套机制的灵魂，
+ *    也是 `beats` 数组比 `roundLog` 多说出来的那件事（数组里就是没有那一拍）。
+ * 4. 后手那半合结算；
+ * 5. 回合末（流血／换段／识破／势／计数器／摇下一张脸）—— 这一段**不属于任何一方**，
+ *    它挂在「合」的边界上，语义与改版前逐字相同。
+ *
+ * ## 一个半合里发生什么
+ * **我方半合**：咬／换姿态／技／决杀／逃。咬中被护部位可能招来**即时反击**（那一下的伤
+ * 记在我方这一拍里 —— 它是这一咬的后果，不是它的半合）。[S1] 技先付代价（自伤／精气／
+ * [M2-B1] 势）再结算效果；`bolt` 那一档当场判 `fled`。[M2-B1] 每一咬都留下一层**整场不消**
+ * 的部位伤（到 `woundCap` 封顶）。打死它 → `win`（吞精气回饱食、留食余、记一条 combat）。
+ *
+ * **敌方半合**：它按**已宣告的意图**动作（意图在上一合末就摇好并上屏了 —— 这是我们比
+ * 宝可梦多的一层信息，保留）：扑／咬（致盲与眼伤期间可能打空、德还可能整下闪开）／
+ * 守（不出手）／逃（腿伤未到那一层则 `escaped`）。它这一下命中我方时，若挂着反刺
+ * （`thorns`）它自伤一记；[交锋节奏] `brace` 挡下这一记并当场消耗掉。打死我 → `dead`。
+ *
+ * ## 三处顺序上的讲究（都不是排版偏好）
+ * - **反刺跟着它那一下走，流血跟着合走**。两者若并到一处，「它爱守」那类敌人就分不出
+ *   该用哪一个了（它守着不动时反刺一点用没有，流血照掉）。
+ * - **先判我方死、再结算失血**：同一合两边都归零时死亡优先。
+ * - **换姿态与咬腿的附带在它先动的合里赶不上它那一记** —— `combatPreview` 因此也按先手
+ *   分两支报数（见那里的注释）。屏幕上写的必须是真的。
  *
  * ## 抽取顺序（改它就是破坏所有既存种子的剧本）
- * 咬／决杀：**暴击掷骰**（恒抽，德为 0 也抽）→ 伤害抖动 →（被护住**且它还反得了口**时）
- *   反击掷骰 → 反击伤害抖动 → 旁白；
- * 姿态：旁白；技：（出伤时）暴击掷骰 → 伤害抖动 → 每条落地的效果各一次旁白；逃：成败掷骰。
- * 敌人段（它真的出手时）：打空掷骰（**恒抽**）→ 闪避掷骰（**恒抽**）→ 伤害抖动 → 旁白。
- * ⚠️ **`brace` 那一回合少抽一次**：硬受挡下的那一下走单句旁白（`combatBraceHold`），
- * 不进变体池。回合末的流血、喉伤、反刺、势、行为段与弱点**都不抽**（旁白都是单句）。
- * 收尾：`rollFace` 的 3 次。
+ * **[交锋节奏] 两个半合按先手排序，抽取跟着半合走** —— 它先动的那些合里，敌人段那
+ * 三四次抽取排在我方之前。同一颗种子在改版前后跑出的剧本因此不同（`determinism` 两条
+ * golden 整批重掷，第六次；理由记在那两条测试里）。**每合的抽取总数不变**。
+ *
+ * 我方半合 —— 咬／决杀：**暴击掷骰**（恒抽，德为 0 也抽）→ 伤害抖动 →（被护住**且它还
+ *   反得了口**时）反击掷骰 → 反击伤害抖动 → 旁白；
+ *   姿态：旁白；技：（出伤时）暴击掷骰 → 伤害抖动 → 每条落地的效果各一次旁白；逃：成败掷骰。
+ * 敌方半合（它真的出手时）：打空掷骰（**恒抽**）→ 闪避掷骰（**恒抽**）→ 伤害抖动 → 旁白。
+ * ⚠️ **硬受挡下的那一合少抽一次**：挡下的那一下走单句旁白（`combatBraceHold`），不进变体池。
+ * 回合末的流血、喉伤、反刺、势、行为段与弱点**都不抽**（旁白都是单句）。收尾：`rollFace` 的 3 次。
  *
  * 「恒抽」那两处是 M2-B1 改的：M1-P2 在 `blind <= 0` 时短路不抽，于是抽取次数随**状态**
  * 而不只是随**动作**变化 —— 加了眼伤与闪避两个来源之后，那种短路会让「同种子同操作」
@@ -4679,8 +4852,23 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   const t = lifeTuning(state, content);
   const cursor = createCursor(state.rngState);
   const draft = draftOf(state);
-  const roundLog: string[] = [];
   const records: LifeRecord[] = [];
+
+  /*
+   * [交锋节奏] 拍序缓冲。
+   *
+   * `roundLog` 不再是一个自己攒起来的数组 —— 它由 `beats` 派生（见函数末尾）。
+   * 一条日志只有一个来源：写进哪一拍，就必然在那一拍里播出来。若两者各攒各的，
+   * 「屏幕上放了三拍而日志里有第四句」这种漂移不会有任何测试变红。
+   */
+  const beats: CombatBeat[] = [];
+  let lines: string[] = [];
+  let beatCrit = false;
+  let enemyHpBefore = current.enemyHp;
+  let playerHpBefore = current.playerHp;
+  const push = (line: string): void => {
+    lines.push(line);
+  };
   /*
    * [M2-B3] `{{leg}}` 也恒给：**「腿」这个部位在不同的兽身上不是同一个词**。
    *
@@ -4689,7 +4877,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
    * 措辞归内容（`EnemyDef.legWord`），缺省仍是「后腿」，引擎只负责把它填进去。
    */
   const say = (pool: readonly string[], vars: Record<string, string | number> = {}): void => {
-    roundLog.push(
+    push(
       render(pickFlavor(cursor, undefined, pool), {
         enemy: enemy.name,
         leg: legWordOf(enemy),
@@ -4707,14 +4895,14 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   let bleed = current.bleed;
   let thorns = current.thorns;
   let insight = current.insight;
+  /** [交锋节奏] 硬受：挡下它的下一记（这一合或下一合）—— 见 `ClashState.brace` */
+  let brace = current.brace;
   const cooldowns: Record<string, number> = { ...current.skillCooldowns };
   const wounds: Record<BodyPart, number> = { ...encounter.wounds };
   let momentum = encounter.momentum;
   let weaknessHits = encounter.weaknessHits;
-  let over: CombatTurn["over"] = null;
+  let over: CombatOver | null = null;
   let forcedGuard = false;
-  /** [S1] `brace`：这一回合它那一手的伤害归零（只管当下这一下，不留计数器） */
-  let bracing = false;
   /** [M2-B1] 这一合我咬中了它没护着的地方 —— 乘隙，多攒一点势 */
   let openHit = false;
   /** [M2-B1] 这一合它没伤到我（守／逃／打空／闪开／硬受）—— 多攒一点势 */
@@ -4725,11 +4913,39 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   const critChance = critChanceOf(draft.stats, t);
   const dodgeChance = dodgeChanceOf(draft.stats, t);
   const weakPart = encounter.weaknessFound ? (enemy.weakness?.part ?? null) : null;
+  /*
+   * [交锋节奏] 这一合的先手。**与 `combatPreview` 同一份算式、同一批入参**
+   * （这一合开始时的灵／它的 speed／腿伤／迟滞），所以玩家出手前屏上看到的先手标记
+   * 与这里真跑用的必然是同一个。
+   */
+  const initiative = combatInitiativeOf(draft.stats, enemy, t, slow, wounds.leg);
+
+  /** [交锋节奏] 收一拍：把缓冲里的旁白与血量差额封成 `CombatBeat`，然后清缓冲。 */
+  const seal = (side: BeatSide, move: CombatBeatMove): void => {
+    beats.push({
+      side,
+      move,
+      lines,
+      toEnemy: Math.max(0, enemyHpBefore - enemyHp),
+      toPlayer: Math.max(0, playerHpBefore - playerHp),
+      crit: beatCrit,
+      enemyHpBefore,
+      playerHpBefore,
+      enemyHp,
+      playerHp,
+      over,
+    });
+    lines = [];
+    beatCrit = false;
+    enemyHpBefore = enemyHp;
+    playerHpBefore = playerHp;
+  };
 
   /** [M2-B1] 一记我方伤害：暴击掷骰（恒抽）→ 伤害抖动。德给的暴击是「气运」的一半。 */
   const strike = (stat: number, multiplier: number): { dmg: number; crit: boolean } => {
     const crit = cursor.next() < critChance;
     const dmg = rollDamage(cursor, stat, t, multiplier * (crit ? t.combatCritMul : 1));
+    if (crit) beatCrit = true;
     return { dmg, crit };
   };
 
@@ -4748,8 +4964,63 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     }
   };
 
-  // — 1. 玩家动作 —
-  switch (act.kind) {
+  /**
+   * 取胜的战利品与记账。
+   *
+   * [S1] 抽成闭包是因为**有三个地方能打死它**：我方半合、敌方半合里的反刺、以及回合末的
+   * 流血。各写一份的话，「被流血放倒的那头兽」会漏掉精气、饱食、夺命数与 combat 记录 ——
+   * 而那正是「妖王」那条道的判据，漏了不会有任何测试变红。
+   */
+  const winSpoils = (): void => {
+    over = "win";
+    // [2026-08-13] 兽潮之年杀获更厚（`combatWinEssenceMul`）——「难活但杀一头值更多」
+    const essenceMul = t.combatWinEssenceMul;
+    draft.essence = addEssence(
+      draft.essence,
+      essenceMul === 1
+        ? enemy.essence
+        : Object.fromEntries(
+            Object.entries(enemy.essence).map(([type, amount]) => [
+              type,
+              Math.round((amount ?? 0) * essenceMul),
+            ]),
+          ),
+    );
+    draft.hunger = clamp(draft.hunger + t.combatWinHungerGain, 0, t.hungerMax);
+    /*
+     * [M2-B1] 打赢也留食余 —— 这一批点击账的主要抵消项（饥饿节奏批的遗留 3）。
+     * 一场硬仗换来此后几季不必出猎，正好抵掉「一场架从 3 合变成 7 合」多出来的点击。
+     */
+    const surplus = Math.max(
+      0,
+      Math.round((enemy.surplusSeasons ?? t.huntSurplusSeasons) * t.combatWinSurplusMul),
+    );
+    if (surplus > 0) {
+      draft.surplusSeasons = Math.max(draft.surplusSeasons, surplus);
+      push(render(ENGINE_MESSAGES.combatWinSurplus, { seasons: cnNumeral(surplus) }));
+    }
+    // [2026-08-13] 搏杀取胜也是夺了一命；战胜神兽另记一笔（登神门槛之一）
+    draft.livesTaken += 1;
+    if (enemy.tags.includes(t.wayDivineTag)) {
+      draft.flags = withFlags(draft.flags, [SYS_FLAG_DIVINE_EATEN]);
+    }
+    push(render(ENGINE_MESSAGES.combatWin, { enemy: enemy.name }));
+    records.push({
+      year: draft.year,
+      season: draft.season,
+      kind: "combat",
+      text: render(ENGINE_MESSAGES.combatWinRecord, { enemy: enemy.name }),
+      refId: enemy.id,
+    });
+  };
+
+  /**
+   * [交锋节奏] **我方半合** —— 一拍。返回这一拍的招牌（结构化，措辞归客户端）。
+   *
+   * 打死它就在这一拍里收账（`winSpoils`）：后手那一拍因此不会被排进 `beats`。
+   */
+  const playerHalf = (): CombatBeatMove => {
+    switch (act.kind) {
     case "bite": {
       const guarded = act.part === current.guardPart;
       const weakPoint = weakPart === act.part;
@@ -4777,9 +5048,9 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       } else {
         say(COMBAT_MESSAGES.bite[act.part], { dmg });
       }
-      if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
+      if (crit) push(COMBAT_MESSAGES.crit[0] ?? "");
       addWound(woundOf(act.part));
-      break;
+      return { kind: "bite", part: act.part };
     }
     case "finisher": {
       /*
@@ -4800,14 +5071,14 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       // 决杀**不推进「咬中同一处几次」那条识破路径**：它无视守备、也不挑部位，
       // 那一记谈不上「在试它哪儿软」—— 弱点仍要靠三颗咬击或看满几合去识破。
       say(COMBAT_MESSAGES.finisher, { dmg });
-      if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
-      break;
+      if (crit) push(COMBAT_MESSAGES.crit[0] ?? "");
+      return { kind: "finisher" };
     }
     case "stance": {
       if (act.to === stance) throw new Error(`combatAct: 已是「${act.to}」姿态`);
       stance = act.to;
       say(COMBAT_MESSAGES.stance[act.to]);
-      break;
+      return { kind: "stance", to: act.to };
     }
     case "skill": {
       const entry = combatSkills(state, content).find(
@@ -4833,7 +5104,7 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       const cost = skill.cost;
       if (cost?.kind === "hp") {
         playerHp -= cost.amount;
-        roundLog.push(render(ENGINE_MESSAGES.combatSkillToll, { skill: skill.name, dmg: cost.amount }));
+        push(render(ENGINE_MESSAGES.combatSkillToll, { skill: skill.name, dmg: cost.amount }));
       } else if (cost?.kind === "essence") {
         draft.essence = addEssence(draft.essence, { [cost.type]: -cost.amount });
       }
@@ -4845,12 +5116,10 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
           skillDamageMul(skill, t, stance),
         );
         enemyHp -= dmg;
-        roundLog.push(
-          render(ENGINE_MESSAGES.combatSkillHit, { skill: skill.name, enemy: enemy.name, dmg }),
-        );
-        if (crit) roundLog.push(COMBAT_MESSAGES.crit[0] ?? "");
+        push(render(ENGINE_MESSAGES.combatSkillHit, { skill: skill.name, enemy: enemy.name, dmg }));
+        if (crit) push(COMBAT_MESSAGES.crit[0] ?? "");
       } else {
-        roundLog.push(render(ENGINE_MESSAGES.combatSkillUse, { skill: skill.name, enemy: enemy.name }));
+        push(render(ENGINE_MESSAGES.combatSkillUse, { skill: skill.name, enemy: enemy.name }));
       }
 
       /*
@@ -4877,7 +5146,18 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
             say(COMBAT_MESSAGES.insighted);
             break;
           case "brace":
-            bracing = true;
+            /*
+             * [交锋节奏] 硬受从「这一下免伤」变成**一面一次性的盾**：挡下它的下一记，
+             * **挡到为止**（不按合数走，所以它不进下面那一族计数器）。
+             *
+             * 两版都被否决过，理由都是「屏幕上那句话会作废」：
+             * ① 照旧只管当下这一下 —— 它先动的那些合里那一记已经挨过了，一半的回合里空按；
+             * ② 给它一个回合预算（1 合，或它先动时 2 合）—— 它守着／要走／打空的那些合
+             *    照样把预算烧掉，于是盾会「什么也没挡到就过期」，那句承诺仍然可能落空。
+             * 现在它只有一种消失方式：**真的挡下了一记**。屏幕上那句
+             * 「硬受 · 挡下它下一记」因此是逐字为真的。
+             */
+            brace = Math.max(brace, t.combatBraceRounds);
             say(COMBAT_MESSAGES.braced);
             break;
           case "bolt":
@@ -4919,74 +5199,29 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       if (skill.woundPart !== undefined) addWound(woundOf(skill.woundPart));
       // ＋1 是因为本回合末尾统一减一：写 cooldown+1 才让「冷却 3」真的等 3 个回合
       cooldowns[entry.skillId] = (skill.cooldown ?? t.combatSkillCooldown) + 1;
-      break;
+      return { kind: "skill", skillId: entry.skillId, name: skill.name };
     }
     case "flee": {
       if (cursor.next() < fleeChanceOf(draft, enemy, t, blind, wounds.eye)) {
         over = "fled";
-        roundLog.push(ENGINE_MESSAGES.combatFleeOk);
+        push(ENGINE_MESSAGES.combatFleeOk);
       } else {
-        roundLog.push(ENGINE_MESSAGES.combatFleeFail);
+        push(ENGINE_MESSAGES.combatFleeFail);
       }
-      break;
+      return { kind: "flee" };
     }
-  }
-
-  /**
-   * 取胜的战利品与记账。
-   *
-   * [S1] 抽成闭包是因为**有两个地方能打死它**：玩家出手（步骤 2）与回合末的流血（步骤 5）。
-   * 各写一份的话，「被流血放倒的那头兽」会漏掉精气、饱食、夺命数与 combat 记录 ——
-   * 而那正是「妖王」那条道的判据，漏了不会有任何测试变红。
-   */
-  const winSpoils = (): void => {
-    over = "win";
-    // [2026-08-13] 兽潮之年杀获更厚（`combatWinEssenceMul`）——「难活但杀一头值更多」
-    const essenceMul = t.combatWinEssenceMul;
-    draft.essence = addEssence(
-      draft.essence,
-      essenceMul === 1
-        ? enemy.essence
-        : Object.fromEntries(
-            Object.entries(enemy.essence).map(([type, amount]) => [
-              type,
-              Math.round((amount ?? 0) * essenceMul),
-            ]),
-          ),
-    );
-    draft.hunger = clamp(draft.hunger + t.combatWinHungerGain, 0, t.hungerMax);
-    /*
-     * [M2-B1] 打赢也留食余 —— 这一批点击账的主要抵消项（饥饿节奏批的遗留 3）。
-     * 一场硬仗换来此后几季不必出猎，正好抵掉「一场架从 3 合变成 7 合」多出来的点击。
-     */
-    const surplus = Math.max(
-      0,
-      Math.round((enemy.surplusSeasons ?? t.huntSurplusSeasons) * t.combatWinSurplusMul),
-    );
-    if (surplus > 0) {
-      draft.surplusSeasons = Math.max(draft.surplusSeasons, surplus);
-      roundLog.push(render(ENGINE_MESSAGES.combatWinSurplus, { seasons: cnNumeral(surplus) }));
     }
-    // [2026-08-13] 搏杀取胜也是夺了一命；战胜神兽另记一笔（登神门槛之一）
-    draft.livesTaken += 1;
-    if (enemy.tags.includes(t.wayDivineTag)) {
-      draft.flags = withFlags(draft.flags, [SYS_FLAG_DIVINE_EATEN]);
-    }
-    roundLog.push(render(ENGINE_MESSAGES.combatWin, { enemy: enemy.name }));
-    records.push({
-      year: draft.year,
-      season: draft.season,
-      kind: "combat",
-      text: render(ENGINE_MESSAGES.combatWinRecord, { enemy: enemy.name }),
-      refId: enemy.id,
-    });
   };
 
-  // — 2. 它死了 —
-  if (over === null && enemyHp <= 0) winSpoils();
-
-  // — 3. 它按宣告的意图动作（逃跑成功的那一回合它不追）—
-  if (over === null) {
+  /**
+   * [交锋节奏] **敌方半合** —— 一拍。它执行**自己在上一合末宣告过的意图**。
+   *
+   * 改版前这一段叫「它按宣告的意图动作」，写在玩家动作之后，读起来像一次「反击」。
+   * 它现在是一个与我方对等的半合：可以排在我方之前，也可以因为我方那一拍把它打死／
+   * 打逃而**根本不发生**。逻辑一字未改（同一批分支、同一批掷骰），换的是它在时序里的位置。
+   */
+  const enemyHalf = (): CombatBeatMove => {
+    const move: CombatBeatMove = { kind: "enemyAct", intent: current.intent.kind };
     switch (current.intent.kind) {
       case "guard":
         say(COMBAT_MESSAGES.enemyHold);
@@ -5027,12 +5262,14 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
         } else if (dodged) {
           say(COMBAT_MESSAGES.dodge);
         } else {
-          // [S1] `brace`（硬受）：这一下的伤害归零
-          const dmg = bracing ? 0 : rolled;
+          // [交锋节奏] 硬受：挡下这一记，并**当场消耗掉**（它挡的是一记，不是一段时间）
+          const blocked = brace > 0;
+          const dmg = blocked ? 0 : rolled;
+          if (blocked) brace = 0;
           playerHp -= dmg;
           if (dmg > 0) unhurt = false;
-          if (bracing) {
-            roundLog.push(render(ENGINE_MESSAGES.combatBraceHold, { enemy: enemy.name }));
+          if (blocked) {
+            push(render(ENGINE_MESSAGES.combatBraceHold, { enemy: enemy.name }));
           } else {
             say(
               current.intent.kind === "pounce" ? COMBAT_MESSAGES.enemyPounce : COMBAT_MESSAGES.enemyBite,
@@ -5043,35 +5280,78 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
            * [S1] 反刺：**它命中了才扎得着**（硬受挡下的那一下不算 —— 它没碰到你）。
            * 单句旁白、不抽变体，所以这一段不消耗抽取。
            */
-          if (thorns > 0 && !bracing && dmg > 0) {
+          if (thorns > 0 && !blocked && dmg > 0) {
             enemyHp -= t.combatThornsDamage;
-            roundLog.push(
+            push(
               render(ENGINE_MESSAGES.combatThornsPrick, {
                 enemy: enemy.name,
                 dmg: t.combatThornsDamage,
               }),
             );
           }
-          if (playerHp <= 0) over = "dead";
         }
         break;
       }
     }
+    /*
+     * 这一拍的两个死亡判定，**顺序不可交换**（与改版前逐字相同）：先判我方死，
+     * 再看它有没有被反刺扎死 —— 同一下里两边都归零时死亡优先，不存在
+     * 「我倒下的同时它也被反刺扎死了，于是我赢了」。
+     */
+    if (over === null && playerHp <= 0) over = "dead";
+    if (over === null && enemyHp <= 0) winSpoils();
+    return move;
+  };
+
+  /*
+   * [交锋节奏] 两个半合按先手排序跑完。
+   *
+   * 循环体只有两支，写成数组是为了让「顺序」成为一个**看得见的数据**而不是两段
+   * 复制粘贴的 if —— 这一批唯一的结构性主张就在这一行上。
+   */
+  const halves: readonly ("player" | "enemy")[] =
+    initiative.first === "player" ? ["player", "enemy"] : ["enemy", "player"];
+  for (const side of halves) {
+    // **打死不还手**：先手方收束了整场，后手那一拍就真的不发生（数组里没有它）
+    if (over !== null) break;
+    if (side === "player") {
+      const move = playerHalf();
+      /*
+       * 两个判定，顺序**照搬改版前的步骤 2**：先看它死没死。
+       * 这一咬打死了它、而反咬同时把我打空 —— 那也是一场胜（与改版前逐字相同）。
+       */
+      if (over === null && enemyHp <= 0) winSpoils();
+      /*
+       * 再看**我**死没死 —— 这一条是这一批补上的，它修的是一个改版前就在的洞。
+       *
+       * 我方半合里唯一能把自己打死的东西是**反咬**（咬中它护着的地方，
+       * `combatGuardCounterChance`）。改版前它只被敌方半合「出手」那一支顺手兜住，
+       * 于是「它守着／要走／打空」的那些合里根本没人问过我死没死 ——
+       * 留下的是一个「活着、血为负、遭遇不收束」的状态：`die()` 不记、`encounter` 不清、
+       * 死亡演出不放，玩家就那么带着负血一直打下去。
+       *
+       * 改版把我方半合挪到后面之后，那条路从边角变成常态（我最后动的那些合里，
+       * 后面根本没有任何一段会去判它），所以这里必须自己判。
+       * 两位 reviewer 各自独立复现了它 —— 是这一批唯一一处 Critical。
+       */
+      if (over === null && playerHp <= 0) over = "dead";
+      seal("player", move);
+    } else {
+      const move = enemyHalf();
+      seal("enemy", move);
+    }
   }
 
   /*
-   * — 4.5／5. 反刺或流血把它放倒 —
+   * — 回合末：流血 —
    *
-   * 顺序刻意是「先判我方死、再结算失血」：同一回合两边都归零时**死亡优先**（死了就是死了，
-   * 不存在「我倒下的同时它也失血而亡，于是我赢了」）。失血在回合末结算是它与迟滞的分界：
-   * 它守着不动也照掉。
+   * 失血在合末结算是它与迟滞的分界：它守着不动也照掉。
+   * 「先判我方死、再结算失血」这条顺序照旧（`over` 已在敌方半合里定了 `dead`），
+   * 于是同一合两边都归零时**死亡优先** —— 不存在「我倒下的同时它也流干了，于是我赢了」。
    */
-  if (over === null && enemyHp <= 0) winSpoils();
   if (over === null && bleed > 0) {
     enemyHp -= t.combatBleedDamage;
-    roundLog.push(
-      render(ENGINE_MESSAGES.combatBleedTick, { enemy: enemy.name, dmg: t.combatBleedDamage }),
-    );
+    push(render(ENGINE_MESSAGES.combatBleedTick, { enemy: enemy.name, dmg: t.combatBleedDamage }));
     if (enemyHp <= 0) winSpoils();
   }
 
@@ -5082,6 +5362,13 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
   bleed = Math.max(0, bleed - 1);
   thorns = Math.max(0, thorns - 1);
   insight = Math.max(0, insight - 1);
+  /*
+   * [交锋节奏] **`brace` 有意不在这一族里。**
+   *
+   * 这一族是「还剩几合」，而硬受是「还剩几记」—— 它只在真的挡下一记时归零
+   * （见敌方半合里的 `blocked`）。放进来它就会在「它这几合都在守」的局面里
+   * 什么也没挡到就过期，而屏幕上写的是「挡下它下一记」。
+   */
   for (const id of Object.keys(cooldowns)) {
     const left = Math.max(0, (cooldowns[id] ?? 0) - 1);
     if (left === 0) delete cooldowns[id];
@@ -5111,15 +5398,13 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     const nextStage = stageIndexOf(enemy, enemyHp);
     if (nextStage > encounter.stage) {
       const def = stageDefOf(enemy, nextStage);
-      roundLog.push(
-        render(def?.text ?? ENGINE_MESSAGES.encounterStage, { enemy: enemy.name }),
-      );
+      push(render(def?.text ?? ENGINE_MESSAGES.encounterStage, { enemy: enemy.name }));
     }
     const foundNow =
       encounter.weaknessFound ||
       weaknessRevealedNow(enemy, draft, t, { round, hits: weaknessHits });
     if (foundNow && !encounter.weaknessFound && enemy.weakness) {
-      roundLog.push(
+      push(
         render(enemy.weakness.text, {
           enemy: enemy.name,
           part: bodyPartName(enemy, enemy.weakness.part),
@@ -5141,7 +5426,6 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
     draftEncounter.weaknessFound = foundNow;
     draftEncounter.weaknessHits = weaknessHits;
     draftEncounter.stage = nextStage;
-    draftEncounter.log = [...encounter.log, ...roundLog];
     draftEncounter.clash = {
       enemyHp,
       playerHp,
@@ -5155,16 +5439,35 @@ export function combatAct(state: TaleState, act: CombatAct, content: TaleContent
       bleed,
       thorns,
       insight,
+      brace,
       skillCooldowns: cooldowns,
     };
   } else {
     draft.encounter = null;
   }
+
+  /*
+   * [交锋节奏] 回合末那一拍 —— **有事才有**（流血滴答／它换段了／破绽看出来了）。
+   *
+   * 无条件排一拍会给每一合的演出白加半秒，而大多数合的合末什么也没发生。
+   * 它排在 `draftEncounter` 那一段之后，是因为换段与识破两句就在那一段里产生。
+   */
+  if (lines.length > 0) seal("round", { kind: "round" });
+
+  /*
+   * `roundLog` 由 `beats` 派生 —— 一条日志只有一个来源。
+   * 遭遇日志（`encounter.log`）与返回值读的是同一份，所以「屏幕上放的」与「日志里存的」
+   * 在结构上不可能对不上。
+   */
+  const roundLog = beats.flatMap((beat) => beat.lines);
+  if (over === null && draft.encounter) {
+    draft.encounter.log = [...encounter.log, ...roundLog];
+  }
   draft.records = [...state.records, ...records];
   draft.rngState = cursor.state;
 
   refreshWayFlags(draft, content);
-  return { state: draft, roundLog, over };
+  return { state: draft, roundLog, over, beats, initiative };
 }
 
 // ===== 一世收束 =====

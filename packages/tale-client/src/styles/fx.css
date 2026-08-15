@@ -141,6 +141,54 @@
   }
 }
 
+/*
+ * [交锋节奏] 血条一拍走一段。
+ *
+ * **必须是 `@keyframes` 而不是 `transition`**：`renderPlay` 每一拍整棵重建 DOM，
+ * 新节点身上没有「上一个宽度」，transition 无从过渡（这是本项目第二次栽在整棵重建上）。
+ * 起止值由数据带着（`--hp-from` / `--hp-to`，见 `beatVm.BeatVm`）。
+ */
+@keyframes hp-drain {
+  from {
+    width: var(--hp-from);
+  }
+  to {
+    width: var(--hp-to);
+  }
+}
+
+/* [交锋节奏] 伤害飘字：从血条数字旁边升起、淡出 */
+@keyframes hp-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.86);
+  }
+  22% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.06);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-15px) scale(1);
+  }
+}
+
+/* [交锋节奏] 一拍的招牌亮出来 */
+@keyframes beat-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @keyframes blot-spread {
   from {
     transform: translate(-50%, -50%) scale(0.02);

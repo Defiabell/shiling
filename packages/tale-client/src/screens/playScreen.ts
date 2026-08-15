@@ -19,6 +19,7 @@ import type { EventCardVm, MediaAsset } from "../model/eventVm.js";
 import type { GuideVm } from "../model/guideVm.js";
 import type { LogLineVm } from "../model/logVm.js";
 import type { StalkActId, StalkMeterVm, StalkVm } from "../model/stalkVm.js";
+import type { BeatVm, ClashPlaybackVm } from "../model/beatVm.js";
 import type { EncounterChromeVm, MomentumVm, StatLineVm, WoundVm } from "../model/encounterVm.js";
 import type { StatusVm } from "../model/statusVm.js";
 import type { ForgeVm } from "../model/forgeVm.js";
@@ -71,8 +72,24 @@ export type CenterVm =
       kind: "encounter";
       key: string;
       chrome: EncounterChromeVm;
-      body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm };
+      body: EncounterBodyVm;
     };
+
+/**
+ * 遭遇卡的中段。
+ *
+ * [交锋节奏] 交锋那一支多了一位 `playback`：**「正在逐拍播这一合」是 `CenterVm` 的一个
+ * 合法形态，不是旁挂在 app 上的一个布尔**。
+ *
+ * 这一条与死局那一批的结构性修复同一个理由（`playable.ts` 头注）：界面「认为自己在做什么」
+ * 与「画了什么」必须是同一个事实。若播放态只是 app 上的一位 `playing`，那么
+ * 「playing 为真但中央画的是一张能点的指令卡」这种脱钩就构造得出来 —— 而它的后果是玩家
+ * 在演出中间点穿了指令区。合进 `body` 之后，那种状态在类型层就不存在：
+ * 有 `playback` 就必然画拍面板、必然锁指令。
+ */
+export type EncounterBodyVm =
+  | { kind: "approach"; stalk: StalkVm }
+  | { kind: "clash"; combat: CombatVm; playback: ClashPlaybackVm | null };
 
 /** 降世屏上的一条前提（天时／出身）：名字 ＋ 机制账 ＋ 风味一句。 */
 export interface NarrationOmenVm {
@@ -117,6 +134,10 @@ export interface PlayProps {
   onExplore(destinationId: string): void;
   onChoice(idx: number): void;
   onCombat(act: CombatAct): void;
+  /** [交锋节奏] 跳到下一拍（**可选**的加速，不计入必点次数） */
+  onBeatAdvance(): void;
+  /** [交锋节奏] 把这一合剩下的拍一次放完 */
+  onBeatSkip(): void;
   onStalk(act: StalkActId): void;
   onContinue(): void;
   /** 点同一处 ＝ 收起（调用方传 null）；详情的开合不进引擎 */
@@ -618,14 +639,44 @@ function narrationCard(center: Extract<CenterVm, { kind: "narration" }>, props: 
   );
 }
 
-function hpBar(label: string, name: string, hp: number, max: number, percent: number, tone: string): HTMLElement {
-  return el("div", { class: `hp hp--${tone}` }, [
+/**
+ * 一条血条。
+ *
+ * [交锋节奏] `drain` 非空时它**播一段动画**（从上一拍的血走到这一拍的血）而不是直接落位。
+ * 用 `@keyframes`（`--hp-from` → `--hp-to`）而不是 `transition`：`renderPlay` 每回合整棵
+ * 重建 DOM，新节点身上没有「上一个值」，transition 无从过渡 —— 这是本项目第二次栽在
+ * 「整棵重建」上（第一次是入场动画重放）。飘字同理，靠新节点上的入场动画播。
+ */
+function hpBar(
+  label: string,
+  name: string,
+  hp: number,
+  max: number,
+  percent: number,
+  tone: string,
+  drain: { from: number; hit: number | null; heal?: number | null } | null = null,
+): HTMLElement {
+  const fillStyle =
+    drain === null
+      ? `width:${percent}%`
+      : `width:${percent}%;--hp-from:${drain.from}%;--hp-to:${percent}%`;
+  return el("div", { class: `hp hp--${tone}${drain ? " is-beating" : ""}` }, [
     el("div", { class: "hp__head" }, [
       el("span", { class: "hp__label", text: label }),
       el("span", { class: "hp__name", text: name }),
       el("span", { class: "hp__num", text: `${hp}／${max}` }),
+      drain?.hit
+        ? el("i", { class: "hp__pop", text: `−${drain.hit}`, attrs: { "data-hp-pop": tone } })
+        : null,
+      drain?.heal
+        ? el("i", {
+            class: "hp__pop hp__pop--heal",
+            text: `＋${drain.heal}`,
+            attrs: { "data-hp-pop": `${tone}-heal` },
+          })
+        : null,
     ]),
-    el("div", { class: "hp__track" }, [el("i", { class: "hp__fill", style: `width:${percent}%` })]),
+    el("div", { class: "hp__track" }, [el("i", { class: "hp__fill", style: fillStyle })]),
   ]);
 }
 
@@ -646,16 +697,22 @@ function hpBar(label: string, name: string, hp: number, max: number, percent: nu
  */
 function encounterCard(
   chrome: EncounterChromeVm,
-  body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm },
+  body: EncounterBodyVm,
   key: string,
   props: PlayProps,
 ): HTMLElement {
   return el(
     "section",
     {
+      /*
+       * [交锋节奏] 演出中给卡片挂 `is-beating`，把它自己那段入场动画（`ink-rise` 620ms）关掉。
+       *
+       * `renderPlay` 每一拍整棵重建，于是卡片会**每一拍重新水墨浮现一次** —— 一合两三拍，
+       * 整张卡每半秒淡入一遍，读起来像界面在闪。这一批要动的是「拍」，卡片本身该稳住。
+       */
       class: `card card--encounter card--${body.kind === "approach" ? "stalk" : "combat"}${
         body.kind === "clash" && body.combat.playerCritical ? " is-critical" : ""
-      }`,
+      }${body.kind === "clash" && body.playback ? " is-beating" : ""}`,
       attrs: { "data-key": key, "data-phase": body.kind },
     },
     [
@@ -664,7 +721,7 @@ function encounterCard(
       woundRow(chrome.wounds),
       body.kind === "approach"
         ? stalkBody(body.stalk, props)
-        : clashBody(body.combat, props),
+        : clashBody(body.combat, body.playback, props),
       statPanel(chrome.stats),
       partBiasRow(chrome),
       el(
@@ -679,7 +736,7 @@ function encounterCard(
 /** 遭遇头：一场遭遇的「它是谁、怎么起的、打到哪一段、破绽看出来没有」。 */
 function encounterHead(
   chrome: EncounterChromeVm,
-  body: { kind: "approach"; stalk: StalkVm } | { kind: "clash"; combat: CombatVm },
+  body: EncounterBodyVm,
 ): HTMLElement {
   const roundLabel =
     body.kind === "approach" ? body.stalk.roundLabel : body.combat.roundLabel;
@@ -784,6 +841,82 @@ function encounterHead(
               el("em", { class: "combat__intent-detail", text: body.combat.intentDetail }),
             ],
           ),
+      /*
+       * [交锋节奏] **先手那一行** —— 意图之下、指令之上。
+       *
+       * 位置是有理由的：它与意图一起构成「这一合会怎么走」（它要干什么 ＋ 谁先干），
+       * 而下面每一颗按钮上的受伤账都是按这两条算出来的。放在按钮里会重复十遍，
+       * 放在卡头又会与「它是谁」混成一堆 —— 这里正好是玩家读完意图、还没往下看按钮的那一眼。
+       */
+      body.kind === "clash"
+        ? el(
+            "div",
+            {
+              class: `combat__first is-${body.combat.initiativeSide}`,
+              attrs: { "data-initiative": body.combat.initiativeSide },
+              title: "每一合按快慢定谁先动 —— 拆它的腿能把先手抢回来。",
+            },
+            [
+              el("b", { class: "combat__first-text", text: body.combat.initiativeLabel }),
+              el("em", { class: "combat__first-why", text: body.combat.initiativeDetail }),
+            ],
+          )
+        : null,
+    ]),
+  ]);
+}
+
+/**
+ * [交锋节奏] **拍面板** —— 演出中占住指令区上方的那一格。
+ *
+ * 一拍的读法自上而下：先手那一行（整合不变）→ 谁出的这一手 ＋ 招名 → 旁白 → 拍数进度。
+ * 招名先亮、旁白随后、飘字与血条同时走（血条在下面 `hpBar` 里），合起来就是
+ * 「我出一手 → 看到它打出去 → 轮到它」的那个拍子。
+ *
+ * ## 点一下＝跳到下一拍（宝可梦按 A 的体感）
+ * 整块面板是一颗按钮，另有一颗「略过」把整合放完。**两者都不是必点** ——
+ * 不点它也会自己走完，所以「一合只点一次」这条硬约束一个字没动（历次裁决）。
+ */
+function beatStage(playback: ClashPlaybackVm, beat: BeatVm, props: PlayProps): HTMLElement {
+  const total = playback.beats.length;
+  return el("div", { class: "beat", attrs: { "data-beat-stage": "1" } }, [
+    el(
+      "button",
+      {
+        class: `beat__card beat__card--${beat.side}${beat.crit ? " is-crit" : ""}`,
+        attrs: {
+          type: "button",
+          "data-beat-advance": "1",
+          "data-beat-side": beat.side,
+          "data-beat-index": String(playback.index),
+        },
+        title: "点一下 —— 跳到下一拍",
+        on: { click: () => props.onBeatAdvance() },
+      },
+      [
+        el("span", { class: "beat__actor", text: beat.actorZi }),
+        el("span", { class: "beat__body" }, [
+          el("b", { class: "beat__move", attrs: { "data-beat-move": "1" }, text: beat.moveName }),
+          el(
+            "span",
+            { class: "beat__lines", attrs: { "data-beat-lines": "1" } },
+            beat.lines.map((line) => el("em", { text: line })),
+          ),
+        ]),
+      ],
+    ),
+    el("div", { class: "beat__foot" }, [
+      el("i", {
+        class: "beat__tick",
+        attrs: { "data-beat-progress": `${playback.index + 1}/${total}` },
+        text: `第 ${playback.index + 1} 拍／共 ${total} 拍`,
+      }),
+      el("button", {
+        class: "beat__skip",
+        text: "略　过",
+        attrs: { type: "button", "data-beat-skip": "1" },
+        on: { click: () => props.onBeatSkip() },
+      }),
     ]),
   ]);
 }
@@ -908,14 +1041,42 @@ function partBiasRow(chrome: EncounterChromeVm): HTMLElement | null {
  * 指令**全部平铺在一屏**（既定裁决第三条：不做多级菜单、不增加每回合的必点次数）：
  * 三颗咬击 ＋ 两颗姿态（当前姿态不出按钮）＋ 器官技若干 ＋ 遁走。
  */
-function clashBody(combat: CombatVm, props: PlayProps): HTMLElement {
+function clashBody(
+  combat: CombatVm,
+  playback: ClashPlaybackVm | null,
+  props: PlayProps,
+): HTMLElement {
   // [S1] 遁走单独拎出来（见下面 combat__stand 那段的理由）；其余按钮留在可滚的网格里
   const flee = combat.actions.find((action) => action.group === "flee") ?? null;
   const grid = combat.actions.filter((action) => action.group !== "flee");
-  return el("div", { class: "enc__body enc__body--clash" }, [
+  /*
+   * [交锋节奏] 演出中，血条与「形势」读的是**这一拍**的数，不是这一合结算完的数。
+   *
+   * 引擎那一步是一次性的（一次 `combatAct` 把两个半合都算完），若血条直接落到终值，
+   * 玩家就只看得到「一个数字跳了两次」而看不出「我一拍、它一拍」—— 那正是这一批要治的病。
+   */
+  const beat = playback ? playback.beats[playback.index] : undefined;
+  return el("div", { class: `enc__body enc__body--clash${beat ? " is-playing" : ""}` }, [
+    beat ? beatStage(playback!, beat, props) : null,
     el("div", { class: "combat__bars" }, [
-      hpBar("彼", combat.enemyName, combat.enemyHp, combat.enemyHpMax, combat.enemyPercent, "foe"),
-      hpBar("我", "此身", combat.playerHp, combat.playerHpMax, combat.playerPercent, "self"),
+      hpBar(
+        "彼",
+        combat.enemyName,
+        beat?.enemyHp ?? combat.enemyHp,
+        combat.enemyHpMax,
+        beat?.enemyToPercent ?? combat.enemyPercent,
+        "foe",
+        beat ? { from: beat.enemyFromPercent, hit: beat.hitEnemy } : null,
+      ),
+      hpBar(
+        "我",
+        "此身",
+        beat?.playerHp ?? combat.playerHp,
+        combat.playerHpMax,
+        beat?.playerToPercent ?? combat.playerPercent,
+        "self",
+        beat ? { from: beat.playerFromPercent, hit: beat.hitPlayer, heal: beat.healPlayer } : null,
+      ),
     ]),
     /*
      * [S1] **遁走从滚动网格里搬到形势那一行旁边**（`combat__stand`）。

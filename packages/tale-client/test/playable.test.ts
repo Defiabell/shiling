@@ -13,6 +13,7 @@ import { buildActionVms } from "../src/model/actionVm.js";
 import { buildDestinationVms } from "../src/model/destinationVm.js";
 import { BOOT_CENTER_KEY, checkPlayable, ESCAPE_CONTINUE_LABEL } from "../src/model/playable.js";
 import type { CenterVm } from "../src/screens/playScreen.js";
+import type { ClashPlaybackVm } from "../src/model/beatVm.js";
 import type { TaleEvent } from "@shiling/tale-sim";
 import { encounterOf, combatState, realState } from "./helpers.js";
 
@@ -36,6 +37,22 @@ function blockedBars(state = realState()) {
 
 function openBars(state = realState()) {
   return { actions: buildActionVms(state, C), destinations: buildDestinationVms(state, C) };
+}
+
+/**
+ * 一张交锋中的遭遇卡。
+ *
+ * `chrome`／`combat` 用假值：这份护栏**不读它们**（它只看 kind、抉择的 enabled、
+ * 两排按钮与 [交锋节奏] `playback`），所以造一份真的 VM 只会让这组测试跟着那两个
+ * VM 的字段一起变红 —— 那是耦合，不是覆盖。
+ */
+function clashCenter(playback: ClashPlaybackVm | null = null): CenterVm {
+  return {
+    kind: "encounter",
+    key: "enc:test:clash",
+    chrome: {} as never,
+    body: { kind: "clash", combat: {} as never, playback },
+  };
 }
 
 /** 一条门槛高到谁都点不开的事件（内容 bug 的形状；引擎那边已不许抽出来，这里只造帧）。 */
@@ -131,8 +148,21 @@ describe("checkPlayable", () => {
   it("放行：遭遇未收束且中央就是遭遇屏", () => {
     const base = realState();
     const state = { ...base, encounter: encounterOf(combatState()) };
-    const center = { kind: "encounter" } as unknown as CenterVm;
-    expect(checkPlayable({ state, center, busy: false, ...openBars(base) })).toBeNull();
+    expect(checkPlayable({ state, center: clashCenter(), busy: false, ...openBars(base) })).toBeNull();
+  });
+
+  /*
+   * [交锋节奏] 演出中的那一帧**不靠 `busy` 兜着**。
+   *
+   * 这一条与上面那条「busy 全灰不算死局」是两件事：那一条测的是布尔，这一条测的是
+   * **画面本身**（`body.playback` 非空）。护栏存在的全部理由就是把「app 忘了置 busy」
+   * 与「界面真的没路了」分开 —— 若播放态只由 busy 兜，这两件事在这一层又混回去了。
+   */
+  it("放行：逐拍演出中（`busy` 为假也不算死局 —— 判据读的是画面）", () => {
+    const base = realState();
+    const state = { ...base, encounter: encounterOf(combatState()) };
+    const center = clashCenter({ beats: [], index: 0, done: false });
+    expect(checkPlayable({ state, center, busy: false, ...blockedBars(base) })).toBeNull();
   });
 
   it("放行：演出播放中（`busy`）全灰不算死局", () => {

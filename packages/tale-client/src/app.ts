@@ -33,6 +33,7 @@ import {
   type ActionOptions,
   type ChronicleEntry,
   type CombatAct,
+  type CombatTurn,
   type EndingType,
   type ForgePicks,
   type SynergyDef,
@@ -51,6 +52,12 @@ import { actionOfButton, buildActionVms } from "./model/actionVm.js";
 import { buildDestinationVms, destinationCaption } from "./model/destinationVm.js";
 import { buildChronicleVm, buildDeathVm, type ChronicleVm } from "./model/chronicleVm.js";
 import { buildCombatVm } from "./model/combatVm.js";
+import {
+  advanceBeats,
+  buildPlaybackVm,
+  skipToLastBeat,
+  type ClashPlaybackVm,
+} from "./model/beatVm.js";
 import { buildForgeVm } from "./model/forgeVm.js";
 import { diffFloaters, gainedEssenceTypes } from "./model/deltaVm.js";
 import { buildDetailVm, detailKey, type DetailSel } from "./model/detailVm.js";
@@ -82,7 +89,7 @@ import { playInkBlot } from "./fx/inkBlot.js";
 import { playMoltReveal } from "./fx/moltReveal.js";
 import { playSynergyReveal } from "./fx/synergyReveal.js";
 import { playTreasureReveal } from "./fx/treasureReveal.js";
-import { installMotionClass } from "./fx/motion.js";
+import { installMotionClass, prefersReducedMotion } from "./fx/motion.js";
 import { ESSENCE_RGB, createParticleLayer, type ParticleLayer } from "./fx/particles.js";
 import { renderChronicle } from "./screens/chronicleScreen.js";
 import { renderPlay, type CenterVm } from "./screens/playScreen.js";
@@ -218,6 +225,13 @@ export class TaleApp {
   private escaping = false;
   private freshLogIds: ReadonlySet<number> = new Set();
   private busy = false;
+  /**
+   * [交锋节奏] 演出中「这一拍还在等」的那个 resolver；null ＝ 没有拍在等。
+   *
+   * 存在 app 上而不是挂在节点上：拍面板那两颗按钮每一拍都被整棵重建，
+   * 挂在节点上的 handler 活不过一次渲染。
+   */
+  private beatResolve: ((how: "tick" | "next" | "all") => void) | null = null;
   private lifeIndex = 0;
   private chronicleVm: ChronicleVm | null = null;
   /**
@@ -917,7 +931,14 @@ export class TaleApp {
     return { kind: "event", key: `event:${event.id}:${state.rngState}`, event, card };
   }
 
-  private encounterCenter(state: TaleState): CenterVm | null {
+  /**
+   * @param playback [交锋节奏] 非空 ＝ 这一帧在**逐拍演出**（中央画拍面板、指令区锁死）。
+   *   它是 `CenterVm` 的一位而不是 app 上的一个布尔 —— 理由见 `EncounterBodyVm` 的注释。
+   */
+  private encounterCenter(
+    state: TaleState,
+    playback: ClashPlaybackVm | null = null,
+  ): CenterVm | null {
     const approach = approachOf(state);
     const clash = clashOf(state);
     if (!state.encounter || (!approach && !clash)) return null;
@@ -931,9 +952,15 @@ export class TaleApp {
         }
       : {
           kind: "encounter",
-          key: `enc:${state.encounter.enemyId}:clash`,
+          /*
+           * 演出中把**拍号**写进 key：`renderPlay` 靠 `data-key` 判「这是不是一张新卡」，
+           * 而每一拍都要重新播一次血条动画与飘字的入场动画。key 不动的话，浏览器会把
+           * 两拍当成同一张卡，动画只播第一次（整棵重建也救不回来 —— 那正是这个项目
+           * 第一次栽在动画上的地方）。
+           */
+          key: `enc:${state.encounter.enemyId}:clash${playback ? `:beat${playback.index}` : ""}`,
           chrome,
-          body: { kind: "clash", combat: buildCombatVm(state, clash!, CONTENT) },
+          body: { kind: "clash", combat: buildCombatVm(state, clash!, CONTENT), playback },
         };
   }
 
@@ -984,12 +1011,25 @@ export class TaleApp {
 
     const turn = combatAct(prev, act, CONTENT);
     const next = turn.state;
+
+    /*
+     * [交锋节奏] **先把这一合逐拍放完，再把结果摆上屏**。
+     *
+     * 引擎那一步是原子的（一次 `combatAct` 把两个半合都算完了），演出是纯客户端的事 ——
+     * 所以状态**当场提交**（引擎的账不拖着，`this.state` 永远是最新的真相），
+     * 而中央那张卡在演出期间画的是**冻结在出手前的那一份**（`prev`）＋ 逐拍覆盖上去的血量。
+     * 两者的分工：数据一步到位，画面一拍一拍。
+     *
+     * 日志也跟着一拍一拍进（不是演完一次性倒进去）—— 右栏「近事」于是与中央同步，
+     * 这是 owner 要的「看到我的招完整打出去」里最便宜的一半。
+     */
     this.commit(next);
+    await this.playBeats(prev, turn);
+
     const dying = this.deathLines(next);
-    this.appendLog(prev.year, prev.season, [
-      ...turn.roundLog.map((text) => ({ text, tone: "combat" as LogTone })),
-      ...dying.map((text) => ({ text, tone: "omen" as LogTone })),
-    ]);
+    if (dying.length > 0) {
+      this.appendLog(prev.year, prev.season, dying.map((text) => ({ text, tone: "omen" as LogTone })));
+    }
 
     const encounterCenter = turn.over === null ? this.encounterCenter(next) : null;
     if (encounterCenter !== null) {
@@ -1010,6 +1050,118 @@ export class TaleApp {
     this.busy = false;
     this.renderPlayScreen();
     this.showDelta(prev, next, 0);
+  }
+
+  /**
+   * [交锋节奏] 逐拍演出 —— **这个项目里唯一会等时间的战斗代码，而它只活在客户端**。
+   *
+   * tale-sim 禁 `Date.now`／计时器（纯函数、同种子同结果）；「一拍停多久」因此是
+   * 呈现层的事，写在这里。引擎那边一个字都不知道有演出这回事。
+   *
+   * 一拍的循环：换 center（带这一拍的 playback）→ 渲染 → 把这一拍的旁白进日志 →
+   * 等（计时器／点击／`prefers-reduced-motion` 下不等）→ 下一拍。
+   *
+   * ## 三条边界
+   * - **一合仍只点一次**：跳拍是可选的加速，不点也会自己走完（历次裁决的硬约束）。
+   * - **中央画的是出手前那一份**（`before`）：这一合结算完的状态已经在 `this.state` 里了，
+   *   但它的指令区读的是**下一合**的意图与守备 —— 在拍还没放完时把那些字摆上屏，
+   *   等于提前剧透，且玩家会以为可以按。
+   * - **reduced-motion 即时展示**：一步跳到最后一拍、日志一次性倒完，不等任何时间。
+   */
+  private async playBeats(before: TaleState, turn: CombatTurn): Promise<void> {
+    const clash = clashOf(before);
+    if (!clash || turn.beats.length === 0) {
+      // 没有拍可放（理论上不会发生）—— 日志照旧一次性进，绝不吞掉
+      this.appendLog(before.year, before.season, turn.roundLog.map((text) => ({ text, tone: "combat" as LogTone })));
+      return;
+    }
+    const preview = buildCombatVm(before, clash, CONTENT);
+    let playback = buildPlaybackVm(turn, {
+      enemyHpMax: preview.enemyHpMax,
+      playerHpMax: preview.playerHpMax,
+    });
+
+    const instant = prefersReducedMotion();
+    /** 放一拍：换 center → 渲染 → 这一拍的旁白进日志。 */
+    const show = (): void => {
+      this.center = this.encounterCenter(before, playback) ?? this.center;
+      this.renderPlayScreen();
+      const beat = playback.beats[playback.index];
+      if (beat) {
+        this.appendLog(
+          before.year,
+          before.season,
+          beat.lines.map((text) => ({ text, tone: "combat" as LogTone })),
+        );
+      }
+    };
+    /** 「略过」与 reduced-motion 共用：剩下的拍一次性倒进日志，画面停在最后一拍。 */
+    const dumpRest = (): void => {
+      for (const rest of playback.beats.slice(playback.index + 1)) {
+        this.appendLog(
+          before.year,
+          before.season,
+          rest.lines.map((text) => ({ text, tone: "combat" as LogTone })),
+        );
+      }
+      playback = skipToLastBeat(playback);
+      this.center = this.encounterCenter(before, playback) ?? this.center;
+      this.renderPlayScreen();
+    };
+
+    for (;;) {
+      show();
+      const last = playback.index >= playback.beats.length - 1;
+      if (instant) {
+        if (!last) dumpRest();
+        break;
+      }
+      /*
+       * **最后一拍也要停** —— 停完才轮到指令区回来。
+       *
+       * 第一版在末拍上直接 `break`，于是那一拍渲染出来的同一个任务里 `doCombat` 就把
+       * center 换成了下一合的指令卡：末拍**一帧都没画出去**。实机逐帧抄屏当场抓到
+       * （一合只采得到一拍，而 `beats` 里明明有两拍）—— 这类缺陷不会有任何单测变红，
+       * VM 照样造得出那一拍，只是没人看得见它。
+       */
+      const how = await this.waitBeat(playback.beats[playback.index]?.holdMs ?? 500);
+      if (last) break;
+      if (how === "all") {
+        dumpRest();
+        break;
+      }
+      playback = advanceBeats(playback);
+    }
+  }
+
+  /**
+   * 等一拍：计时器到点、或玩家点了「下一拍」／「略过」，谁先来算谁。
+   *
+   * 两个 resolver 存成字段是因为点击来自渲染出来的按钮（`onBeatAdvance`／`onBeatSkip`），
+   * 而那两颗按钮每一拍都会被整棵重建 —— 所以不能把 handler 挂在节点上等它活着。
+   */
+  private waitBeat(ms: number): Promise<"tick" | "next" | "all"> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.beatResolve = null;
+        resolve("tick");
+      }, ms);
+      this.beatResolve = (how) => {
+        clearTimeout(timer);
+        this.beatResolve = null;
+        resolve(how);
+      };
+    });
+  }
+
+  /** [交锋节奏] 点一下 ＝ 跳到下一拍（宝可梦按 A 的体感）。不点也会自己走。 */
+  onBeatAdvance(): void {
+    this.beatResolve?.("next");
+  }
+
+  /** [交锋节奏] 「略过」＝ 这一合剩下的拍一次放完。 */
+  onBeatSkip(): void {
+    this.beatResolve?.("all");
   }
 
   async onContinue(): Promise<void> {
@@ -1390,6 +1542,9 @@ export class TaleApp {
           void this.safely(() => this.doAction("explore", { destinationId })),
         onChoice: (idx) => void this.safely(() => this.doChoice(idx)),
         onCombat: (act) => void this.safely(() => this.doCombat(act)),
+        // [交锋节奏] 跳拍两颗：**可选**的加速，不点也会自己走完（不增加必点次数）
+        onBeatAdvance: () => this.onBeatAdvance(),
+        onBeatSkip: () => this.onBeatSkip(),
         onStalk: (act) => void this.safely(() => this.doStalk(act)),
         onContinue: () => void this.safely(() => this.onContinue()),
         forgeLabel: `凝招 · 招式册 ${state.forgedSkills.length}／${CONTENT.tuning.forgeSlots}`,

@@ -143,7 +143,7 @@ export const PARTS: readonly PartDef[] = [
     organId: ORGAN_LIN_JIA,
     essenceType: "xue",
     force: { damageMul: 0.2, woundPart: null, text: "借鳞把身子压实 —— 力道 +0.2 倍" },
-    addon: { effect: "brace", text: "合鳞硬受 —— 它这一下一分力也进不来" },
+    addon: { effect: "brace", text: "合鳞硬受 —— 它下一记一分力也进不来" },
     desc: "层层相压的重鳞。它的用处是「站得住」，不是「打得动」。",
   },
   {

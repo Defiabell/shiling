@@ -94,7 +94,7 @@ function renderFrame(state: TaleState, content: TaleContent, pending: TaleEvent 
     const chrome = buildEncounterChromeVm(state, content);
     center = approach
       ? { kind: "encounter", key: "a", chrome, body: { kind: "approach", stalk: buildStalkVm(state, approach, content) } }
-      : { kind: "encounter", key: "c", chrome, body: { kind: "clash", combat: buildCombatVm(state, clash!, content) } };
+      : { kind: "encounter", key: "c", chrome, body: { kind: "clash", combat: buildCombatVm(state, clash!, content), playback: null } };
   } else {
     center = { kind: "narration", key: "n", title: null, lines: ["……"], media: null, continueLabel: null };
   }

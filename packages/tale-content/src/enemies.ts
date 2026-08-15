@@ -230,6 +230,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_YE_ZHI,
     name: "野雉",
+    // [交锋节奏] 快慢（与灵同量纲）：惊则疾走 —— 教具层里最快的一只，也是「先手不在我」的第一课
+    speed: 18,
     meng: 4,
     hp: 10,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -305,6 +307,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_WEN_YAO,
     name: "文鳐鱼",
+    // [交锋节奏] 快慢（与灵同量纲）：会飞的鱼
+    speed: 16,
     meng: 5,
     hp: 12,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -369,6 +373,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_XUE_SHU,
     name: "穴鼠",
+    // [交锋节奏] 快慢（与灵同量纲）：一窜就没影
+    speed: 15,
     meng: 4,
     hp: 11,
     tags: ["beast", "prey"],
@@ -429,6 +435,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_YAN_YANG,
     name: "岩羊",
+    // [交锋节奏] 快慢（与灵同量纲）：四足踏定了才顶 —— 重型都慢
+    speed: 11,
     // [M2-B3] 10/26 → **18/30**：B1 实测基础 build 对它 100% 胜（它本该是「扑之前先算赌注」的正主）。
     // 18 是 `--lab matrix` 校准出来的最终值 —— 中途从 13 抬过两次，见文件头注那条 ⚠️
     meng: 18,
@@ -527,6 +535,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_CAO_HU,
     name: "草狐",
+    // [交锋节奏] 快慢（与灵同量纲）：狐
+    speed: 15,
     // [M2-B3] 14 → **22**：注里写着「早期必须考虑逃」，而实测基础 build 对它 100% —— 那句话得是真的。
     // 22 是 `--lab matrix` 校准出来的最终值（中途 18 时它还在 100%）
     meng: 22,
@@ -576,6 +586,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_SHAN_XIAO,
     name: "山魈",
+    // [交锋节奏] 快慢（与灵同量纲）：壁型：不快也不慢，同速归玩家
+    speed: 13,
     meng: 24,
     hp: 46,
     tags: ["beast", "humanoid"],
@@ -618,6 +630,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_XUAN_MANG,
     name: "玄蟒",
+    // [交锋节奏] 快慢（与灵同量纲）：大蟒缠得死，追不快
+    speed: 10,
     meng: 32,
     hp: 60,
     // [M2-B3] 蛇无腿：B1 的注里说「咬下身的措辞已在兜底池里兼容」，实机读到的其实还是「后腿」
@@ -677,6 +691,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_QIONG_QI,
     name: "穷奇幼崽",
+    // [交锋节奏] 快慢（与灵同量纲）：墙那一档还带着速度，这是它最不讲道理的地方
+    speed: 19,
     meng: 42,
     hp: 78,
     tags: ["beast", "divine"],
@@ -730,6 +746,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_GUAN_GUAN,
     name: "灌灌",
+    // [交锋节奏] 快慢（与灵同量纲）：鸟
+    speed: 17,
     meng: 5,
     hp: 13,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -807,6 +825,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_CHI_RU,
     name: "赤鱬",
+    // [交锋节奏] 快慢（与灵同量纲）：鱼身人面，水里快，上了岸就一般
+    speed: 14,
     meng: 7,
     hp: 16,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -883,6 +903,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_LU_SHU,
     name: "鹿蜀",
+    // [交锋节奏] 快慢（与灵同量纲）：马身，早期唯一一头基础 build 抢得到先手的「重」型（同速归玩家）
+    speed: 13,
     meng: 20,
     hp: 30,
     tags: ["beast", "prey", "horn"],
@@ -968,6 +990,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_XUAN_GUI,
     name: "旋龟",
+    // [交锋节奏] 快慢（与灵同量纲）：全库最慢 —— 甲型的代价
+    speed: 6,
     meng: 24,
     hp: 48,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -1018,6 +1042,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_LI_LI,
     name: "狸力",
+    // [交锋节奏] 快慢（与灵同量纲）：会跑那一档
+    speed: 16,
     meng: 24,
     hp: 32,
     tags: ["beast", "digger"],
@@ -1059,6 +1085,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_LUO_YU,
     name: "蠃鱼",
+    // [交锋节奏] 快慢（与灵同量纲）：水没到膝时它已经绕了你三圈（形貌那一句的机制形态）
+    speed: 20,
     meng: 28,
     hp: 48,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -1115,6 +1143,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_BI_FANG,
     name: "毕方",
+    // [交锋节奏] 快慢（与灵同量纲）：鹤而一足，飞起来最快 —— 中段这一头必须靠拆足才抢得回先手
+    speed: 22,
     meng: 26,
     hp: 34,
     // [M2-B3] 一足：它全身的重量只压在一条腿上，所以那一句读起来格外狠
@@ -1166,6 +1196,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_GU_DIAO,
     name: "蛊雕",
+    // [交锋节奏] 快慢（与灵同量纲）：攫爪的鸟
+    speed: 20,
     meng: 28,
     hp: 40,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -1224,6 +1256,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_MING_SHE,
     name: "鸣蛇",
+    // [交锋节奏] 快慢（与灵同量纲）：有翼的蛇
+    speed: 14,
     meng: 28,
     hp: 46,
     // [M2-B3] 它没有「后腿」—— 咬腿那几句旁白按这个词念
@@ -1281,6 +1315,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_HUA_HUAI,
     name: "猾褢",
+    // [交锋节奏] 快慢（与灵同量纲）：壁型
+    speed: 12,
     meng: 30,
     hp: 52,
     tags: ["beast", "humanoid"],
@@ -1336,6 +1372,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_TU_LOU,
     name: "土蝼",
+    // [交锋节奏] 快慢（与灵同量纲）：土里拱出来的东西不快
+    speed: 9,
     meng: 28,
     hp: 52,
     tags: ["beast", "horn"],
@@ -1386,6 +1424,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_SHU_HU,
     name: "孰湖",
+    // [交锋节奏] 快慢（与灵同量纲）：马身鸟翼
+    speed: 16,
     meng: 30,
     hp: 56,
     tags: ["beast", "humanoid"],
@@ -1438,6 +1478,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: ENEMY_JIU_WEI_HU,
     name: "九尾狐",
+    // [交锋节奏] 快慢（与灵同量纲）：全库最快 —— 一场架里它先动的合最多
+    speed: 24,
     meng: 36,
     hp: 68,
     tags: ["beast", "fox"],

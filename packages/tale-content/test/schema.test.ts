@@ -651,6 +651,24 @@ describe("数量与分布", () => {
     }
   });
 
+  it("[交锋节奏] 每一头兽都自报快慢 —— 忘了填只会静默退到缺省 12", () => {
+    /*
+     * `EnemyDef.speed` 决定每一合谁先动（与玩家的灵比大小）。它**可选**、缺省吃
+     * `encounterEnemySpeedDefault`（12）—— 于是新加一头兽忘了填，它就悄悄变成
+     * 「不快不慢」的那一档，而先手是这一头兽最像性格的一个量（会飞会游的快、带甲的慢）。
+     * 这类失效不会有任何别的测试变红：先手照判、日志照写，只是那一头兽的原型丢了一半。
+     * 同 `legWord` 那一条的理由（第 638 行）：**逐头显式**，不许靠缺省。
+     */
+    for (const enemy of ENEMIES) {
+      expect(enemy.speed, `${enemy.id} 没写 speed —— 它会静默退到缺省档`).toBeDefined();
+      // 与灵同量纲（基础 build 灵 13，灵性 build 五六十）：落在这个区间之外多半是写错了单位
+      expect(enemy.speed ?? 0).toBeGreaterThanOrEqual(1);
+      expect(enemy.speed ?? 0).toBeLessThanOrEqual(60);
+    }
+    // 且它必须**真的分得开**：全表同一个值等于这一位没在做事
+    expect(new Set(ENEMIES.map((enemy) => enemy.speed)).size).toBeGreaterThanOrEqual(6);
+  });
+
   it("[M2-B3] 守备与弱点是配对定的（护着的那一处不许同时是软肋所在的最优解）", () => {
     /*
      * B1 立下的规矩只卡了「弱点部位撑不撑得起」（倍率 > 0.8）。这一批加的是**配对**那一半：

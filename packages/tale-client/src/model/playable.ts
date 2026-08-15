@@ -53,6 +53,18 @@ export function checkPlayable(input: PlayableInput): string | null {
   if (busy) return null;
 
   /*
+   * [交锋节奏] **演出中的那一帧不是死局** —— 而且这一条不靠 `busy` 那个布尔。
+   *
+   * 逐拍演出期间全部按钮都是灰的（那正是它该有的样子），若只由 `busy` 兜着，
+   * 「app 忘了置 busy」与「界面真的没路了」在这一层就分不开 —— 而这份护栏存在的
+   * 全部理由就是要把这两件事分开（头注：「没跑成」必须与「没发现问题」可区分）。
+   * 现在播放态是 `CenterVm` 里的一位（`body.playback`），所以判据读的是**画面本身**。
+   */
+  if (center.kind === "encounter" && center.body.kind === "clash" && center.body.playback) {
+    return null;
+  }
+
+  /*
    * 开机那张空白卡（`bootCenter()`）**不许出现在 play 屏上**。
    *
    * 它 `title`／`media` 皆空、`lines` 为空、没有按钮 —— 渲染出来就是一个什么都没有的
